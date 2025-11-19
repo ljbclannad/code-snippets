@@ -1,12 +1,8 @@
-import os
-from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
-model = ChatOpenAI(model="deepseek-chat",
-api_key=os.environ.get("DEEPSEEK_API_KEY"),
-base_url="https://api.deepseek.com",
-max_completion_tokens=200
-)
+from baseChatModel import BaseChatModel
+
+chat_model = BaseChatModel()
 
 
 system_prompt = "You are a helpful assistant."
@@ -17,6 +13,6 @@ messages = [
     HumanMessage(content=human_prompt)
 ]
 
-response = model.invoke(messages)
+response = chat_model.invoke(messages)
 
 print(response.content)
