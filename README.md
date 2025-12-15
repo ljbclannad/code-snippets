@@ -37,10 +37,17 @@
 
 - **定位**：从零实现/理解 LLM 相关基础组件的练习脚本（偏 tokenizer/BPE 入门）。
 - **关键文件**
-  - **简易 tokenizer（V1/V2）**：`from-zero-llm/SimpleTokenizer.py`
-  - **Tokenizer 测试**：`from-zero-llm/SimpleTokenizerV1Test.py`、`from-zero-llm/SimpleTokenizerV2Test.py`
-  - **tiktoken（GPT-2 编码）示例**：`from-zero-llm/BpeTest.py`
-  - **示例语料**：`from-zero-llm/the-verdict.txt`
+    - **tokenizer**
+        - **简易 tokenizer（V1/V2）**：`from-zero-llm/SimpleTokenizer.py`
+        - **Tokenizer 测试**：`from-zero-llm/SimpleTokenizerV1Test.py`、`from-zero-llm/SimpleTokenizerV2Test.py`
+        - **tiktoken（GPT-2 编码）示例**：`from-zero-llm/BpeTest.py`
+    - **dataset**
+        - **简易dataset数据集算法**：`from-zero-llm/dataset/GPTDateset.py`
+        - **GPTDatesetTest测试脚本**：`from-zero-llm/dataset/GPTDatesetTest.py`
+    - **embedding**
+        - **embedding测试脚本**：`from-zero-llm/embedding/embeddingTest.py`
+        - **GPTEmbeddingTest测试脚本**：`from-zero-llm/embedding/GPTEmbeddingTest.py`
+    - **示例语料**：`from-zero-llm/the-verdict.txt`
 
 ---
 
