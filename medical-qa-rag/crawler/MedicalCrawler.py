@@ -145,6 +145,11 @@ class MedicalDocumentCrawler:
         
         return results
     
+    def _build_page_url(self, list_url: str, page: int) -> str:
+        if page <= 1:
+            return list_url
+        return list_url.replace("list.shtml", f"list_{page}.shtml")
+
     def crawl_nhc_gov(self) -> List[Dict]:
         """
         爬取国家卫健委网站
@@ -161,40 +166,48 @@ class MedicalDocumentCrawler:
             ]
             
             for list_url in list_urls:
-                try:
-                    response = self.session.get(list_url, timeout=10)
-                    response.encoding = 'utf-8'
-                    soup = BeautifulSoup(response.text, 'html.parser')
-                    
-                    links = soup.find_all('a', href=True)
-                    count = 0
-                    
-                    for link in links:
-                        if count >= 10:
-                            break
-                            
-                        href = link.get('href', '')
-                        # 优先使用链接文本，如果为空则使用title属性
-                        title = link.get_text(strip=True) or link.get('title', '')
+                # 每个栏目抓取5页
+                for page in range(1, 5):
+                    page_url = self._build_page_url(list_url, page)
+                    logger.info(f"抓取列表页: {page_url}")
+
+                    try:
+                        response = self.session.get(page_url, timeout=10)
+                        response.encoding = 'utf-8'
+                        soup = BeautifulSoup(response.text, 'html.parser')
                         
-                        if href and '.shtml' in href and len(title) > 10:
-                            full_url = urljoin(base_url, href)
-                            
-                            doc_content = self._fetch_article_content(full_url)
-                            if doc_content:
-                                docs.append({
-                                    'title': title,
-                                    'url': full_url,
-                                    'source': '国家卫健委',
-                                    'content': doc_content,
-                                    'crawl_time': datetime.now().isoformat()
-                                })
-                                count += 1
-                                time.sleep(1)
+                        links = soup.find_all('a', href=True)
+                        count = 0
+                        
+                        for link in links:
+                            # 每个页面抓取10篇
+                            if count >= 10:
+                                break
                                 
-                except Exception as e:
-                    logger.error(f"抓取卫健委列表页失败 {list_url}: {str(e)}")
-                    continue
+                            href = link.get('href', '')
+                            # 优先使用链接文本，如果为空则使用title属性
+                            title = link.get_text(strip=True) or link.get('title', '')
+                            
+                            if href and '.shtml' in href and len(title) > 10:
+                                full_url = urljoin(base_url, href)
+                                
+                                doc_content = self._fetch_article_content(full_url)
+                                if doc_content:
+                                    docs.append({
+                                        'title': title,
+                                        'url': full_url,
+                                        'source': '国家卫健委',
+                                        'content': doc_content,
+                                        'crawl_time': datetime.now().isoformat()
+                                    })
+                                    count += 1
+                                    time.sleep(1)
+                        if count == 0:
+                           logger.info(f"本页无新增文章，停止翻页: {page_url}")
+                           break
+                    except Exception as e:
+                        logger.error(f"抓取卫健委列表页失败 {list_url}: {str(e)}")
+                        continue
                     
         except Exception as e:
             logger.error(f"抓取卫健委网站失败: {str(e)}")
@@ -305,9 +318,9 @@ class MedicalDocumentCrawler:
         
         # 从各个来源爬取
         sources = [
-            ('医保局', self.crawl_nhsa_gov),
+            # ('医保局', self.crawl_nhsa_gov),
             ('卫健委', self.crawl_nhc_gov),
-            ('医疗指南', self.crawl_hospital_guides),
+            # ('医疗指南', self.crawl_hospital_guides),
         ]
         
         for source_name, crawl_func in sources:
@@ -432,7 +445,7 @@ def main():
     crawler = MedicalDocumentCrawler(output_dir="medical_docs")
     
     # 爬取30-50篇文档
-    target_count = 50
+    target_count = 100
     documents = crawler.crawl_all(target_count=target_count)
     
     # 保存文档
