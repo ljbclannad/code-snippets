@@ -32,6 +32,12 @@ INLINE_NOISE_PATTERNS: List[re.Pattern[str]] = [
     re.compile(
         r"中国医保，一生守护！维护医保基金安全，人人有责！打击欺诈骗保举报电话：\d{3,4}-\d+，\d{3,4}-\d+；邮箱：\S+。?"
     ),
+    re.compile(
+        r"地址：\S+ 邮编：\d+ 电话：\d{3,4}-\d+ 中华人民共和国国家卫生健康委员会 版权所有，不得非法镜像． ICP备案编号：\S+ 技术支持：\S+"
+    ),
+    re.compile(
+        r"地址：北京市西城区西直门外南路1号 邮编：100044 电话：010-68797979京公网安备 11010202000005号 ICP备案编号：京ICP备18052910号网站标识码：bm24000006 中华人民共和国国家卫生健康委员会 版权所有 技术支持：国家卫生健康委员会统计信息中心网站地图 版权所有：中华人民共和国国家卫生健康委员会"
+    ),
     re.compile(r"文件下载链接[:：][^。；\n]*"),
     re.compile(r"邮箱：\S+"),
     re.compile(r"举报电话：\d{3,4}-\d+，\d{3,4}-\d+"),
@@ -72,6 +78,7 @@ def clean_json_file(path: Path, output_dir: Path) -> Path:
     output_path = output_dir / f"{path.stem}_cleaned{path.suffix}"
     data: Any = json.loads(path.read_text(encoding="utf-8"))
 
+   
     if isinstance(data, list):
         cleaned_data: List[Dict[str, Any]] = []
         for item in data:
@@ -99,7 +106,7 @@ def iter_target_files(target: Path) -> Iterable[Path]:
         yield target
         return
     for file in target.glob("*"):
-        if file.suffix.lower() in {".txt", ".json"}:
+        if file.suffix.lower() in {".txt", ".json"} and not file.stem.endswith("_cleaned"):
             yield file
 
 

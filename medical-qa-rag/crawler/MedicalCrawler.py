@@ -180,8 +180,8 @@ class MedicalDocumentCrawler:
                         count = 0
                         
                         for link in links:
-                            # 每个页面抓取10篇
-                            if count >= 10:
+                            # 每个页面抓取7篇
+                            if count >= 7:
                                 break
                                 
                             href = link.get('href', '')
@@ -318,9 +318,9 @@ class MedicalDocumentCrawler:
         
         # 从各个来源爬取
         sources = [
-            # ('医保局', self.crawl_nhsa_gov),
+            ('医保局', self.crawl_nhsa_gov),
             ('卫健委', self.crawl_nhc_gov),
-            # ('医疗指南', self.crawl_hospital_guides),
+            ('医疗指南', self.crawl_hospital_guides),
         ]
         
         for source_name, crawl_func in sources:

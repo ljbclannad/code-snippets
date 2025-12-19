@@ -30,6 +30,7 @@ def load_text(path: Path) -> str:
     if path.suffix.lower() == ".txt":
         return path.read_text(encoding="utf-8", errors="ignore")
 
+    # 优先取cleaned_content
     data = json.loads(path.read_text(encoding="utf-8"))
     if isinstance(data, list):
         parts: List[str] = []
