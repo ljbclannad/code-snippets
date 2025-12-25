@@ -244,6 +244,136 @@ class MedicalDocumentCrawler:
             
         return docs
     
+    def crawl_pmc_oa(self, target: int = 120) -> List[Dict]:
+        """
+        爬取 PMC Open Access 文献（使用 Europe PMC API，抓取摘要级内容）
+        """
+        logger.info("开始爬取 PMC OA 文献...")
+        docs: List[Dict] = []
+        base_api = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
+        query = "OPEN_ACCESS:Y AND (PMCID:PMC*)"
+        page_size = 50  # Europe PMC 每页最大 100，这里取 50 以留足裕量
+        cursor = "*"
+        seen = set()
+
+        while len(docs) < target:
+            params = {
+                "query": query,
+                "format": "json",
+                "pageSize": page_size,
+                "cursorMark": cursor,
+            }
+            try:
+                resp = self.session.get(base_api, params=params, timeout=15)
+                if resp.status_code != 200:
+                    logger.warning(f"PMC API 响应异常: {resp.status_code}")
+                    break
+                data = resp.json()
+                logger.info(f"PMC API 响应: {data}")
+                results = data.get("resultList", {}).get("result", [])
+                cursor = data.get("nextCursorMark")
+                if not results:
+                    break
+
+                for item in results:
+                    pmcid = item.get("pmcid")
+                    if not pmcid or pmcid in seen:
+                        continue
+                    seen.add(pmcid)
+
+                    title = item.get("title") or ""
+                    abstract = item.get("abstractText") or ""
+                    content = (title + "\n\n" + abstract).strip()
+                    if len(content) < 200:  # 简单质量过滤
+                        continue
+
+                    url = f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmcid}/"
+                    docs.append({
+                        "title": title,
+                        "url": url,
+                        "source": "PMC OA",
+                        "content": content,
+                        "crawl_time": datetime.now().isoformat(),
+                        "journal": item.get("journalTitle", ""),
+                        "pub_year": item.get("pubYear", ""),
+                        "pmcid": pmcid,
+                        "doi": item.get("doi", ""),
+                    })
+
+                    if len(docs) >= target:
+                        break
+            except Exception as e:
+                logger.error(f"PMC OA 爬取失败: {str(e)}")
+                break
+            if not cursor:
+                break
+            time.sleep(1)  # 避免 API 请求过快
+
+        logger.info(f"PMC OA 抓取完成，共 {len(docs)} 篇")
+        return docs
+
+    def crawl_loinc_news(self, target: int = 80) -> List[Dict]:
+        """
+        爬取 LOINC 官网的新闻/资源文章（摘要级内容）
+        """
+        logger.info("开始爬取 LOINC 文献/新闻...")
+        docs: List[Dict] = []
+        base_url = "https://loinc.org"
+        list_urls = [
+            f"{base_url}/news/",
+            f"{base_url}/resources/",
+        ]
+
+        try:
+            for list_url in list_urls:
+                if len(docs) >= target:
+                    break
+                resp = self.session.get(list_url, timeout=10)
+                resp.raise_for_status()
+                soup = BeautifulSoup(resp.text, "html.parser")
+
+                # 文章列表：loinc 新闻页使用 article / h2 / a 结构
+                cards = soup.find_all("article")
+                links = []
+                for card in cards:
+                    a = card.find("a", href=True)
+                    if a:
+                        links.append(urljoin(base_url, a["href"]))
+
+                for link in links:
+                    if len(docs) >= target:
+                        break
+                    try:
+                        detail_resp = self.session.get(link, timeout=10)
+                        detail_resp.raise_for_status()
+                        detail_soup = BeautifulSoup(detail_resp.text, "html.parser")
+
+                        title_tag = detail_soup.find("h1") or detail_soup.find("title")
+                        title = title_tag.get_text(strip=True) if title_tag else ""
+
+                        paragraphs = detail_soup.find_all("p")
+                        content = "\n".join(
+                            [p.get_text(strip=True) for p in paragraphs if p.get_text(strip=True)]
+                        ).strip()
+
+                        if title and len(content) >= 150:
+                            docs.append({
+                                "title": title,
+                                "url": link,
+                                "source": "LOINC",
+                                "content": content,
+                                "crawl_time": datetime.now().isoformat(),
+                            })
+                            time.sleep(0.5)
+                    except Exception as e:
+                        logger.warning(f"LOINC 文章抓取失败 {link}: {str(e)}")
+                        continue
+        except Exception as e:
+            logger.error(f"LOINC 列表页抓取失败: {str(e)}")
+
+        logger.info(f"LOINC 抓取完成，共 {len(docs)} 篇")
+        return docs
+    
     def _fetch_article_content(self, url: str) -> str:
         """
         获取文章正文内容
@@ -320,6 +450,8 @@ class MedicalDocumentCrawler:
         sources = [
             ('医保局', self.crawl_nhsa_gov),
             ('卫健委', self.crawl_nhc_gov),
+            ('PMC OA', lambda: self.crawl_pmc_oa(target=150)),
+            ('LOINC', lambda: self.crawl_loinc_news(target=120)),
             ('医疗指南', self.crawl_hospital_guides),
         ]
         
@@ -445,7 +577,7 @@ def main():
     crawler = MedicalDocumentCrawler(output_dir="medical_docs")
     
     # 爬取30-50篇文档
-    target_count = 100
+    target_count = 200
     documents = crawler.crawl_all(target_count=target_count)
     
     # 保存文档

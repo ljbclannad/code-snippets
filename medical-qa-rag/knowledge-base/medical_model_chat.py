@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Tuple, Optional
 
 from langchain_openai.chat_models import ChatOpenAI
 from langchain_community.embeddings import DashScopeEmbeddings
+from langchain_community.retrievers import BM25Retriever
 from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -46,6 +47,51 @@ def retrieve(
     k: int = 5,
 ) -> List[Tuple[Document, float]]:
     return vs.similarity_search_with_score(query, k=k)
+
+
+# ----------------------------
+# 3.1) BM25 倒排检索（稀疏基线）
+#      - 复用 FAISS docstore 里的 Document
+#      - 使用简单的中英混合分词（正则切词，无额外依赖）
+# ----------------------------
+def _tokenize_zh_en(text: str) -> List[str]:
+    """
+    轻量级分词：把中文串、英文/数字串切分出来，适合 BM25 的倒排。
+    如果已有更强的分词器（如 jieba），可在这里替换。
+    """
+    if not text:
+        return []
+    return re.findall(r"[\u4e00-\u9fff]+|[a-zA-Z0-9_]+", text.lower())
+
+
+def build_bm25_retriever(vs: FAISS, k: int = 5) -> BM25Retriever:
+    docs = list(getattr(getattr(vs, "docstore", None), "_dict", {}).values())
+    if not docs:
+        raise ValueError("FAISS docstore 中没有文档，无法构建 BM25 检索器")
+
+    retriever = BM25Retriever.from_documents(docs, preprocess_func=_tokenize_zh_en)
+    retriever.k = k
+    return retriever
+
+
+def retrieve_bm25(
+    vs: FAISS,
+    query: str,
+    k: int = 5,
+) -> List[Tuple[Document, float]]:
+    retriever = build_bm25_retriever(vs, k=k)
+    docs = retriever.get_relevant_documents(query)
+
+    results: List[Tuple[Document, float]] = []
+    for rank, doc in enumerate(docs, 1):
+        # BM25Retriever 会在 metadata 中附带 score；如缺失则用逆排名作为粗略分数
+        score = doc.metadata.get("score")
+        try:
+            score_val = float(score) if score is not None else 1.0 / rank
+        except (TypeError, ValueError):
+            score_val = 1.0 / rank
+        results.append((doc, score_val))
+    return results
 
 
 # ----------------------------
@@ -120,8 +166,16 @@ def rag_qa(
     vs: FAISS,
     question: str,
     k: int = 5,
+    retrieval_mode: str = "dense",  # dense: 语义向量检索；bm25: 倒排稀疏检索
 ) -> Dict[str, Any]:
-    retrieved = retrieve(vs, question, k=k)
+    mode = retrieval_mode.lower()
+    if mode == "dense":
+        retrieved = retrieve(vs, question, k=k)
+    elif mode == "bm25":
+        retrieved = retrieve_bm25(vs, question, k=k)
+    else:
+        raise ValueError(f"不支持的检索模式：{retrieval_mode}，可选 dense / bm25")
+
     citations = build_citations(retrieved)
 
     # 证据不足/不相关：直接拒答或要求补充
@@ -185,38 +239,41 @@ def rag_qa(
 def run_demo(index_dir: str) -> None:
     vs = load_faiss(index_dir)
 
+    # 同时跑稠密检索与 BM25 倒排基线，方便对比
+    modes = ["dense", "bm25"]
     questions = [
         # 情况 A：典型“命中明确条款/期限”的问题（你贴的 chunk 里就有 2025年12月底前）
         "商业健康保险创新药品目录是第几年更新的？",
+        "佛山生育报销力度",
 
         # 情况 B：从同一主题多段证据综合（挂网价格/支付标准约束）
-        # "谈判药品挂网价格与新版目录确定的支付标准有什么关系？",
+        "谈判药品挂网价格与新版目录确定的支付标准有什么关系？",
 
         # 情况 C：知识库可能没有的“离谱/缺证据”问题 -> 应拒答/提示补充
-        # "2027年医保目录新增药品必须在1月底前挂网吗？",
+        "2027年医保目录新增药品必须在1月底前挂网吗？",
 
         # 情况 D：容易出现“口径冲突/时间不一致”的提问 -> 提醒风险
-        # "医保定点医疗机构需要在什么时候召开药事会并调整药品配备？",
+        "医保定点医疗机构需要在什么时候召开药事会并调整药品配备？",
     ]
 
-    for q in questions:
-        result = rag_qa(vs, q, k=5)
-        print("\n" + "=" * 90)
-        print("Q:", result["question"])
-        print("\nA:\n", result["answer"])
-        # if result.get("notes"):
-        #     print("\n[NOTES]")
-        #     for n in result["notes"]:
-        #         print("-", n)
+    for mode in modes:
+        banner = f"{'=' * 25} RETRIEVAL={mode.upper()} {'=' * 25}"
+        print("\n" + banner)
+        for q in questions:
+            result = rag_qa(vs, q, k=5, retrieval_mode=mode)
+            print("\n" + "-" * 90)
+            print("Q:", result["question"])
+            print(f"[模式] {mode}")
+            print("\nA:\n", result["answer"])
 
-        print("\n[CITATIONS]")
-        for c in result["citations"]:
-            print(
-                f"- rank={c['rank']} score={c['score']:.4f} "
-                f"source_url={c['source_url']} chunk_id={c['chunk_id']}\n"
-                f"  snippet: {c['snippet']}\n"
-                f"  content: {c['content']}\n"
-            )
+            print("\n[CITATIONS]")
+            for c in result["citations"]:
+                print(
+                    f"- rank={c['rank']} score={c['score']:.4f} "
+                    f"source_url={c['source_url']} chunk_id={c['chunk_id']}\n"
+                    f"  snippet: {c['snippet']}\n"
+                    f"  content: {c['content']}\n"
+                )
 
 
 if __name__ == "__main__":
