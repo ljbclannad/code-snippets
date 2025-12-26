@@ -42,6 +42,9 @@ def build_documents(chunks: List[Dict[str, Any]], source_name: str) -> List[Docu
     for item in chunks:
         chunk_id = item.get("id")
         text = (item.get("chunk") or "").strip()
+        region = item.get("region")
+        effective_start = item.get("effective_start")
+        effective_end = item.get("effective_end")
 
         """
         metadata：你将来检索到这个 chunk 时，能知道它来自哪个文件、chunk_id 是多少、甚至还能加上地区/版本/日期等用于过滤
@@ -52,6 +55,9 @@ def build_documents(chunks: List[Dict[str, Any]], source_name: str) -> List[Docu
                 metadata={
                     "chunk_id": chunk_id,
                     "source": source_name,  # 比如文件名、URL、政策编号等
+                    "region": region,
+                    "effective_start": effective_start,
+                    "effective_end": effective_end,
                 },
             )
         )

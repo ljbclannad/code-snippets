@@ -50,6 +50,44 @@ def retrieve(
 
 
 # ----------------------------
+# 3.0) 公共工具函数
+# ----------------------------
+def _doc_key(doc: Document) -> str:
+    """为融合打分生成稳定 key。优先使用 source + chunk_id。"""
+    md = doc.metadata or {}
+    source = md.get("source") or md.get("source_url") or "unknown_source"
+    chunk_id = md.get("chunk_id") or md.get("id")
+    if chunk_id is not None:
+        return f"{source}::{chunk_id}"
+    # 兜底：使用内容哈希，避免因对象地址不同导致重复
+    return f"{source}::{hash(doc.page_content)}"
+
+
+def _dense_score_to_similarity(score: float) -> float:
+    """
+    把 FAISS 返回的“距离分数”转成相似度分数（值越大越相似）。
+    采用 1 / (1 + distance) 保证非负且单调递减。
+    """
+    try:
+        dist = float(score)
+    except (TypeError, ValueError):
+        return 0.0
+    dist = max(dist, 0.0)
+    return 1.0 / (1.0 + dist)
+
+
+def _normalize_scores(pairs: List[Tuple[Document, float]]) -> List[Tuple[Document, float]]:
+    """简单归一化到 [0,1]，避免不同量纲的分数直接相加。"""
+    values = [float(s) for _, s in pairs if s is not None]
+    if not values:
+        return [(doc, 0.0) for doc, _ in pairs]
+    min_v, max_v = min(values), max(values)
+    if max_v - min_v < 1e-12:
+        return [(doc, 1.0) for doc, _ in pairs]
+    return [(doc, (float(score) - min_v) / (max_v - min_v)) for doc, score in pairs]
+
+
+# ----------------------------
 # 3.1) BM25 倒排检索（稀疏基线）
 #      - 复用 FAISS docstore 里的 Document
 #      - 使用简单的中英混合分词（正则切词，无额外依赖）
@@ -92,6 +130,67 @@ def retrieve_bm25(
             score_val = 1.0 / rank
         results.append((doc, score_val))
     return results
+
+
+# ----------------------------
+# 3.2) Hybrid 检索（BM25 + 向量）
+#      - method="rrf": Reciprocal Rank Fusion，按排名融合，鲁棒且无需调参
+#      - method="weighted": 归一化后加权求和，可自定义稠密/稀疏权重
+# ----------------------------
+def retrieve_hybrid(
+    vs: FAISS,
+    query: str,
+    k: int = 5,
+    method: str = "rrf",
+    dense_weight: float = 0.6,
+    bm25_weight: float = 0.4,
+    rrf_k: int = 60,
+    candidate_scale: int = 2,
+) -> List[Tuple[Document, float]]:
+    """
+    返回融合后的前 k 条 (Document, score)。
+    candidate_scale 用于放宽候选数（如 k=5、candidate_scale=2 -> 先取 10 条再融合），提高覆盖。
+    """
+    candidate_k = max(k * candidate_scale, k)
+
+    dense_raw = retrieve(vs, query, k=candidate_k)
+    dense_results = [(doc, _dense_score_to_similarity(score)) for doc, score in dense_raw]
+    bm25_results = retrieve_bm25(vs, query, k=candidate_k)
+
+    dense_sorted = sorted(dense_results, key=lambda x: x[1], reverse=True)
+    bm25_sorted = sorted(bm25_results, key=lambda x: x[1], reverse=True)
+
+    method_lc = method.lower()
+    if method_lc == "weighted":
+        dense_norm = _normalize_scores(dense_sorted)
+        bm25_norm = _normalize_scores(bm25_sorted)
+
+        fused: Dict[str, Dict[str, Any]] = {}
+        for doc, sc in dense_norm:
+            fused[_doc_key(doc)] = {"doc": doc, "score": dense_weight * sc}
+        for doc, sc in bm25_norm:
+            key = _doc_key(doc)
+            if key not in fused:
+                fused[key] = {"doc": doc, "score": 0.0}
+            fused[key]["score"] += bm25_weight * sc
+
+        merged = sorted(fused.values(), key=lambda x: x["score"], reverse=True)
+        return [(item["doc"], item["score"]) for item in merged[:k]]
+
+    # 默认使用 RRF
+    fused: Dict[str, Dict[str, Any]] = {}
+
+    def accumulate(results: List[Tuple[Document, float]], weight: float) -> None:
+        for rank, (doc, _) in enumerate(results, 1):
+            key = _doc_key(doc)
+            fused.setdefault(key, {"doc": doc, "score": 0.0})
+            fused[key]["score"] += weight / (rrf_k + rank)
+
+    accumulate(dense_sorted, dense_weight)
+    accumulate(bm25_sorted, bm25_weight)
+
+    merged = sorted(fused.values(), key=lambda x: x["score"], reverse=True)
+    return [(item["doc"], item["score"]) for item in merged[:k]]
 
 
 # ----------------------------
@@ -166,15 +265,30 @@ def rag_qa(
     vs: FAISS,
     question: str,
     k: int = 5,
-    retrieval_mode: str = "dense",  # dense: 语义向量检索；bm25: 倒排稀疏检索
+    retrieval_mode: str = "dense",  # dense: 语义向量；bm25: 倒排；hybrid: 融合
+    hybrid_method: str = "rrf",  # rrf | weighted
+    dense_weight: float = 0.6,
+    bm25_weight: float = 0.4,
+    rrf_k: int = 60,
 ) -> Dict[str, Any]:
     mode = retrieval_mode.lower()
     if mode == "dense":
         retrieved = retrieve(vs, question, k=k)
     elif mode == "bm25":
         retrieved = retrieve_bm25(vs, question, k=k)
+    elif mode in {"hybrid", "hybrid_rrf", "hybrid_weighted"}:
+        method = "weighted" if mode == "hybrid_weighted" else hybrid_method
+        retrieved = retrieve_hybrid(
+            vs,
+            question,
+            k=k,
+            method=method,
+            dense_weight=dense_weight,
+            bm25_weight=bm25_weight,
+            rrf_k=rrf_k,
+        )
     else:
-        raise ValueError(f"不支持的检索模式：{retrieval_mode}，可选 dense / bm25")
+        raise ValueError(f"不支持的检索模式：{retrieval_mode}，可选 dense / bm25 / hybrid_rrf / hybrid_weighted")
 
     citations = build_citations(retrieved)
 
@@ -240,7 +354,7 @@ def run_demo(index_dir: str) -> None:
     vs = load_faiss(index_dir)
 
     # 同时跑稠密检索与 BM25 倒排基线，方便对比
-    modes = ["dense", "bm25"]
+    modes = ["dense", "bm25", "hybrid_rrf", "hybrid_weighted"]
     questions = [
         # 情况 A：典型“命中明确条款/期限”的问题（你贴的 chunk 里就有 2025年12月底前）
         "商业健康保险创新药品目录是第几年更新的？",

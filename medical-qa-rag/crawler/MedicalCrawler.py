@@ -269,7 +269,6 @@ class MedicalDocumentCrawler:
                     logger.warning(f"PMC API 响应异常: {resp.status_code}")
                     break
                 data = resp.json()
-                logger.info(f"PMC API 响应: {data}")
                 results = data.get("resultList", {}).get("result", [])
                 cursor = data.get("nextCursorMark")
                 if not results:
@@ -577,7 +576,7 @@ def main():
     crawler = MedicalDocumentCrawler(output_dir="medical_docs")
     
     # 爬取30-50篇文档
-    target_count = 200
+    target_count = 400
     documents = crawler.crawl_all(target_count=target_count)
     
     # 保存文档
