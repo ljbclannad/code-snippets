@@ -16,7 +16,7 @@ import argparse
 import json
 import re
 from pathlib import Path
-from typing import Dict, Iterable, List, Sequence
+from typing import Any, Dict, Iterable, List, Sequence
 
 DEFAULT_MAX_CHARS = 500
 DEFAULT_OVERLAP = 80
@@ -50,14 +50,26 @@ def load_text(path: Path) -> str:
     raise ValueError("JSON 文件缺少 content/cleaned_content 字段")
 
 
-def save_chunks(chunks: Sequence[str], output_path: Path) -> None:
-    payload = [{"id": idx, "chunk": chunk} for idx, chunk in enumerate(chunks)]
+def save_chunks(chunks: Sequence[str | Dict[str, Any]], output_path: Path) -> None:
+    """
+    兼容两种输入：
+    1) 纯字符串列表 -> 自动生成 id、chunk
+    2) dict 列表（已包含 metadata）-> 若缺少 id 则补上
+    """
+    payload: List[Dict[str, Any]] = []
+    for idx, item in enumerate(chunks):
+        if isinstance(item, dict):
+            payload.append({"id": item.get("id", idx), **{k: v for k, v in item.items() if k != "id"}})
+        else:
+            payload.append({"id": idx, "chunk": str(item)})
     output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 # ----------------------------
 # 切分策略
 # ----------------------------
+
+# 固定长度切分，带重叠。
 def chunk_fixed(text: str, max_chars: int = DEFAULT_MAX_CHARS, overlap: int = DEFAULT_OVERLAP) -> List[str]:
     """固定长度切分，带重叠。"""
     max_chars = max(max_chars, 1)
@@ -89,6 +101,7 @@ def is_heading(line: str) -> bool:
     return any(pat.match(line) for pat in HEADING_PATTERNS) and len(line) <= 60
 
 
+# 按标题/序号行分段；若段落仍过长，再按固定长度切。
 def chunk_structured(text: str, max_chars: int = DEFAULT_MAX_CHARS) -> List[str]:
     """
     按标题/序号行分段；若段落仍过长，再按固定长度切。
@@ -118,7 +131,6 @@ def chunk_structured(text: str, max_chars: int = DEFAULT_MAX_CHARS) -> List[str]
 
 
 SENTENCE_SPLIT_RE = re.compile(r"(?<=[。！？!?])")
-
 
 def split_sentences(text: str) -> List[str]:
     parts = [p.strip() for p in SENTENCE_SPLIT_RE.split(text) if p.strip()]
@@ -186,6 +198,7 @@ def split_sentences(text: str) -> List[str]:
 # 总结：
 #   overlap_sentences=1 会让相邻 chunk 共享 1 句，提升上下文连续性（适合 RAG）。
 
+# 按句子组合到目标长度，适合中文语义连续段落。
 def chunk_semantic(
     text: str,
     max_chars: int = DEFAULT_MAX_CHARS,
@@ -229,6 +242,48 @@ def chunk_semantic(
     return chunks
 
 
+def chunk_json_with_metadata(
+    json_path: Path,
+    max_chars: int = DEFAULT_MAX_CHARS,
+    min_chars: int | None = None,
+    overlap_sentences: int = 1,
+) -> List[Dict[str, Any]]:
+    """
+    针对 JSON（list/dict）按记录逐条切分，保留原字段作为 metadata。
+    """
+    raw = json.loads(json_path.read_text(encoding="utf-8"))
+    if isinstance(raw, dict):
+        records = [raw]
+    elif isinstance(raw, list):
+        records = [item for item in raw if isinstance(item, dict)]
+    else:
+        raise ValueError("JSON 顶层需为 list 或 dict")
+
+    results: List[Dict[str, Any]] = []
+    for ridx, rec in enumerate(records):
+        content = rec.get("cleaned_content") or rec.get("content")
+        if not content:
+            continue
+        meta = {k: v for k, v in rec.items() if k not in {"cleaned_content", "content"}}
+        chunks = chunk_semantic(
+            str(content),
+            max_chars=max_chars,
+            min_chars=min_chars,
+            overlap_sentences=overlap_sentences,
+        )
+        for cidx, chunk in enumerate(chunks):
+            results.append(
+                {
+                    "id": f"{ridx}-{cidx}",
+                    "chunk": chunk,
+                    "record_index": ridx,
+                    "source_file": json_path.name,
+                    **meta,
+                }
+            )
+    return results
+
+
 # ----------------------------
 # CLI
 # ----------------------------
@@ -240,20 +295,20 @@ def parse_args() -> argparse.Namespace:
         --overlap 80
         --output ./medical_docs/medical_documents_20251217_104142_cleaned_chunks.json
     '''
-    parser = argparse.ArgumentParser(description="RAG 切分工具：fixed / structured / semantic")
+    parser = argparse.ArgumentParser(description="RAG 切分工具：fixed / structured / semantic / semantic_meta")
     parser.add_argument(
         "--input",
         "-i",
         type=str,
-        default="/Users/lejinbo/LLM/code-snippets/medical_docs/medical_documents_20251217_104142_cleaned.txt",
+        default="/Users/lejinbo/LLM/code-snippets/medical_docs/medical_documents_20251226_103300_cleaned.json",
         help="待切分的文件路径，支持 .txt / .json（含 cleaned_content）。",
     )
     parser.add_argument(
         "--strategy",
         "-s",
-        choices=["fixed", "structured", "semantic"],
-        default="fixed",
-        help="切分策略：fixed|structured|semantic",
+        choices=["fixed", "structured", "semantic", "semantic_meta"],
+        default="semantic_meta",
+        help="切分策略：fixed|structured|semantic|semantic_meta（JSON 按记录切并保留 metadata）",
     )
     parser.add_argument(
         "--max-chars", type=int, default=DEFAULT_MAX_CHARS, help="单块最大字符数（fixed/structured/semantic）"
@@ -280,14 +335,25 @@ def main() -> None:
     if not input_path.exists():
         raise SystemExit(f"输入文件不存在: {input_path}")
 
-    text = load_text(input_path)
+    text = None
+    if args.strategy == "semantic_meta":
+        if input_path.suffix.lower() != ".json":
+            raise SystemExit("semantic_meta 仅支持 JSON 输入（list/dict）")
+    else:
+        text = load_text(input_path)
 
     if args.strategy == "fixed":
-        chunks = chunk_fixed(text, max_chars=args.max_chars, overlap=args.overlap)
+        chunks = chunk_fixed(text or "", max_chars=args.max_chars, overlap=args.overlap)
     elif args.strategy == "structured":
-        chunks = chunk_structured(text, max_chars=args.max_chars)
-    else:
-        chunks = chunk_semantic(text, max_chars=args.max_chars, overlap_sentences=1)
+        chunks = chunk_structured(text or "", max_chars=args.max_chars)
+    elif args.strategy == "semantic":
+        chunks = chunk_semantic(text or "", max_chars=args.max_chars, overlap_sentences=1)
+    else:  # semantic_meta
+        chunks = chunk_json_with_metadata(
+            input_path,
+            max_chars=args.max_chars,
+            overlap_sentences=1,
+        )
 
     output_path = (
         Path(args.output).expanduser()
