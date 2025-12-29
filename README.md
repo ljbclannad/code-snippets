@@ -3,6 +3,8 @@
 [TOC]
 - [code-snippets 项目索引（按目录）](#code-snippets-项目索引按目录)
     - [DistributedRateLimitingAlgorithm](#distributedratelimitingalgorithm)
+    - [redis](#redis)
+    - [medical-qa-rag](#medical-qa-rag)
     - [from-zero-llm](#from-zero-llm)
     - [gc-qa-rag](#gc-qa-rag)
     - [llm-app-dev](#llm-app-dev)
@@ -30,6 +32,29 @@
     javac *.java
     java RateLimiter
     ```
+
+---
+
+## redis
+- **定位**：Redis 相关实验集合（包括限流、缓存、队列等）。
+- **关键文件/目录**
+  - **限流**：`redis/rate_limiter.py`
+  - **缓存**：`redis/cache.py`
+  - **队列**：`redis/queue.py`
+
+---
+
+## medical-qa-rag
+- **定位**：医疗领域 RAG 系统（包含 ETL 知识库构建、后端服务、前端界面），配套完整文档与 Docker 部署方案。
+- **入口/文档**
+  - **项目总览**：`medical-qa-rag/README.md`
+- **模块目录（核心代码）**
+  - crawler：医疗文档爬虫
+  - knowledge-base：医疗知识库
+    - cleaning.py：医疗知识库清洗
+    - medical_chunk.py：医疗知识库切片
+    - medical_embedding.py：医疗知识库向量化，并保存到faiss索引
+    - medical_model_chat.py：医疗知识库问答
 
 ---
 
