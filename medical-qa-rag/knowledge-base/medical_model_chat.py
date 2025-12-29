@@ -194,6 +194,85 @@ def retrieve_hybrid(
 
 
 # ----------------------------
+# 3.3) 检索后过滤/重排
+#      - 硬过滤：直接剔除不满足约束的候选
+#      - 软过滤：调整权重/重排，不直接丢弃
+# ----------------------------
+def apply_hard_filters(
+    retrieved: List[Tuple[Document, float]],
+    min_score: Optional[float] = None,
+    allowed_lang: Optional[List[str]] = None,
+    must_tags: Optional[List[str]] = None,
+    min_len: int = 0,
+    banned_sources: Optional[List[str]] = None,
+) -> List[Tuple[Document, float]]:
+    kept: List[Tuple[Document, float]] = []
+    allow_lang_set = set(allowed_lang) if allowed_lang else None
+    must_tag_set = set(must_tags) if must_tags else None
+    banned_source_set = set(banned_sources) if banned_sources else None
+
+    for doc, score in retrieved:
+        md = doc.metadata or {}
+        text = (doc.page_content or "").strip()
+
+        if min_score is not None and score < min_score:
+            continue
+
+        if allow_lang_set is not None:
+            lang = md.get("lang") or md.get("language")
+            if lang not in allow_lang_set:
+                continue
+
+        if must_tag_set:
+            tags = set(md.get("tags") or [])
+            if not must_tag_set.issubset(tags):
+                continue
+
+        if min_len and len(text) < min_len:
+            continue
+
+        if banned_source_set:
+            src = md.get("source") or md.get("source_url")
+            if src in banned_source_set:
+                continue
+
+        kept.append((doc, score))
+
+    return kept
+
+
+def apply_soft_rerank(
+    retrieved: List[Tuple[Document, float]],
+    alpha: float = 0.7,
+) -> List[Tuple[Document, float]]:
+    """
+    软过滤：在不丢弃候选的情况下调权重，综合质量/时效等特征后重排。
+    alpha 越大越依赖原检索分数。
+    """
+    reranked: List[Tuple[Document, float]] = []
+    for doc, score in retrieved:
+        md = doc.metadata or {}
+        quality = float(md.get("quality_score", 0.5) or 0.5)
+        freshness = float(md.get("fresh_score", 0.5) or 0.5)
+        bonus = 0.5 * (quality + freshness)
+        new_score = alpha * float(score) + (1 - alpha) * bonus
+        reranked.append((doc, new_score))
+
+    reranked.sort(key=lambda x: x[1], reverse=True)
+    return reranked
+
+
+# Dense 检索返回的是“距离”分数，需转相似度后再做阈值判断/重排
+def _convert_dense_scores_if_needed(
+    retrieved: List[Tuple[Document, float]],
+    mode: str,
+) -> List[Tuple[Document, float]]:
+    if mode != "dense":
+        return retrieved
+    return [(doc, _dense_score_to_similarity(score)) for doc, score in retrieved]
+
+
+# ----------------------------
 # 4) 引用结构化：source_url / chunk_id / snippet
 # ----------------------------
 def build_citations(
@@ -270,6 +349,8 @@ def rag_qa(
     dense_weight: float = 0.6,
     bm25_weight: float = 0.4,
     rrf_k: int = 60,
+    hard_filters: Optional[Dict[str, Any]] = None,
+    soft_rerank_alpha: Optional[float] = None,
 ) -> Dict[str, Any]:
     mode = retrieval_mode.lower()
     if mode == "dense":
@@ -289,6 +370,24 @@ def rag_qa(
         )
     else:
         raise ValueError(f"不支持的检索模式：{retrieval_mode}，可选 dense / bm25 / hybrid_rrf / hybrid_weighted")
+
+    # 先将 dense 路径的距离分转成相似度分，方便阈值判断
+    retrieved = _convert_dense_scores_if_needed(retrieved, mode)
+
+    # 硬过滤：不符合条件的直接剔除
+    if hard_filters:
+        retrieved = apply_hard_filters(
+            retrieved,
+            min_score=hard_filters.get("min_score"),
+            allowed_lang=hard_filters.get("allowed_lang"),
+            must_tags=hard_filters.get("must_tags"),
+            min_len=hard_filters.get("min_len", 0),
+            banned_sources=hard_filters.get("banned_sources"),
+        )
+
+    # 软过滤/重排：调权重，不直接丢弃
+    if soft_rerank_alpha is not None:
+        retrieved = apply_soft_rerank(retrieved, alpha=soft_rerank_alpha)
 
     citations = build_citations(retrieved)
 
