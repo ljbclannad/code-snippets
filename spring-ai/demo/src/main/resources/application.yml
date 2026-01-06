@@ -1,0 +1,14 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: Spring AI Demo
+  ai:
+    deepseek:
+      api-key: sk-94014330085e47a5845cc2acc1a6446a
+      api-base: https://api.deepseek.com
+
+logging:
+  level:
+    org.springframework.ai.chat.client.advisor: DEBUG

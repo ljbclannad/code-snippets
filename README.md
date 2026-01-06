@@ -4,10 +4,11 @@
 - [code-snippets 项目索引（按目录）](#code-snippets-项目索引按目录)
     - [DistributedRateLimitingAlgorithm](#distributedratelimitingalgorithm)
     - [redis](#redis)
-    - [medical-qa-rag](#medical-qa-rag)
     - [from-zero-llm](#from-zero-llm)
     - [gc-qa-rag](#gc-qa-rag)
     - [llm-app-dev](#llm-app-dev)
+    - [medical-qa-rag](#medical-qa-rag)
+    - [spring-ai](#spring-ai)
     - [tokenization](#tokenization)
 
 
@@ -44,20 +45,6 @@
 
 ---
 
-## medical-qa-rag
-- **定位**：医疗领域 RAG 系统（包含 ETL 知识库构建、后端服务、前端界面），配套完整文档与 Docker 部署方案。
-- **入口/文档**
-  - **项目总览**：`medical-qa-rag/README.md`
-- **模块目录（核心代码）**
-  - crawler：医疗文档爬虫
-  - knowledge-base：医疗知识库
-    - cleaning.py：医疗知识库清洗
-    - medical_chunk.py：医疗知识库切片
-    - medical_embedding.py：医疗知识库向量化，并保存到faiss索引
-    - medical_model_chat.py：医疗知识库问答
-
----
-
 ## from-zero-llm
 
 - **定位**：从零实现/理解 LLM 相关基础组件的练习脚本（偏 tokenizer/BPE 入门）。
@@ -75,6 +62,7 @@
     - **示例语料**：`from-zero-llm/the-verdict.txt`
 
 ---
+
 
 ## gc-qa-rag
 
@@ -95,6 +83,7 @@
     - Frontend：开发模式由 Vite 启动（见 `quickstart.md`）
 
 ---
+
 
 ## llm-app-dev
 
@@ -117,6 +106,28 @@
     python semanticSearchTest.py
     ```
 
+---
+
+## medical-qa-rag
+- **定位**：医疗领域 RAG 系统（包含 ETL 知识库构建、后端服务、前端界面），配套完整文档与 Docker 部署方案。
+- **入口/文档**
+  - **项目总览**：`medical-qa-rag/README.md`
+- **模块目录（核心代码）**
+  - crawler：医疗文档爬虫
+  - knowledge-base：医疗知识库
+    - cleaning.py：医疗知识库清洗
+    - medical_chunk.py：医疗知识库切片
+    - medical_embedding.py：医疗知识库向量化，并保存到faiss索引
+    - medical_model_chat.py：医疗知识库问答
+
+---
+
+
+## spring-ai
+
+- **定位**：Spring AI 相关实验集合（包括 Spring AI、Spring Boot、Spring Data、Spring Security 等）。
+- **关键文件/目录**
+ 
 ---
 
 ## tokenization

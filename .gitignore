@@ -45,3 +45,5 @@ ENV/
 .DS_Store
 Thumbs.db
 
+# Spring AI
+spring-ai/demo/target/

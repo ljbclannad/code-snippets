@@ -1,4 +1,5 @@
 
+import importlib
 import os
 import re
 from typing import Any, Dict, List, Tuple, Optional
@@ -262,6 +263,127 @@ def apply_soft_rerank(
     return reranked
 
 
+def _split_sentences(text: str) -> List[str]:
+    """轻量句子切分，中英文标点皆可。"""
+    if not text:
+        return []
+    parts = re.split(r"[。！!？\?；;]|[\r\n]+", text)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _extract_snippet(text: str, query: str, max_chars: int = 600) -> str:
+    """
+    基于关键词的句子选取，生成较短片段。
+    - 优先保留包含 query 关键词的句子
+    - 超长文本时，仅拼接若干高分句子，控制长度
+    """
+    if not text:
+        return ""
+    if len(text) <= max_chars:
+        return text.strip()
+
+    keywords = [w for w in re.split(r"\s+|,|，|。|？|\?|！|!", query) if len(w) >= 2]
+    sentences = _split_sentences(text)
+    if not sentences:
+        return text[:max_chars]
+
+    scored = []
+    for sent in sentences:
+        score = sum(1 for kw in keywords if kw in sent)
+        scored.append((score, sent))
+
+    # 先按匹配度降序，再按长度升序，尽量多塞入关键词句
+    scored.sort(key=lambda x: (-x[0], len(x[1])))
+
+    buf: List[str] = []
+    total = 0
+    for score, sent in scored:
+        if total + len(sent) > max_chars:
+            continue
+        buf.append(sent)
+        total += len(sent)
+        # 若已包含全部关键词，可提前结束
+        if all(kw in " ".join(buf) for kw in keywords):
+            break
+
+    if not buf:
+        return text[:max_chars]
+    return "。".join(buf)
+
+
+def compress_context(
+    retrieved: List[Tuple[Document, float]],
+    query: str,
+    max_total_chars: int = 3200,
+    max_per_doc: int = 800,
+) -> List[Tuple[Document, float]]:
+    """
+    对检索结果做上下文压缩，限制总字数与单 doc 字数。
+    - 基于关键词抽取高相关句子，减少冗余
+    - 截断总长度，降低上下文窗口占用
+    """
+    compressed: List[Tuple[Document, float]] = []
+    remaining = max_total_chars
+
+    for doc, score in retrieved:
+        if remaining <= 0:
+            break
+        raw_text = doc.page_content or ""
+        snippet = _extract_snippet(raw_text, query, max_chars=min(max_per_doc, remaining))
+        new_doc = Document(page_content=snippet, metadata=doc.metadata)
+        compressed.append((new_doc, score))
+        remaining -= len(snippet)
+
+    return compressed
+
+
+_CROSS_ENCODER_CACHE: Dict[str, Any] = {}
+
+
+def load_cross_encoder(model_name: str = "BAAI/bge-reranker-base") -> Any:
+    """
+    线程安全的懒加载 CrossEncoder；需要安装 sentence-transformers。
+    """
+    try:
+        ce_module = importlib.import_module("sentence_transformers")
+        CrossEncoder = getattr(ce_module, "CrossEncoder")
+    except ImportError as e:
+        raise ImportError("请先 pip install sentence-transformers 以启用 CrossEncoder rerank") from e
+
+    if model_name not in _CROSS_ENCODER_CACHE:
+        # trust_remote_code=True 以便兼容部分开源模型的自定义 forward
+        _CROSS_ENCODER_CACHE[model_name] = CrossEncoder(model_name, trust_remote_code=True)
+    return _CROSS_ENCODER_CACHE[model_name]
+
+
+def rerank_with_cross_encoder(
+    retrieved: List[Tuple[Document, float]],
+    query: str,
+    model_name: str = "BAAI/bge-reranker-base",
+    batch_size: int = 16,
+    top_k: Optional[int] = None,
+) -> List[Tuple[Document, float]]:
+    """
+    用 CrossEncoder 对候选进行语义重排；仅在需要高质量排序时启用。
+    """
+    if not retrieved:
+        return []
+
+    ce = load_cross_encoder(model_name)
+    pairs = [(query, doc.page_content or "") for doc, _ in retrieved]
+    scores = ce.predict(pairs, batch_size=batch_size, show_progress_bar=False)
+
+    reranked = [
+        (doc, float(score))
+        for (doc, _), score in zip(retrieved, scores)
+    ]
+    reranked.sort(key=lambda x: x[1], reverse=True)
+
+    if top_k is not None:
+        return reranked[:top_k]
+    return reranked
+
+
 # Dense 检索返回的是“距离”分数，需转相似度后再做阈值判断/重排
 def _convert_dense_scores_if_needed(
     retrieved: List[Tuple[Document, float]],
@@ -351,6 +473,12 @@ def rag_qa(
     rrf_k: int = 60,
     hard_filters: Optional[Dict[str, Any]] = None,
     soft_rerank_alpha: Optional[float] = None,
+    cross_encoder_model: Optional[str] = None,
+    cross_encoder_batch_size: int = 16,
+    cross_encoder_top_k: Optional[int] = None,
+    enable_context_compress: bool = False,
+    context_max_total_chars: int = 3200,
+    context_max_per_doc: int = 800,
 ) -> Dict[str, Any]:
     mode = retrieval_mode.lower()
     if mode == "dense":
@@ -388,6 +516,25 @@ def rag_qa(
     # 软过滤/重排：调权重，不直接丢弃
     if soft_rerank_alpha is not None:
         retrieved = apply_soft_rerank(retrieved, alpha=soft_rerank_alpha)
+
+    # CrossEncoder 语义重排：计算 query-doc 配对分数，提升相关性排序
+    if cross_encoder_model:
+        retrieved = rerank_with_cross_encoder(
+            retrieved,
+            question,
+            model_name=cross_encoder_model,
+            batch_size=cross_encoder_batch_size,
+            top_k=cross_encoder_top_k or k,
+        )
+
+    # 可选：上下文压缩，减少无关或冗长内容
+    if enable_context_compress:
+        retrieved = compress_context(
+            retrieved,
+            question,
+            max_total_chars=context_max_total_chars,
+            max_per_doc=context_max_per_doc,
+        )
 
     citations = build_citations(retrieved)
 
