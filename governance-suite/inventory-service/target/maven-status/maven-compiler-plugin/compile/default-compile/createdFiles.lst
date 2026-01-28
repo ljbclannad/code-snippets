@@ -1,0 +1,15 @@
+com/example/inventory/mapper/StockMapper.class
+com/example/inventory/web/TraceIdFilter.class
+com/example/inventory/model/StockEntity.class
+com/example/inventory/service/StockService.class
+com/example/inventory/web/GlobalExceptionHandler.class
+com/lx/governance/inventory/repo/StockRepository$StockRow.class
+com/lx/governance/inventory/service/InventoryAppService.class
+com/lx/governance/inventory/repo/StockRepository.class
+com/example/inventory/InventoryApplication.class
+com/lx/governance/inventory/controller/InventoryController.class
+com/example/inventory/dto/StockDeductRequest.class
+com/example/inventory/controller/StockController.class
+com/lx/governance/inventory/InventoryServiceApplication.class
+com/lx/governance/inventory/domain/DeductRequest.class
+com/example/inventory/dto/StockDeductResponse.class

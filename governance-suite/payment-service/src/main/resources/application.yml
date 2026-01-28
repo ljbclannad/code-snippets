@@ -1,0 +1,74 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: payment-service
+
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+    sentinel:
+      transport:
+        dashboard: ${SENTINEL_DASHBOARD:localhost:8858}
+        port: 8722
+      eager: true
+
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:6379}
+
+  rabbitmq:
+    host: ${RABBIT_HOST:localhost}
+    port: ${RABBIT_PORT:5672}
+    username: ${RABBIT_USER:guest}
+    password: ${RABBIT_PASS:guest}
+
+  shardingsphere:
+    datasource:
+      names: ds0
+      ds0:
+        type: com.zaxxer.hikari.HikariDataSource
+        driver-class-name: com.mysql.cj.jdbc.Driver
+        jdbc-url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/payment_db?useSSL=false&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+        username: ${MYSQL_USER:root}
+        password: ${MYSQL_PASS:root}
+    rules:
+      sharding:
+        tables:
+          t_payment:
+            actual-data-nodes: ds0.t_payment_${0..1}
+            table-strategy:
+              standard:
+                sharding-column: order_no
+                sharding-algorithm-name: pay-inline
+        sharding-algorithms:
+          pay-inline:
+            type: INLINE
+            props:
+              algorithm-expression: t_payment_${Math.abs(order_no.hashCode()) % 2}
+    props:
+      sql-show: true
+
+seata:
+  enabled: true
+  application-id: ${spring.application.name}
+  tx-service-group: payment_tx_group
+  enable-auto-data-source-proxy: true
+  data-source-proxy-mode: AT
+  service:
+    vgroup-mapping:
+      payment_tx_group: default
+    grouplist:
+      default: ${SEATA_ADDR:localhost:8091}
+  registry:
+    type: file
+  config:
+    type: file
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: '*'

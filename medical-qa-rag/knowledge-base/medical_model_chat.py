@@ -1,5 +1,5 @@
 
-import importlib
+import json
 import os
 import re
 from typing import Any, Dict, List, Tuple, Optional
@@ -11,6 +11,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_core.documents import Document
 from langchain_core.messages import SystemMessage, HumanMessage
 
+from reranker import CrossEncoderReranker, LLMReranker, Reranker
 
 # ----------------------------
 # 1) 初始化：LLM（DeepSeek）
@@ -271,18 +272,32 @@ def _split_sentences(text: str) -> List[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
-def _extract_snippet(text: str, query: str, max_chars: int = 600) -> str:
+def _split_paragraphs(text: str) -> List[str]:
+    """按空行/多行分隔切分段落。"""
+    if not text:
+        return []
+    parts = re.split(r"\n\s*\n+", text)
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _keyword_list(query: str) -> List[str]:
+    return [w for w in re.split(r"\s+|,|，|。|？|\?|！|!", query) if len(w) >= 2]
+
+
+def _score_text(text: str, keywords: List[str]) -> int:
+    return sum(1 for kw in keywords if kw in text)
+
+
+def _extract_snippet_sentences(text: str, query: str, max_chars: int = 600) -> str:
     """
-    基于关键词的句子选取，生成较短片段。
-    - 优先保留包含 query 关键词的句子
-    - 超长文本时，仅拼接若干高分句子，控制长度
+    句子抽取：基于关键词选句，控制长度。
     """
     if not text:
         return ""
     if len(text) <= max_chars:
         return text.strip()
 
-    keywords = [w for w in re.split(r"\s+|,|，|。|？|\?|！|!", query) if len(w) >= 2]
+    keywords = _keyword_list(query)
     sentences = _split_sentences(text)
     if not sentences:
         return text[:max_chars]
@@ -311,77 +326,78 @@ def _extract_snippet(text: str, query: str, max_chars: int = 600) -> str:
     return "。".join(buf)
 
 
+def _extract_snippet_paragraphs(text: str, query: str, max_chars: int = 600) -> str:
+    """
+    段落裁剪：优先保留与 query 关键词匹配的段落。
+    """
+    if not text:
+        return ""
+    if len(text) <= max_chars:
+        return text.strip()
+
+    paragraphs = _split_paragraphs(text)
+    if not paragraphs:
+        return text[:max_chars]
+
+    keywords = _keyword_list(query)
+    scored = [( _score_text(p, keywords), p) for p in paragraphs]
+    scored.sort(key=lambda x: (-x[0], len(x[1])))
+
+    buf: List[str] = []
+    total = 0
+    for score, para in scored:
+        if total + len(para) > max_chars:
+            continue
+        buf.append(para)
+        total += len(para)
+        if all(kw in "\n".join(buf) for kw in keywords):
+            break
+
+    if not buf:
+        return text[:max_chars]
+    return "\n\n".join(buf)
+
+
+def _extract_snippet_hybrid(text: str, query: str, max_chars: int = 600) -> str:
+    """
+    先段落裁剪，再在候选段落内做句子抽取，保证可读性与相关性。
+    """
+    para = _extract_snippet_paragraphs(text, query, max_chars=max_chars)
+    return _extract_snippet_sentences(para, query, max_chars=max_chars)
+
+
 def compress_context(
     retrieved: List[Tuple[Document, float]],
     query: str,
     max_total_chars: int = 3200,
     max_per_doc: int = 800,
+    strategy: str = "sentences",
 ) -> List[Tuple[Document, float]]:
     """
     对检索结果做上下文压缩，限制总字数与单 doc 字数。
-    - 基于关键词抽取高相关句子，减少冗余
+    - 句子抽取 / 段落裁剪 / 混合策略
     - 截断总长度，降低上下文窗口占用
     """
     compressed: List[Tuple[Document, float]] = []
     remaining = max_total_chars
+    strategy_lc = (strategy or "sentences").lower()
 
     for doc, score in retrieved:
         if remaining <= 0:
             break
         raw_text = doc.page_content or ""
-        snippet = _extract_snippet(raw_text, query, max_chars=min(max_per_doc, remaining))
+        max_chars = min(max_per_doc, remaining)
+        if strategy_lc in {"paragraphs", "para"}:
+            snippet = _extract_snippet_paragraphs(raw_text, query, max_chars=max_chars)
+        elif strategy_lc in {"hybrid", "mix"}:
+            snippet = _extract_snippet_hybrid(raw_text, query, max_chars=max_chars)
+        else:
+            snippet = _extract_snippet_sentences(raw_text, query, max_chars=max_chars)
         new_doc = Document(page_content=snippet, metadata=doc.metadata)
         compressed.append((new_doc, score))
         remaining -= len(snippet)
 
     return compressed
-
-
-_CROSS_ENCODER_CACHE: Dict[str, Any] = {}
-
-
-def load_cross_encoder(model_name: str = "BAAI/bge-reranker-base") -> Any:
-    """
-    线程安全的懒加载 CrossEncoder；需要安装 sentence-transformers。
-    """
-    try:
-        ce_module = importlib.import_module("sentence_transformers")
-        CrossEncoder = getattr(ce_module, "CrossEncoder")
-    except ImportError as e:
-        raise ImportError("请先 pip install sentence-transformers 以启用 CrossEncoder rerank") from e
-
-    if model_name not in _CROSS_ENCODER_CACHE:
-        # trust_remote_code=True 以便兼容部分开源模型的自定义 forward
-        _CROSS_ENCODER_CACHE[model_name] = CrossEncoder(model_name, trust_remote_code=True)
-    return _CROSS_ENCODER_CACHE[model_name]
-
-
-def rerank_with_cross_encoder(
-    retrieved: List[Tuple[Document, float]],
-    query: str,
-    model_name: str = "BAAI/bge-reranker-base",
-    batch_size: int = 16,
-    top_k: Optional[int] = None,
-) -> List[Tuple[Document, float]]:
-    """
-    用 CrossEncoder 对候选进行语义重排；仅在需要高质量排序时启用。
-    """
-    if not retrieved:
-        return []
-
-    ce = load_cross_encoder(model_name)
-    pairs = [(query, doc.page_content or "") for doc, _ in retrieved]
-    scores = ce.predict(pairs, batch_size=batch_size, show_progress_bar=False)
-
-    reranked = [
-        (doc, float(score))
-        for (doc, _), score in zip(retrieved, scores)
-    ]
-    reranked.sort(key=lambda x: x[1], reverse=True)
-
-    if top_k is not None:
-        return reranked[:top_k]
-    return reranked
 
 
 # Dense 检索返回的是“距离”分数，需转相似度后再做阈值判断/重排
@@ -422,6 +438,94 @@ def build_citations(
             }
         )
     return cites
+
+
+def _build_evidence_from_citations(citations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    evidence = []
+    for c in citations:
+        evidence.append(
+            {
+                "引用": f"[{c['rank']}]",
+                "source_url": c.get("source_url"),
+                "chunk_id": c.get("chunk_id"),
+                "snippet": c.get("snippet") or c.get("content", "")[:220],
+            }
+        )
+    return evidence
+
+
+def _extract_json_block(text: str) -> Optional[str]:
+    """
+    从模型输出中提取 JSON 块（容忍前后多余文本）。
+    """
+    if not text:
+        return None
+    text = text.strip()
+    if text.startswith("{") and text.endswith("}"):
+        return text
+    match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+    return match.group(0) if match else None
+
+
+def validate_structured_json(
+    payload: Any,
+    citations: Optional[List[Dict[str, Any]]] = None,
+) -> Tuple[bool, List[str]]:
+    """
+    校验结构化输出：
+    - 必须包含：适用 / 不适用 / 证据
+    - 适用、不适用为字符串
+    - 证据为数组，元素必须是 dict 且包含引用
+    - 若提供 citations，引用必须在已有 rank 中
+    """
+    errors: List[str] = []
+    if not isinstance(payload, dict):
+        return False, ["payload 不是对象"]
+
+    for key in ["适用", "不适用", "证据"]:
+        if key not in payload:
+            errors.append(f"缺少字段: {key}")
+
+    if "适用" in payload and not isinstance(payload["适用"], str):
+        errors.append("适用 必须是字符串")
+    if "不适用" in payload and not isinstance(payload["不适用"], str):
+        errors.append("不适用 必须是字符串")
+
+    if "证据" in payload:
+        if not isinstance(payload["证据"], list):
+            errors.append("证据 必须是数组")
+        else:
+            valid_refs = set()
+            if citations:
+                valid_refs = {f"[{c['rank']}]" for c in citations}
+            for idx, item in enumerate(payload["证据"]):
+                if not isinstance(item, dict):
+                    errors.append(f"证据[{idx}] 不是对象")
+                    continue
+                if "引用" not in item:
+                    errors.append(f"证据[{idx}] 缺少引用")
+                    continue
+                if citations and item.get("引用") not in valid_refs:
+                    errors.append(f"证据[{idx}] 引用无效: {item.get('引用')}")
+
+    return len(errors) == 0, errors
+
+
+def parse_and_validate_structured_json(
+    text: str,
+    citations: Optional[List[Dict[str, Any]]] = None,
+) -> Tuple[Optional[Dict[str, Any]], List[str]]:
+    block = _extract_json_block(text)
+    if not block:
+        return None, ["未找到 JSON 块"]
+    try:
+        payload = json.loads(block)
+    except json.JSONDecodeError as e:
+        return None, [f"JSON 解析失败: {e}"]
+    ok, errors = validate_structured_json(payload, citations=citations)
+    if not ok:
+        return payload, errors
+    return payload, []
 
 
 # ----------------------------
@@ -476,9 +580,17 @@ def rag_qa(
     cross_encoder_model: Optional[str] = None,
     cross_encoder_batch_size: int = 16,
     cross_encoder_top_k: Optional[int] = None,
+    reranker: Optional[Reranker] = None,
+    rerank_top_k: Optional[int] = None,
+    llm_rerank: bool = False,
+    llm_rerank_batch_size: int = 5,
+    llm_rerank_max_chars: int = 800,
+    llm_rerank_blend_weight: float = 0.85,
     enable_context_compress: bool = False,
     context_max_total_chars: int = 3200,
     context_max_per_doc: int = 800,
+    context_strategy: str = "sentences",
+    structured_output: bool = False,
 ) -> Dict[str, Any]:
     mode = retrieval_mode.lower()
     if mode == "dense":
@@ -517,15 +629,25 @@ def rag_qa(
     if soft_rerank_alpha is not None:
         retrieved = apply_soft_rerank(retrieved, alpha=soft_rerank_alpha)
 
+    # Reranker 接口：优先使用外部传入的 reranker
+    if reranker is not None:
+        retrieved = reranker.rerank(question, retrieved, top_k=rerank_top_k or k)
+    # LLM rerank（按需开启）
+    elif llm_rerank:
+        llm_reranker = LLMReranker(
+            chat_model=chat_model,
+            batch_size=llm_rerank_batch_size,
+            max_chars_per_doc=llm_rerank_max_chars,
+            blend_weight=llm_rerank_blend_weight,
+        )
+        retrieved = llm_reranker.rerank(question, retrieved, top_k=rerank_top_k or k)
     # CrossEncoder 语义重排：计算 query-doc 配对分数，提升相关性排序
-    if cross_encoder_model:
-        retrieved = rerank_with_cross_encoder(
-            retrieved,
-            question,
+    elif cross_encoder_model:
+        ce_reranker = CrossEncoderReranker(
             model_name=cross_encoder_model,
             batch_size=cross_encoder_batch_size,
-            top_k=cross_encoder_top_k or k,
         )
+        retrieved = ce_reranker.rerank(question, retrieved, top_k=cross_encoder_top_k or k)
 
     # 可选：上下文压缩，减少无关或冗长内容
     if enable_context_compress:
@@ -534,6 +656,7 @@ def rag_qa(
             question,
             max_total_chars=context_max_total_chars,
             max_per_doc=context_max_per_doc,
+            strategy=context_strategy,
         )
 
     citations = build_citations(retrieved)
@@ -558,24 +681,46 @@ def rag_qa(
         )
     context = "\n".join(context_lines)
 
-    system = SystemMessage(
-        content=(
-            "你是一个严谨的医疗健康政策问答助手。\n"
-            "必须只基于给定【证据】回答，不要编造。\n"
-            "如果证据不足，明确说“证据不足”，并说明需要什么信息。\n"
-            "回答要简洁；给出结论后，列出引用编号，如：依据[1][2]。\n"
+    if structured_output:
+        system = SystemMessage(
+            content=(
+                "你是一个严谨的医疗健康政策问答助手。\n"
+                "必须只基于给定【证据】回答，不要编造。\n"
+                "输出必须为 JSON 对象，且只输出 JSON。\n"
+                "必须包含字段：适用、不适用、证据。\n"
+                "证据为数组，元素对象至少包含：引用。\n"
+                "引用值必须使用形如 [1]、[2] 的编号。\n"
+            )
         )
-    )
-    user = HumanMessage(
-        content=(
-            f"问题：{question}\n\n"
-            f"【证据】\n{context}\n\n"
-            "请基于证据作答：\n"
-            "1) 先给出结论\n"
-            "2) 再给出依据（引用编号）\n"
-            "3) 若存在冲突或口径不一致，请提示风险\n"
+        user = HumanMessage(
+            content=(
+                f"问题：{question}\n\n"
+                f"【证据】\n{context}\n\n"
+                "请输出 JSON：\n"
+                "适用：给出适用场景/条件与结论（无则给空字符串）\n"
+                "不适用：给出不适用场景/排除条件（无则给空字符串）\n"
+                "证据：列出支撑结论的引用编号（可带简短说明）\n"
+            )
         )
-    )
+    else:
+        system = SystemMessage(
+            content=(
+                "你是一个严谨的医疗健康政策问答助手。\n"
+                "必须只基于给定【证据】回答，不要编造。\n"
+                "如果证据不足，明确说“证据不足”，并说明需要什么信息。\n"
+                "回答要简洁；给出结论后，列出引用编号，如：依据[1][2]。\n"
+            )
+        )
+        user = HumanMessage(
+            content=(
+                f"问题：{question}\n\n"
+                f"【证据】\n{context}\n\n"
+                "请基于证据作答：\n"
+                "1) 先给出结论\n"
+                "2) 再给出依据（引用编号）\n"
+                "3) 若存在冲突或口径不一致，请提示风险\n"
+            )
+        )
 
     resp = chat_model.invoke([system, user])
     answer_text = (resp.content or "").strip()
@@ -584,6 +729,30 @@ def rag_qa(
     notes = []
     if conflict_note:
         notes.append(conflict_note)
+
+    if structured_output:
+        structured, errors = parse_and_validate_structured_json(answer_text, citations=citations)
+        if structured is None or errors:
+            fallback = {
+                "适用": "",
+                "不适用": "",
+                "证据": _build_evidence_from_citations(citations),
+            }
+            return {
+                "question": question,
+                "answer": answer_text,
+                "structured": structured or fallback,
+                "citations": citations,
+                "notes": notes,
+                "validation_errors": errors,
+            }
+        return {
+            "question": question,
+            "answer": answer_text,
+            "structured": structured,
+            "citations": citations,
+            "notes": notes,
+        }
 
     return {
         "question": question,

@@ -10,6 +10,8 @@
     - [medical-qa-rag](#medical-qa-rag)
     - [spring-ai](#spring-ai)
     - [tokenization](#tokenization)
+    - [governance-suite](#governance-suite)
+    - [Snowflake-demo](#snowflake-demo)
 
 
 本文件用于记录仓库根目录下**每个已存在的项目文件夹**的用途与入口，方便快速定位代码。
@@ -141,3 +143,18 @@
   - **示意图**：`tokenization/tokenization.png`
 
 
+---
+
+## governance-suite
+- **入口/文档**
+  - [governance-suite/README.md](governance-suite/README.md)
+
+
+---
+
+## Snowflake-demo
+- **定位**：Snowflake 相关实验集合（包括 Snowflake、号段、分布式主键等）。
+- **入口/文档**
+  - [Snowflake-demo/README.md](Snowflake-demo/README.md)
+
+---

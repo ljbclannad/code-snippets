@@ -40,4 +40,58 @@
 6. 访问问答前端
 7. 开始提问
 
+## 评测 v1（Recall@K / MRR / 命中率）
+
+### 评测集格式
+支持 JSON 或 JSONL，每条样本至少包含 query/question 和相关文档标注：
+
+- 方式 A：使用 `relevant_doc_ids`（推荐，稳定）
+- 方式 B：使用 `relevant`（source + chunk_id）
+- 方式 C：仅使用 `relevant_chunk_ids`（可能存在冲突，谨慎）
+
+示例：
+```json
+[
+  {
+    "query": "医保目录更新时间？",
+    "relevant_doc_ids": ["医保政策-药品目录调整通知::12", "医保政策-药品目录调整通知::15"]
+  },
+  {
+    "question": "新增药品挂网工作需要在什么时候之前完成？",
+    "relevant": [
+      {"source": "医保政策-药品目录调整通知", "chunk_id": "3"}
+    ]
+  }
+]
+```
+
+### 评测脚本
+```bash
+python knowledge-base/eval_retrieval.py \
+  --index-dir /path/to/faiss_index \
+  --data /path/to/eval.json \
+  --output /path/to/report.json \
+  --retrieval-mode dense \
+  --ks 1,3,5,10
+```
+
+可选开启重排：
+```bash
+python knowledge-base/eval_retrieval.py \
+  --index-dir /path/to/faiss_index \
+  --data /path/to/eval.json \
+  --output /path/to/report.json \
+  --retrieval-mode dense \
+  --rerank cross_encoder \
+  --cross-encoder-model BAAI/bge-reranker-base
+```
+
+### 报表脚本（汇总多次评测）
+```bash
+python knowledge-base/report_eval.py \
+  --inputs /path/to/report_a.json /path/to/report_b.json \
+  --csv-output /path/to/metrics.csv \
+  --md-output /path/to/metrics.md
+```
+
 ## 注意事项

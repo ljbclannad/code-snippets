@@ -1,0 +1,9 @@
+com/lx/governance/outbox/OutboxConsumerApplication.class
+com/example/outbox/mapper/OutboxMapper.class
+com/example/outbox/config/RabbitTopologyConfig.class
+com/lx/governance/outbox/repo/OutboxRepo.class
+com/lx/governance/outbox/repo/OutboxRepo$Record.class
+com/example/outbox/model/OutboxEvent.class
+com/example/outbox/job/OutboxPublisherJob.class
+com/example/outbox/OutboxConsumerApplication.class
+com/lx/governance/outbox/service/OutboxPublisher.class

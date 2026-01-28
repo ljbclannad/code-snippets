@@ -1,0 +1,69 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: idgen-demo
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/idgen_demo?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai}
+    username: ${DB_USER:root}
+    password: ${DB_PASS:root}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASS:}
+      timeout: 2s
+
+mybatis:
+  mapper-locations: classpath*:mapper/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,env,loggers
+  endpoint:
+    health:
+      show-details: always
+  metrics:
+    tags:
+      app: ${spring.application.name}
+
+# 分布式主键配置
+idgen:
+  # 默认策略：SNOWFLAKE | SEGMENT
+  strategy: ${IDGEN_STRATEGY:SNOWFLAKE}
+
+  # Deployment 场景推荐：workerId 由 Redis 动态分配。
+  # 若你愿意手工分配（实例数 <5），也可以设置固定 workerId（0~1023）。
+  worker-id: ${IDGEN_WORKER_ID:}
+
+  redis-worker:
+    enabled: ${IDGEN_REDIS_WORKER_ENABLED:true}
+    max-worker-id: 32
+    lease-ttl-seconds: 30
+    renew-interval-seconds: 10
+
+  snowflake:
+    # 自定义纪元：2024-01-01 UTC
+    epoch: 1704067200000
+    # 回拨容忍阈值：<=5ms 等待；>5ms 抛异常（可触发兜底切换）
+    max-backward-ms: 5
+
+  segment:
+    biz-tag: order
+    refill-threshold: 200
+    async-prefetch: true
+
+  # 灰度：根据 grayKey（如 userId）做稳定分流；如果没有 grayKey 则随机
+  gray:
+    enabled: ${IDGEN_GRAY_ENABLED:false}
+    snowflake-percent: ${IDGEN_GRAY_SNOWFLAKE_PERCENT:100}
+
+logging:
+  level:
+    com.example.idgendemo: INFO

@@ -1,0 +1,84 @@
+server:
+  port: 8081
+
+spring:
+  application:
+    name: order-service
+
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+    sentinel:
+      transport:
+        dashboard: ${SENTINEL_DASHBOARD:localhost:8858}
+        port: 8721
+      eager: true
+
+  redis:
+    host: ${REDIS_HOST:localhost}
+    port: ${REDIS_PORT:6379}
+
+  rabbitmq:
+    host: ${RABBIT_HOST:localhost}
+    port: ${RABBIT_PORT:5672}
+    username: ${RABBIT_USER:guest}
+    password: ${RABBIT_PASS:guest}
+    listener:
+      simple:
+        acknowledge-mode: auto
+
+  shardingsphere:
+    datasource:
+      names: ds0
+      ds0:
+        type: com.zaxxer.hikari.HikariDataSource
+        driver-class-name: com.mysql.cj.jdbc.Driver
+        jdbc-url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/order_db?useSSL=false&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+        username: ${MYSQL_USER:root}
+        password: ${MYSQL_PASS:root}
+    rules:
+      sharding:
+        tables:
+          t_order:
+            actual-data-nodes: ds0.t_order_${0..1}
+            table-strategy:
+              standard:
+                sharding-column: order_no
+                sharding-algorithm-name: order-inline
+          t_outbox:
+            actual-data-nodes: ds0.t_outbox
+        sharding-algorithms:
+          order-inline:
+            type: INLINE
+            props:
+              algorithm-expression: t_order_${Math.abs(order_no.hashCode()) % 2}
+    props:
+      sql-show: true
+
+# Seata client
+seata:
+  enabled: true
+  application-id: ${spring.application.name}
+  tx-service-group: order_tx_group
+  enable-auto-data-source-proxy: true
+  data-source-proxy-mode: AT
+  service:
+    vgroup-mapping:
+      order_tx_group: default
+    grouplist:
+      default: ${SEATA_ADDR:localhost:8091}
+  registry:
+    type: file
+  config:
+    type: file
+
+feign:
+  sentinel:
+    enabled: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: '*'

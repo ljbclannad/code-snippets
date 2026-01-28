@@ -4,11 +4,11 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.example</groupId>
-    <artifactId>demo</artifactId>
+    <artifactId>spring-ai-demo</artifactId>
     <version>source /Users/lejinbo/LLM/code-snippets/.venv/bin/activate</version>
     <packaging>jar</packaging>
 
-    <name>demo</name>
+    <name>spring-ai-demo</name>
     <description>Demo project for Spring Boot</description>
 
     <parent>
