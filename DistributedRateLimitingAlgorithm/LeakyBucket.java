@@ -3,6 +3,12 @@ import java.util.Deque;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
+/**
+ * 漏桶算法
+ * 
+ * @author jinbo.le
+ * @date 2026-02-03
+ */
 public class LeakyBucket {
 
     private final int capacity;

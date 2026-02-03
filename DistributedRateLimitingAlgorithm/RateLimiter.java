@@ -2,6 +2,9 @@ import java.util.logging.Logger;
 
 /**
  * 分布式限流器-计数器算法
+ * 
+ * @author jinbo.le
+ * @date 2026-02-03
  */
 public class RateLimiter {
 

@@ -2,6 +2,12 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * 令牌桶算法
+ * 
+ * @author jinbo.le
+ * @date 2026-02-03
+ */
 public class TokenBucket {
     private final int capacity; // 令牌桶容量
     private final int refillRate; // 令牌生成速率（每秒生成多少个）

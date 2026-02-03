@@ -1,6 +1,12 @@
 import java.util.ArrayDeque;
 import java.util.Deque;
 
+/**
+ * 滑动时间窗口-时间戳版
+ * 
+ * @author jinbo.le
+ * @date 2026-02-03
+ */
 public class SlidingTimeWindowTimeStamp {
 
     // 窗口最大请求数

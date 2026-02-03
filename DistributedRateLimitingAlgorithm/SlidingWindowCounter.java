@@ -1,3 +1,9 @@
+/**
+ * 滑动时间窗口-计数版
+ * 
+ * @author jinbo.le
+ * @date 2026-02-03
+ */
 public class SlidingWindowCounter {
     // 窗口最大请求数
     private final int maxRequests;
