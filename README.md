@@ -91,7 +91,7 @@
 
 - **定位**：LLM 应用开发实验场（OpenAI/DeepSeek API、LangChain、RAG/向量检索、记忆等）。
 - **子目录说明**
-  - **api**：`llm-app-dev/api/test.py`（基础对话调用示例）
+  - **api**：`llm-app-dev/api/test.py`（基础对话调用示例）、`llm-app-dev/api/minimal_openai_request.py`（最小 token 请求示例）
   - **langchainTest**：Prompt 模板、输出解析等（如 `promptTemplate.py`）
   - **memoryTest**：对话记忆（如 `MessageHistory.py` 使用 `RunnableWithMessageHistory`）
   - **ragTest**：向量库/检索/Agent 实验（如 `semanticSearchTest.py`、`ragAgentTest.py`）
