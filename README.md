@@ -7,6 +7,7 @@
     - [from-zero-llm](#from-zero-llm)
     - [gc-qa-rag](#gc-qa-rag)
     - [llm-app-dev](#llm-app-dev)
+    - [dify-api-test-java](#dify-api-test-java)
     - [medical-qa-rag](#medical-qa-rag)
     - [spring-ai](#spring-ai)
     - [tokenization](#tokenization)
@@ -106,6 +107,33 @@
     ```bash
     cd llm-app-dev/ragTest
     python semanticSearchTest.py
+    ```
+
+---
+
+## dify-api-test-java
+
+- **定位**：Dify API 的 Java 最小测试项目，覆盖 workflow 与 agent 调用。
+- **入口/文档**
+  - `dify-api-test-java/README.md`
+- **如何运行（示例）**
+  - 进入目录构建：
+
+    ```bash
+    cd dify-api-test-java
+    mvn -q -DskipTests package
+    ```
+  - Workflow 测试：
+
+    ```bash
+    export DIFY_API_KEY="你的workflow应用API Key"
+    java -cp target/classes com.example.dify.WorkflowTest
+    ```
+  - Agent 测试：
+
+    ```bash
+    export DIFY_API_KEY="你的agent应用API Key"
+    java -cp target/classes com.example.dify.AgentTest
     ```
 
 ---
