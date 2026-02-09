@@ -9,6 +9,7 @@
     - [llm-app-dev](#llm-app-dev)
     - [dify-api-test-java](#dify-api-test-java)
     - [medical-qa-rag](#medical-qa-rag)
+    - [learning-agent](#learning-agent)
     - [spring-ai](#spring-ai)
     - [tokenization](#tokenization)
     - [governance-suite](#governance-suite)
@@ -149,6 +150,21 @@
     - medical_chunk.py：医疗知识库切片
     - medical_embedding.py：医疗知识库向量化，并保存到faiss索引
     - medical_model_chat.py：医疗知识库问答
+
+---
+
+## learning-agent
+- **定位**：学习型 Agent 最小可运行示例（写入笔记并用 TF-IDF 检索回答）。
+- **入口/文档**
+  - **项目总览**：`learning-agent/README.md`
+- **如何运行（示例）**
+  - 构建索引并提问：
+
+    ```bash
+    cd learning-agent
+    python knowledge-base/build_index.py
+    python agent/learning_agent.py ask "如何提高检索命中率？"
+    ```
 
 ---
 

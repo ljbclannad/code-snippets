@@ -1,0 +1,3 @@
+{"id": "note-001", "text": "学习型Agent需要持续记录新知识，并通过检索快速定位相关笔记。", "tags": ["agent", "learning"]}
+{"id": "note-002", "text": "将知识拆成短句并打标签，有助于后续的检索与重用。", "tags": ["knowledge-base"]}
+{"id": "note-003", "text": "当问题包含多个主题时，可先提炼关键词再匹配相似内容。", "tags": ["retrieval", "prompt"]}
