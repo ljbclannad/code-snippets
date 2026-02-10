@@ -1,9 +1,9 @@
 package com.lx.governance.outbox.repo;
 
+import java.util.List;
+
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
-
-import java.util.List;
 
 @Repository
 public class OutboxRepo {
@@ -17,9 +17,9 @@ public class OutboxRepo {
     public List<Record> findNew(int limit) {
         return jdbcTemplate.query(
                 "SELECT id, event_id, event_type, payload FROM t_outbox WHERE status='NEW' ORDER BY id ASC LIMIT ?",
-                (rs, n) -> new Record(rs.getLong("id"), rs.getString("event_id"), rs.getString("event_type"), rs.getString("payload")),
-                limit
-        );
+                (rs, n) -> new Record(rs.getLong("id"), rs.getString("event_id"), rs.getString("event_type"),
+                        rs.getString("payload")),
+                limit);
     }
 
     public int markSent(long id) {

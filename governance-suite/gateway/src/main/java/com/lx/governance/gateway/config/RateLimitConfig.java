@@ -3,7 +3,7 @@ package com.lx.governance.gateway.config;
 import org.springframework.cloud.gateway.filter.ratelimit.KeyResolver;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.web.server.ServerWebExchange;
+
 import reactor.core.publisher.Mono;
 
 @Configuration
@@ -14,8 +14,9 @@ public class RateLimitConfig {
         return exchange -> {
             String ip = exchange.getRequest().getHeaders().getFirst("X-Forwarded-For");
             if (ip == null || ip.isBlank()) {
-                ip = exchange.getRequest().getRemoteAddress() != null ?
-                        exchange.getRequest().getRemoteAddress().getAddress().getHostAddress() : "unknown";
+                ip = exchange.getRequest().getRemoteAddress() != null
+                        ? exchange.getRequest().getRemoteAddress().getAddress().getHostAddress()
+                        : "unknown";
             } else {
                 ip = ip.split(",")[0].trim();
             }
