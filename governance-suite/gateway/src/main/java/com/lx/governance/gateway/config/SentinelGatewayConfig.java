@@ -18,6 +18,7 @@ import org.springframework.web.server.ServerWebExchange;
 
 import com.alibaba.csp.sentinel.adapter.gateway.sc.SentinelGatewayFilter;
 import com.alibaba.csp.sentinel.adapter.gateway.sc.callback.BlockRequestHandler;
+import com.alibaba.csp.sentinel.adapter.gateway.sc.callback.GatewayCallbackManager;
 import com.alibaba.csp.sentinel.adapter.gateway.sc.exception.SentinelGatewayBlockExceptionHandler;
 import com.alibaba.csp.sentinel.slots.block.BlockException;
 
@@ -33,7 +34,7 @@ public class SentinelGatewayConfig {
         org.springframework.http.codec.ServerCodecConfigurer codecConfigurer = codecConfigurerProvider.getIfAvailable();
         SentinelGatewayBlockExceptionHandler handler = new SentinelGatewayBlockExceptionHandler(viewResolvers,
                 codecConfigurer);
-        // handler.handle(jsonBlockRequestHandler());
+        GatewayCallbackManager.setBlockHandler(jsonBlockRequestHandler());
         return handler;
     }
 
@@ -55,7 +56,7 @@ public class SentinelGatewayConfig {
             body.put("traceId", traceId);
 
             return ServerResponse.status(HttpStatus.TOO_MANY_REQUESTS)
-                    .contentType(MediaType.APPLICATION_JSON)
+                    .header("Content-Type", MediaType.APPLICATION_JSON_VALUE)
                     .bodyValue(body);
         };
     }

@@ -1,10 +1,10 @@
 package com.lx.governance.common.web;
 
-import com.lx.governance.common.api.ApiResponse;
-import com.lx.governance.common.trace.Trace;
-import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+
+import com.lx.governance.common.api.ApiResponse;
+import com.lx.governance.common.trace.Trace;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {

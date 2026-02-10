@@ -1,20 +1,24 @@
 package com.lx.governance.common.web;
 
-import com.lx.governance.common.trace.Trace;
-import org.springframework.web.filter.OncePerRequestFilter;
+import java.io.IOException;
 
 import javax.servlet.FilterChain;
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
-import java.io.IOException;
+
+import org.springframework.lang.NonNull;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+import com.lx.governance.common.trace.Trace;
 
 public class TraceIdFilter extends OncePerRequestFilter {
 
     public static final String HEADER = "X-Trace-Id";
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+    protected void doFilterInternal(@NonNull HttpServletRequest request, @NonNull HttpServletResponse response,
+            @NonNull FilterChain filterChain)
             throws ServletException, IOException {
         String traceId = request.getHeader(HEADER);
         if (traceId != null && !traceId.isBlank()) {
