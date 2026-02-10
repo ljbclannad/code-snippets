@@ -1,60 +1,79 @@
-version: '3.8'
+name: governance-suite
 
 services:
-  mysql:
-    image: mysql:8.0
-    container_name: gov-mysql
-    environment:
-      MYSQL_ROOT_PASSWORD: root
-      TZ: Asia/Shanghai
-    ports:
-      - "3306:3306"
-    volumes:
-      - ./sql/init-mysql.sql:/docker-entrypoint-initdb.d/1-init.sql:ro
-      - gov_mysql_data:/var/lib/mysql
-    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci", "--default-time-zone=+08:00"]
+    mysql:
+        image: example/mysql:8.0.30
+        pull_policy: never
+        container_name: gov-mysql
+        environment:
+            MYSQL_ROOT_PASSWORD: root
+            TZ: Asia/Shanghai
+        ports:
+            - "3306:3306"
+        volumes:
+            - ./sql:/docker-entrypoint-initdb.d:ro
+            - gov_mysql_data:/var/lib/mysql
+        command:
+            - "--character-set-server=utf8mb4"
+            - "--collation-server=utf8mb4_unicode_ci"
+            - "--default-time-zone=+08:00"
 
-  redis:
-    image: redis:7
-    container_name: gov-redis
-    ports:
-      - "6379:6379"
+    redis:
+        image: redis:latest
+        pull_policy: never
+        container_name: gov-redis
+        ports:
+            - "36379:6379"
+        volumes:
+            - gov_redis_data:/data
 
-  rabbitmq:
-    image: rabbitmq:3.13-management
-    container_name: gov-rabbitmq
-    ports:
-      - "5672:5672"
-      - "15672:15672"
+    rabbitmq:
+        image: rabbitmq:3.13-management
+        container_name: gov-rabbitmq
+        ports:
+            - "5672:5672"
+            - "15672:15672"
 
-  nacos:
-    image: nacos/nacos-server:v2.2.3
-    container_name: gov-nacos
-    environment:
-      MODE: standalone
-      PREFER_HOST_MODE: hostname
-      TZ: Asia/Shanghai
-    ports:
-      - "8848:8848"
+    nacos:
+        image: nacos/nacos-server:v2.5.1
+        pull_policy: never
+        container_name: gov-nacos
+        environment:
+            MODE: standalone
+            PREFER_HOST_MODE: hostname
+            TZ: Asia/Shanghai
+            SPRING_DATASOURCE_PLATFORM: mysql
+            MYSQL_SERVICE_HOST: mysql
+            MYSQL_SERVICE_PORT: 3306
+            MYSQL_SERVICE_DB_NAME: nacos
+            MYSQL_SERVICE_USER: root
+            MYSQL_SERVICE_PASSWORD: root
+            MYSQL_SERVICE_DB_PARAM: characterEncoding=utf8&connectTimeout=1000&socketTimeout=3000&autoReconnect=true&useSSL=false&serverTimezone=Asia/Shanghai
+        ports:
+            - "8848:8848"
+        depends_on:
+            - mysql
 
-  seata-server:
-    image: seataio/seata-server:1.7.1
-    container_name: gov-seata
-    ports:
-      - "8091:8091"
-    environment:
-      SEATA_IP: seata-server
-      SEATA_PORT: 8091
-    depends_on:
-      - mysql
+    seata-server:
+        image: seataio/seata-server:1.7.1
+        container_name: gov-seata
+        ports:
+            - "8091:8091"
+        environment:
+            SEATA_IP: seata-server
+            SEATA_PORT: 8091
+        depends_on:
+            - mysql
 
-  sentinel-dashboard:
-    image: bladex/sentinel-dashboard:1.8.6
-    container_name: gov-sentinel
-    ports:
-      - "8858:8858"
-    environment:
-      JAVA_OPTS: "-Dserver.port=8858 -Dproject.name=sentinel-dashboard"
+    sentinel:
+        image: bladex/sentinel-dashboard:1.8.6
+        platform: linux/amd64
+        container_name: gov-sentinel
+        ports:
+            - "8858:8858"
+        environment:
+            JAVA_OPTS: "-Dserver.port=8858 -Dproject.name=sentinel-dashboard"
 
 volumes:
-  gov_mysql_data:
+    gov_mysql_data:
+    gov_redis_data:

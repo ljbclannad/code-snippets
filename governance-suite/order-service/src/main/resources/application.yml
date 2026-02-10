@@ -17,7 +17,7 @@ spring:
 
   redis:
     host: ${REDIS_HOST:localhost}
-    port: ${REDIS_PORT:6379}
+    port: ${REDIS_PORT:36379}
 
   rabbitmq:
     host: ${RABBIT_HOST:localhost}

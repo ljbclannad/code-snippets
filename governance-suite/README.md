@@ -7,7 +7,7 @@
 - ShardingSphere-JDBC（订单/支付分表 t_*_0/t_*_1）
 - Redis（幂等 Key）
 - RabbitMQ（支付成功事件 + Outbox 可靠投递）
-- MySQL（3 个业务库 + seata 库（可选））
+- MySQL（3 个业务库 + seata 库 + nacos_config）
 
 ## 模块
 - common：统一返回、TraceId 过滤器、全局异常处理
@@ -24,16 +24,35 @@ docker compose up -d
 ```
 
 - MySQL: localhost:3306 (root/root)
-- Redis: localhost:6379
+- Redis: localhost:36379
 - RabbitMQ: localhost:5672 / 控制台 http://localhost:15672 (guest/guest)
-- Nacos: http://localhost:8848 (默认账号 nacos/nacos)
+- Nacos: http://localhost:8848 (MySQL 持久化，默认账号 nacos/nacos)
 - Seata: localhost:8091
 - Sentinel Dashboard: http://localhost:8858
+
+> 首次初始化或变更数据库脚本后，建议先执行：
+> `docker compose down -v && docker compose up -d`
 
 ## 编译
 
 ```bash
 mvn -T 1C clean package -DskipTests
+```
+
+## 打包部署（本地）
+
+```bash
+# 1) 打包所有模块
+mvn -T 1C clean package -DskipTests
+
+# 2) 启动 governance-suite 这一组基础设施
+docker compose up -d
+```
+
+如果你在仓库根目录执行，也可以显式指定 compose 组：
+
+```bash
+docker compose -f governance-suite/docker-compose.yml -p governance-suite up -d
 ```
 
 ## 启动服务

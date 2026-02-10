@@ -2,7 +2,7 @@ import json
 import sys
 from pathlib import Path
 
-from utils import build_tfidf, load_notes
+from .utils import build_tfidf, load_notes
 
 
 def build_index(notes_path: Path, index_path: Path) -> int:

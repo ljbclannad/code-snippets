@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import List, Tuple
 
-from utils import build_query_vector, sparse_dot, tokenize, vector_norm
+from .utils import build_query_vector, sparse_dot, tokenize, vector_norm
 
 
 def load_index(path: Path) -> dict:

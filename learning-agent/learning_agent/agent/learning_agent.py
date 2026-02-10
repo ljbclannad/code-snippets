@@ -1,17 +1,15 @@
 import argparse
 import json
-import sys
 from datetime import datetime
 from pathlib import Path
 
+from ..knowledge_base.build_index import build_index
+from ..knowledge_base.query import load_index, search
+from .tools import ToolError, list_tools, run_tool
+
 
 BASE_DIR = Path(__file__).resolve().parents[1]
-KB_DIR = BASE_DIR / "knowledge-base"
-sys.path.insert(0, str(KB_DIR))
-
-from build_index import build_index  # noqa: E402
-from query import load_index, search  # noqa: E402
-from tools import ToolError, list_tools, run_tool  # noqa: E402
+KB_DIR = BASE_DIR / "knowledge_base"
 
 
 def append_note(notes_path: Path, text: str, tags: list) -> str:
@@ -53,11 +51,14 @@ def handle_ask(args: argparse.Namespace) -> None:
             print(f"- {doc.get('id', '')} ({score:.3f}): {doc.get('text', '')}")
 
 
-def handle_tools(_: argparse.Namespace) -> None:
-    for tool in list_tools():
-        args = ", ".join(f"{key}:{value}" for key, value in tool["args"].items())
-        args = args or "no args"
-        print(f"- {tool['name']}: {tool['description']} ({args})")
+def handle_tools(args: argparse.Namespace) -> None:
+    schemas = list_tools()
+    if args.json:
+        print(json.dumps(schemas, ensure_ascii=False, indent=2))
+        return
+    for tool in schemas:
+        print(f"- {tool['name']}: {tool['description']}")
+        print(json.dumps(tool["parameters"], ensure_ascii=False, indent=2))
 
 
 def handle_tool(args: argparse.Namespace) -> None:
@@ -102,6 +103,11 @@ def build_parser() -> argparse.ArgumentParser:
     ask_parser.set_defaults(func=handle_ask)
 
     tools_parser = subparsers.add_parser("tools", help="List available tools")
+    tools_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print tool schemas as JSON",
+    )
     tools_parser.set_defaults(func=handle_tools)
 
     tool_parser = subparsers.add_parser("tool", help="Run a tool")
