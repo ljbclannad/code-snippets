@@ -2,10 +2,15 @@ package com.lx.governance.gateway.config;
 
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+
+import javax.annotation.PostConstruct;
 
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.Ordered;
@@ -16,14 +21,31 @@ import org.springframework.web.reactive.function.server.ServerResponse;
 import org.springframework.web.reactive.result.view.ViewResolver;
 import org.springframework.web.server.ServerWebExchange;
 
+import com.alibaba.csp.sentinel.adapter.gateway.common.SentinelGatewayConstants;
+import com.alibaba.csp.sentinel.adapter.gateway.common.api.ApiDefinition;
+import com.alibaba.csp.sentinel.adapter.gateway.common.api.ApiPathPredicateItem;
+import com.alibaba.csp.sentinel.adapter.gateway.common.api.ApiPredicateItem;
+import com.alibaba.csp.sentinel.adapter.gateway.common.api.GatewayApiDefinitionManager;
+import com.alibaba.csp.sentinel.adapter.gateway.common.rule.GatewayFlowRule;
+import com.alibaba.csp.sentinel.adapter.gateway.common.rule.GatewayRuleManager;
 import com.alibaba.csp.sentinel.adapter.gateway.sc.SentinelGatewayFilter;
 import com.alibaba.csp.sentinel.adapter.gateway.sc.callback.BlockRequestHandler;
 import com.alibaba.csp.sentinel.adapter.gateway.sc.callback.GatewayCallbackManager;
 import com.alibaba.csp.sentinel.adapter.gateway.sc.exception.SentinelGatewayBlockExceptionHandler;
 import com.alibaba.csp.sentinel.slots.block.BlockException;
 
+/**
+ * Sentinel Gateway 配置
+ * 
+ * 1. 初始化 Sentinel Gateway 规则，按 API 路径限流
+ * 2. 配置 Sentinel Gateway 异常处理
+ * 3. 配置 Sentinel Gateway 过滤器
+ */
 @Configuration
 public class SentinelGatewayConfig {
+
+    @Value("${gateway.sentinel.order-list.qps:2}")
+    private int orderListQps;
 
     @Bean
     @Order(Ordered.HIGHEST_PRECEDENCE)
@@ -42,6 +64,29 @@ public class SentinelGatewayConfig {
     @Order(-1)
     public SentinelGatewayFilter sentinelGatewayFilter() {
         return new SentinelGatewayFilter();
+    }
+
+    /**
+     * 初始化 Sentinel Gateway 规则，按 API 路径限流
+     */
+    @PostConstruct
+    public void initGatewayRules() {
+        Set<ApiDefinition> apiDefinitions = new HashSet<>();
+        apiDefinitions.add(new ApiDefinition("order-list-api")
+                .setPredicateItems(new HashSet<ApiPredicateItem>() {
+                    {
+                        add(new ApiPathPredicateItem().setPattern("/api/order/list/**")
+                                .setMatchStrategy(SentinelGatewayConstants.URL_MATCH_STRATEGY_PREFIX));
+                    }
+                }));
+        GatewayApiDefinitionManager.loadApiDefinitions(apiDefinitions);
+
+        Set<GatewayFlowRule> rules = new HashSet<>();
+        rules.add(new GatewayFlowRule("order-list-api")
+                .setResourceMode(SentinelGatewayConstants.RESOURCE_MODE_CUSTOM_API_NAME)
+                .setCount(orderListQps)
+                .setIntervalSec(1));
+        GatewayRuleManager.loadRules(rules);
     }
 
     @Bean

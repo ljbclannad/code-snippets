@@ -9,35 +9,66 @@ import com.lx.governance.order.domain.CreateOrderRequest;
 import com.lx.governance.order.domain.InventoryDeductRequest;
 import com.lx.governance.order.domain.OrderDto;
 import com.lx.governance.order.domain.PaymentPrepareRequest;
+import com.lx.governance.order.id.OrderNoGenerator;
 import com.lx.governance.order.repo.OutboxRepository;
 import com.lx.governance.order.repo.OrderRepository;
 import io.seata.spring.annotation.GlobalTransactional;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
 @Service
 public class OrderAppService {
-
     private final OrderRepository orderRepository;
     private final OutboxRepository outboxRepository;
     private final InventoryClient inventoryClient;
     private final PaymentClient paymentClient;
     private final IdempotencyService idempotencyService;
+    private final StringRedisTemplate redisTemplate;
+    private final OrderNoGenerator orderNoGenerator;
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private static final String STREAM_KEY = "seckill:stream:orders";
+    private static final String CREATE_V2_LUA = """
+            local stock = tonumber(redis.call('GET', KEYS[1]) or "0")
+            if stock <= 0 then
+              return {0, "SOLD_OUT"}
+            end
+
+            if redis.call('SISMEMBER', KEYS[2], ARGV[1]) == 1 then
+              return {0, "DUP_BUY"}
+            end
+
+            redis.call('DECR', KEYS[1])
+            redis.call('SADD', KEYS[2], ARGV[1])
+
+            redis.call('XADD', KEYS[3], '*',
+              'reqId', ARGV[2],
+              'userId', ARGV[1],
+              'skuId', ARGV[3]
+            )
+
+            return {1, "OK"}
+            """;
 
     public OrderAppService(OrderRepository orderRepository,
                            OutboxRepository outboxRepository,
                            InventoryClient inventoryClient,
                            PaymentClient paymentClient,
-                           IdempotencyService idempotencyService) {
+                           IdempotencyService idempotencyService,
+                           StringRedisTemplate redisTemplate,
+                           OrderNoGenerator orderNoGenerator) {
         this.orderRepository = orderRepository;
         this.outboxRepository = outboxRepository;
         this.inventoryClient = inventoryClient;
         this.paymentClient = paymentClient;
         this.idempotencyService = idempotencyService;
+        this.redisTemplate = redisTemplate;
+        this.orderNoGenerator = orderNoGenerator;
     }
 
     @GlobalTransactional(name = "create-order", rollbackFor = Exception.class)
@@ -51,7 +82,7 @@ public class OrderAppService {
             }
         }
 
-        String orderNo = "O" + System.currentTimeMillis() + (int)(Math.random()*1000);
+        String orderNo = orderNoGenerator.nextOrderNo();
         orderRepository.insert(orderNo, req.getCustomerId(), req.getProductId(), req.getQuantity(), req.getAmountCents(), "CREATED");
 
         InventoryDeductRequest deductReq = new InventoryDeductRequest();
@@ -97,5 +128,64 @@ public class OrderAppService {
 
     public void markPaid(String orderNo) {
         orderRepository.updateStatus(orderNo, "PAID");
+    }
+
+    public Map<String, String> paymentCallbackPass(String orderNo) {
+        OrderDto order = orderRepository.findByOrderNo(orderNo);
+        if (order == null) {
+            throw new IllegalArgumentException("order not found: " + orderNo);
+        }
+
+        String eventId = UUID.randomUUID().toString();
+        String payload;
+        try {
+            payload = objectMapper.writeValueAsString(Map.of(
+                    "eventId", eventId,
+                    "orderNo", orderNo,
+                    "result", "PASS",
+                    "traceId", Trace.getOrCreate()
+            ));
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+
+        // 统一走 outbox-consumer 可靠投递，order-service 仅落库事件
+        outboxRepository.insert(eventId, "ORDER", orderNo, "payment.callback.pass", payload);
+
+        return Map.of(
+                "orderNo", orderNo,
+                "eventId", eventId,
+                "queued", "true"
+        );
+    }
+
+    public Map<String, String> createV2(CreateOrderRequest req, String requestId) {
+        String userId = req.getCustomerId();
+        String skuId = req.getProductId();
+        String reqId = (requestId == null || requestId.isBlank()) ? UUID.randomUUID().toString() : requestId;
+
+        String stockKey = "seckill:stock:sku:" + skuId;
+        String buyersKey = "seckill:buyers:sku:" + skuId;
+
+        DefaultRedisScript<List> script = new DefaultRedisScript<>();
+        script.setScriptText(CREATE_V2_LUA);
+        script.setResultType(List.class);
+
+        List<?> result = redisTemplate.execute(
+                script,
+                List.of(stockKey, buyersKey, STREAM_KEY),
+                userId, reqId, skuId
+        );
+        if (result == null || result.size() < 2) {
+            throw new IllegalStateException("Seckill script execute failed");
+        }
+
+        String status = String.valueOf(result.get(0));
+        String code = String.valueOf(result.get(1));
+        return Map.of(
+                "reqId", reqId,
+                "status", status,
+                "code", code
+        );
     }
 }

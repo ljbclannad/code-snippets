@@ -14,16 +14,24 @@ public class RateLimitConfig {
     @Bean
     public KeyResolver ipKeyResolver() {
         return exchange -> {
-            String ip = exchange.getRequest().getHeaders().getFirst("X-Forwarded-For");
+            String ip = firstIp(exchange.getRequest().getHeaders().getFirst("X-Forwarded-For"));
+            if (ip == null || ip.isBlank()) {
+                ip = firstIp(exchange.getRequest().getHeaders().getFirst("X-Real-IP"));
+            }
             if (ip == null || ip.isBlank()) {
                 InetSocketAddress remoteAddress = exchange.getRequest().getRemoteAddress();
                 ip = (remoteAddress != null && remoteAddress.getAddress() != null)
                         ? remoteAddress.getAddress().getHostAddress()
                         : "unknown";
-            } else {
-                ip = ip.split(",")[0].trim();
             }
             return Mono.just(ip);
         };
+    }
+
+    private String firstIp(String headerValue) {
+        if (headerValue == null || headerValue.isBlank()) {
+            return null;
+        }
+        return headerValue.split(",")[0].trim();
     }
 }

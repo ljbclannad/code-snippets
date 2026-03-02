@@ -41,6 +41,16 @@ CREATE TABLE IF NOT EXISTS t_outbox (
   KEY idx_status_id (status, id)
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS t_seckill_order_guard (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  user_id VARCHAR(64) NOT NULL,
+  sku_id VARCHAR(64) NOT NULL,
+  req_id VARCHAR(64) NOT NULL,
+  created_at DATETIME NOT NULL,
+  UNIQUE KEY uk_user_sku (user_id, sku_id),
+  UNIQUE KEY uk_req_id (req_id)
+) ENGINE=InnoDB;
+
 -- Seata AT undo log
 CREATE TABLE IF NOT EXISTS undo_log (
   id BIGINT NOT NULL AUTO_INCREMENT,

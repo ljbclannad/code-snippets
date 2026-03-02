@@ -16,9 +16,24 @@ spring:
         locator:
           enabled: true
           lower-case-service-id: true
+      default-filters:
+        - name: RequestRateLimiter
+          args:
+            key-resolver: "#{@ipKeyResolver}"
+            redis-rate-limiter.replenishRate: ${gateway.rate-limit.replenish-rate:5}
+            redis-rate-limiter.burstCapacity: ${gateway.rate-limit.burst-capacity:10}
+            redis-rate-limiter.requestedTokens: 1
       routes:
+        - id: block-ip
+          uri: no://op
+          order: -100
+          predicates:
+            - RemoteAddr=${gateway.block-ip:10.10.10.10}/32
+            - Path=/**
+          filters:
+            - SetStatus=403
         - id: order
-          uri: lb://order-service
+          uri: lb://order-service #按服务名做服务发现 + 负载均衡转发。
           predicates:
             - Path=/api/order/**
           filters:
@@ -38,7 +53,15 @@ spring:
 
 # Gateway 自带的 RedisRateLimiter（演示用）
 # 生产上建议：它负责网关级粗粒度限流，Sentinel 负责细粒度（链路/热点/熔断降级）
-# 如需启用，给 route 增加 RequestRateLimiter 过滤器并引用 ipKeyResolver。
+# 已通过 default-filters 对全部路由启用，维度为客户端 IP。
+
+gateway:
+  rate-limit:
+    replenish-rate: 5
+    burst-capacity: 10
+  sentinel:
+    order-list:
+      qps: 2
 
 feign:
   sentinel:
@@ -48,7 +71,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: '*'
+        include: "*"
 
 logging:
   level:

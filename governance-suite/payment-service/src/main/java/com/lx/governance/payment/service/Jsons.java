@@ -5,7 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 public final class Jsons {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private Jsons() {}
+    private Jsons() {
+    }
 
     public static String toJson(Object o) {
         try {

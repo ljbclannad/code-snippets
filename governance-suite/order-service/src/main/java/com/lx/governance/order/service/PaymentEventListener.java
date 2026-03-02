@@ -4,8 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lx.governance.common.trace.Trace;
 import com.lx.governance.order.config.RabbitConfig;
+import com.rabbitmq.client.Channel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Component;
 
@@ -20,7 +22,8 @@ public class PaymentEventListener {
     }
 
     @RabbitListener(queues = RabbitConfig.QUEUE_PAYMENT_SUCCEEDED)
-    public void onPaymentSucceeded(String message) {
+    public void onPaymentSucceeded(String message, Message amqpMessage, Channel channel) {
+        long tag = amqpMessage.getMessageProperties().getDeliveryTag();
         try {
             JsonNode node = objectMapper.readTree(message);
             String orderNo = node.get("orderNo").asText();
@@ -28,11 +31,47 @@ public class PaymentEventListener {
             Trace.set(traceId);
             log.info("Received payment.succeeded for orderNo={} message={}", orderNo, message);
             appService.markPaid(orderNo);
+            ack(channel, tag);
         } catch (Exception e) {
             log.error("Failed to handle payment.succeeded message={}", message, e);
-            throw new RuntimeException(e);
+            nackRequeue(channel, tag);
         } finally {
             Trace.clear();
+        }
+    }
+
+    @RabbitListener(queues = RabbitConfig.QUEUE_PAYMENT_CALLBACK)
+    public void onPaymentCallback(String message, Message amqpMessage, Channel channel) {
+        long tag = amqpMessage.getMessageProperties().getDeliveryTag();
+        try {
+            JsonNode node = objectMapper.readTree(message);
+            String orderNo = node.get("orderNo").asText();
+            String traceId = node.has("traceId") ? node.get("traceId").asText() : null;
+            Trace.set(traceId);
+            log.info("Received payment.callback.pass for orderNo={} message={}", orderNo, message);
+            appService.markPaid(orderNo);
+            ack(channel, tag);
+        } catch (Exception e) {
+            log.error("Failed to handle payment.callback.pass message={}", message, e);
+            nackRequeue(channel, tag);
+        } finally {
+            Trace.clear();
+        }
+    }
+
+    private void ack(Channel channel, long tag) {
+        try {
+            channel.basicAck(tag, false);
+        } catch (Exception ex) {
+            throw new RuntimeException(ex);
+        }
+    }
+
+    private void nackRequeue(Channel channel, long tag) {
+        try {
+            channel.basicNack(tag, false, true);
+        } catch (Exception ex) {
+            throw new RuntimeException(ex);
         }
     }
 }

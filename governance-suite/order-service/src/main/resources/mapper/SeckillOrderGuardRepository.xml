@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lx.governance.order.repo.SeckillOrderGuardRepository">
+
+    <insert id="insert">
+        INSERT INTO t_seckill_order_guard(user_id, sku_id, req_id, created_at)
+        VALUES (#{userId}, #{skuId}, #{reqId}, NOW())
+    </insert>
+</mapper>
