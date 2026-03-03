@@ -1,13 +1,14 @@
 package com.lx.governance.inventory.service;
 
-import com.alibaba.csp.sentinel.annotation.SentinelResource;
-import com.lx.governance.inventory.domain.DeductRequest;
-import com.lx.governance.inventory.repo.StockRepository;
+import java.time.Duration;
+
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Duration;
+import com.alibaba.csp.sentinel.annotation.SentinelResource;
+import com.lx.governance.inventory.domain.DeductRequest;
+import com.lx.governance.inventory.repo.StockRepository;
 
 @Service
 public class InventoryAppService {
