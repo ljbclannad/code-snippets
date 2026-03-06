@@ -33,6 +33,8 @@ services:
         ports:
             - "5672:5672"
             - "15672:15672"
+        volumes:
+            - gov_rabbitmq_data:/var/lib/rabbitmq
 
     nacos:
         image: nacos/nacos-server:v2.5.1
@@ -77,3 +79,4 @@ services:
 volumes:
     gov_mysql_data:
     gov_redis_data:
+    gov_rabbitmq_data:
