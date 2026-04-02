@@ -2,7 +2,11 @@ package com.lx.governance.payment.service;
 
 import java.time.Duration;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
+import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -45,14 +49,44 @@ public class PaymentAppService {
     public PaymentDto confirm(String orderNo) {
         repository.updateStatusByOrderNo(orderNo, "SUCCEEDED");
         PaymentDto p = repository.findByOrderNo(orderNo);
+        // 复用 traceId，便于串联业务日志与消息发送确认日志。
+        String traceId = Trace.getOrCreate();
         // 发事件给 order-service
         Map<String, Object> event = Map.of(
                 "orderNo", orderNo,
                 "payNo", p != null ? p.getPayNo() : null,
                 "amountCents", p != null ? p.getAmountCents() : null,
-                "traceId", Trace.getOrCreate());
-        rabbitTemplate.convertAndSend(RabbitConfig.EXCHANGE, RabbitConfig.RK_PAYMENT_SUCCEEDED, Jsons.toJson(event));
+                "traceId", traceId);
+
+        // CorrelationData 用于将发送请求与 broker confirm 对应起来。
+        CorrelationData correlationData = new CorrelationData(orderNo + ":" + traceId + ":" + System.nanoTime());
+        rabbitTemplate.convertAndSend(
+                RabbitConfig.EXCHANGE,
+                RabbitConfig.RK_PAYMENT_SUCCEEDED,
+                Jsons.toJson(event),
+                correlationData);
+        // 同步等待发布确认，避免消息未入 broker 仍被当作发送成功。
+        waitPublisherConfirm(correlationData);
         return p;
+    }
+
+    private void waitPublisherConfirm(CorrelationData correlationData) {
+        try {
+            // 等待 broker ACK；超时/失败直接抛错交由上层处理。
+            CorrelationData.Confirm confirm = correlationData.getFuture().get(3, TimeUnit.SECONDS);
+            if (confirm == null || !confirm.isAck()) {
+                throw new IllegalStateException(
+                        "publish payment.succeeded not acknowledged: "
+                                + (confirm == null ? "confirm is null" : confirm.getReason()));
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("publish payment.succeeded interrupted", e);
+        } catch (TimeoutException e) {
+            throw new IllegalStateException("publish payment.succeeded confirm timeout", e);
+        } catch (ExecutionException e) {
+            throw new IllegalStateException("publish payment.succeeded confirm failed", e);
+        }
     }
 
     // Sentinel block handler
