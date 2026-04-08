@@ -147,6 +147,60 @@ def handle_answer(args: argparse.Namespace) -> None:
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
+def handle_regression(args: argparse.Namespace) -> None:
+    from regression_eval import (
+        build_baseline_payload,
+        compare_against_baseline,
+        load_json,
+        run_matrix,
+        write_regression_markdown,
+    )
+    from report_eval import write_csv, write_markdown
+
+    config_path = Path(args.config).expanduser().resolve()
+    output_dir = Path(args.output_dir).expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    config = load_json(config_path)
+    rows = run_matrix(config, output_dir)
+
+    compare_metrics = list(config.get("compare_metrics", ["recall@1", "recall@3", "mrr@3", "hit@3"]))
+    allowed_drop = float(args.allowed_drop) if args.allowed_drop is not None else float(config.get("allowed_drop", 0.0))
+
+    write_csv(rows, output_dir / "summary.csv")
+    write_markdown(rows, output_dir / "summary.md")
+
+    regressions = []
+    if args.baseline:
+        baseline = load_json(Path(args.baseline).expanduser().resolve())
+        if args.allowed_drop is None:
+            allowed_drop = float(baseline.get("meta", {}).get("allowed_drop", allowed_drop))
+        regressions = compare_against_baseline(rows, baseline, compare_metrics, allowed_drop)
+
+    result_payload = {
+        "config": str(config_path),
+        "output_dir": str(output_dir),
+        "compare_metrics": compare_metrics,
+        "allowed_drop": allowed_drop,
+        "regressions": regressions,
+        "num_runs": len(rows),
+    }
+    (output_dir / "regression_result.json").write_text(
+        json.dumps(result_payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    write_regression_markdown(rows, regressions, compare_metrics, output_dir / "regression_result.md")
+
+    if args.write_baseline:
+        baseline_output = Path(args.write_baseline).expanduser().resolve()
+        baseline_output.parent.mkdir(parents=True, exist_ok=True)
+        baseline_payload = build_baseline_payload(rows, compare_metrics, allowed_drop, config)
+        baseline_output.write_text(json.dumps(baseline_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if regressions and args.fail_on_regression:
+        raise SystemExit(1)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="医疗 QA RAG 统一流水线入口")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -189,6 +243,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     answer_parser.add_argument("--structured-output", action="store_true", help="返回结构化 JSON")
     answer_parser.set_defaults(handler=handle_answer)
+
+    regression_parser = subparsers.add_parser("regression", help="批量评测并与基线比较")
+    regression_parser.add_argument("--config", required=True, help="回归配置 JSON 路径")
+    regression_parser.add_argument("--output-dir", required=True, help="回归结果输出目录")
+    regression_parser.add_argument("--baseline", default=None, help="已有基线 JSON 路径")
+    regression_parser.add_argument("--write-baseline", default=None, help="把当前结果写入基线 JSON")
+    regression_parser.add_argument("--allowed-drop", type=float, default=None, help="允许回退阈值")
+    regression_parser.add_argument("--fail-on-regression", action="store_true", help="有回退则非零退出")
+    regression_parser.set_defaults(handler=handle_regression)
 
     return parser
 

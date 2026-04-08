@@ -7,14 +7,14 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 
-def _load_report(path: Path) -> Dict[str, Any]:
+def load_report(path: Path) -> Dict[str, Any]:
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise ValueError(f"报告格式错误: {path}")
     return data
 
 
-def _flatten(report: Dict[str, Any], name: str) -> Dict[str, Any]:
+def flatten_report(report: Dict[str, Any], name: str) -> Dict[str, Any]:
     meta = report.get("meta", {})
     agg = report.get("aggregate", {})
     row: Dict[str, Any] = {
@@ -34,7 +34,7 @@ def _flatten(report: Dict[str, Any], name: str) -> Dict[str, Any]:
     return row
 
 
-def _write_csv(rows: List[Dict[str, Any]], path: Path) -> None:
+def write_csv(rows: List[Dict[str, Any]], path: Path) -> None:
     if not rows:
         return
     keys = []
@@ -49,7 +49,7 @@ def _write_csv(rows: List[Dict[str, Any]], path: Path) -> None:
         writer.writerows(rows)
 
 
-def _write_markdown(rows: List[Dict[str, Any]], path: Path) -> None:
+def write_markdown(rows: List[Dict[str, Any]], path: Path) -> None:
     if not rows:
         return
     keys = []
@@ -86,12 +86,12 @@ def main() -> None:
     rows: List[Dict[str, Any]] = []
     for idx, input_path in enumerate(args.inputs):
         path = Path(input_path)
-        report = _load_report(path)
+        report = load_report(path)
         name = args.run_names[idx] if args.run_names else path.stem
-        rows.append(_flatten(report, name))
+        rows.append(flatten_report(report, name))
 
-    _write_csv(rows, Path(args.csv_output))
-    _write_markdown(rows, Path(args.md_output))
+    write_csv(rows, Path(args.csv_output))
+    write_markdown(rows, Path(args.md_output))
     print(f"[DONE] saved: {args.csv_output}, {args.md_output}")
 
 

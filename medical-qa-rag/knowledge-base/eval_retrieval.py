@@ -165,7 +165,113 @@ def _build_reranker(args: argparse.Namespace) -> Optional[Reranker]:
     return None
 
 
-def main() -> None:
+def evaluate_retrieval(
+    *,
+    index_dir: str,
+    data: str,
+    ks: Sequence[int],
+    retrieval_mode: str = "dense",
+    hybrid_method: str = "rrf",
+    dense_weight: float = 0.6,
+    bm25_weight: float = 0.4,
+    rrf_k: int = 60,
+    candidate_scale: int = 2,
+    rerank: str = "none",
+    rerank_top_k: Optional[int] = None,
+    cross_encoder_model: str = "BAAI/bge-reranker-base",
+    cross_encoder_batch_size: int = 16,
+    llm_rerank_batch_size: int = 5,
+    llm_rerank_max_chars: int = 800,
+    llm_rerank_blend_weight: float = 0.85,
+) -> Dict[str, Any]:
+    ks = sorted({int(x) for x in ks})
+    if not ks:
+        raise ValueError("ks 不能为空")
+
+    args = argparse.Namespace(
+        index_dir=index_dir,
+        data=data,
+        retrieval_mode=retrieval_mode,
+        hybrid_method=hybrid_method,
+        dense_weight=dense_weight,
+        bm25_weight=bm25_weight,
+        rrf_k=rrf_k,
+        candidate_scale=candidate_scale,
+        rerank=rerank,
+        rerank_top_k=rerank_top_k,
+        cross_encoder_model=cross_encoder_model,
+        cross_encoder_batch_size=cross_encoder_batch_size,
+        llm_rerank_batch_size=llm_rerank_batch_size,
+        llm_rerank_max_chars=llm_rerank_max_chars,
+        llm_rerank_blend_weight=llm_rerank_blend_weight,
+    )
+
+    vs = load_faiss(index_dir)
+    items = _load_json_or_jsonl(Path(data))
+    reranker = _build_reranker(args)
+    max_k = max(ks)
+
+    per_query: List[Dict[str, Any]] = []
+    start = time.time()
+
+    for item in items:
+        query, gold_keys, gold_chunk_ids = _parse_gold(item)
+
+        mode = retrieval_mode.lower()
+        if mode == "dense":
+            retrieved = retrieve(vs, query, k=max_k * candidate_scale)
+        elif mode == "bm25":
+            retrieved = retrieve_bm25(vs, query, k=max_k * candidate_scale)
+        elif mode in {"hybrid", "hybrid_rrf", "hybrid_weighted"}:
+            method = "weighted" if mode == "hybrid_weighted" else hybrid_method
+            retrieved = retrieve_hybrid(
+                vs,
+                query,
+                k=max_k,
+                method=method,
+                dense_weight=dense_weight,
+                bm25_weight=bm25_weight,
+                rrf_k=rrf_k,
+                candidate_scale=candidate_scale,
+            )
+        else:
+            raise ValueError(f"不支持的检索模式: {retrieval_mode}")
+
+        retrieved = _convert_dense_scores_if_needed(retrieved, mode)
+
+        if reranker is not None:
+            retrieved = reranker.rerank(query, retrieved, top_k=rerank_top_k or max_k)
+
+        result = _evaluate_one(query, gold_keys, gold_chunk_ids, retrieved, ks)
+        per_query.append(result)
+
+    elapsed = time.time() - start
+
+    agg: Dict[str, Any] = {
+        "num_queries": len(per_query),
+        "elapsed_sec": round(elapsed, 3),
+        "ks": ks,
+    }
+    for k in ks:
+        agg[f"recall@{k}"] = _mean(r[f"recall@{k}"] for r in per_query)
+        agg[f"mrr@{k}"] = _mean(r[f"mrr@{k}"] for r in per_query)
+        agg[f"hit@{k}"] = _mean(r[f"hit@{k}"] for r in per_query)
+
+    return {
+        "meta": {
+            "index_dir": index_dir,
+            "data": data,
+            "retrieval_mode": retrieval_mode,
+            "rerank": rerank,
+            "cross_encoder_model": cross_encoder_model,
+            "llm_rerank": rerank == "llm",
+        },
+        "aggregate": agg,
+        "per_query": per_query,
+    }
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="RAG 检索评测 v1：Recall@K / MRR / 命中率")
     parser.add_argument("--index-dir", required=True, help="FAISS 索引目录（含 index.faiss/index.pkl）")
     parser.add_argument("--data", required=True, help="评测集 JSON/JSONL 路径")
@@ -190,77 +296,35 @@ def main() -> None:
     parser.add_argument("--llm-rerank-batch-size", type=int, default=5)
     parser.add_argument("--llm-rerank-max-chars", type=int, default=800)
     parser.add_argument("--llm-rerank-blend-weight", type=float, default=0.85)
+    return parser
 
+
+def main() -> None:
+    parser = build_parser()
     args = parser.parse_args()
 
     ks = sorted({int(x) for x in args.ks.split(",") if x.strip()})
     if not ks:
         raise SystemExit("ks 不能为空")
 
-    vs = load_faiss(args.index_dir)
-    items = _load_json_or_jsonl(Path(args.data))
-
-    reranker = _build_reranker(args)
-    max_k = max(ks)
-
-    per_query: List[Dict[str, Any]] = []
-    start = time.time()
-
-    for item in items:
-        query, gold_keys, gold_chunk_ids = _parse_gold(item)
-
-        mode = args.retrieval_mode.lower()
-        if mode == "dense":
-            retrieved = retrieve(vs, query, k=max_k * args.candidate_scale)
-        elif mode == "bm25":
-            retrieved = retrieve_bm25(vs, query, k=max_k * args.candidate_scale)
-        elif mode in {"hybrid", "hybrid_rrf", "hybrid_weighted"}:
-            method = "weighted" if mode == "hybrid_weighted" else args.hybrid_method
-            retrieved = retrieve_hybrid(
-                vs,
-                query,
-                k=max_k,
-                method=method,
-                dense_weight=args.dense_weight,
-                bm25_weight=args.bm25_weight,
-                rrf_k=args.rrf_k,
-                candidate_scale=args.candidate_scale,
-            )
-        else:
-            raise SystemExit(f"不支持的检索模式: {args.retrieval_mode}")
-
-        retrieved = _convert_dense_scores_if_needed(retrieved, mode)
-
-        if reranker is not None:
-            retrieved = reranker.rerank(query, retrieved, top_k=args.rerank_top_k or max_k)
-
-        result = _evaluate_one(query, gold_keys, gold_chunk_ids, retrieved, ks)
-        per_query.append(result)
-
-    elapsed = time.time() - start
-
-    agg: Dict[str, Any] = {
-        "num_queries": len(per_query),
-        "elapsed_sec": round(elapsed, 3),
-        "ks": ks,
-    }
-    for k in ks:
-        agg[f"recall@{k}"] = _mean(r[f"recall@{k}"] for r in per_query)
-        agg[f"mrr@{k}"] = _mean(r[f"mrr@{k}"] for r in per_query)
-        agg[f"hit@{k}"] = _mean(r[f"hit@{k}"] for r in per_query)
-
-    report = {
-        "meta": {
-            "index_dir": args.index_dir,
-            "data": args.data,
-            "retrieval_mode": args.retrieval_mode,
-            "rerank": args.rerank,
-            "cross_encoder_model": args.cross_encoder_model,
-            "llm_rerank": args.rerank == "llm",
-        },
-        "aggregate": agg,
-        "per_query": per_query,
-    }
+    report = evaluate_retrieval(
+        index_dir=args.index_dir,
+        data=args.data,
+        ks=ks,
+        retrieval_mode=args.retrieval_mode,
+        hybrid_method=args.hybrid_method,
+        dense_weight=args.dense_weight,
+        bm25_weight=args.bm25_weight,
+        rrf_k=args.rrf_k,
+        candidate_scale=args.candidate_scale,
+        rerank=args.rerank,
+        rerank_top_k=args.rerank_top_k,
+        cross_encoder_model=args.cross_encoder_model,
+        cross_encoder_batch_size=args.cross_encoder_batch_size,
+        llm_rerank_batch_size=args.llm_rerank_batch_size,
+        llm_rerank_max_chars=args.llm_rerank_max_chars,
+        llm_rerank_blend_weight=args.llm_rerank_blend_weight,
+    )
 
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)

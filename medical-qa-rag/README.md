@@ -67,6 +67,7 @@ python rag_pipeline.py answer \
 - 向量化：`python knowledge-base/medical_embedding.py build --input medical_docs/foo_chunks.json --index-dir medical_docs/foo_faiss_index`
 - 简单检索：`python knowledge-base/medical_embedding.py search --index-dir medical_docs/foo_faiss_index --query "医保目录更新时间"`
 - 问答：`python knowledge-base/medical_model_chat.py --index-dir medical_docs/foo_faiss_index --question "医保目录更新时间？"`
+- 回归评测：`python rag_pipeline.py regression --config eval/regression_config.example.json --output-dir eval/runs/latest`
 
 ## 评测
 
@@ -117,6 +118,49 @@ python knowledge-base/eval_retrieval.py \
   --rerank cross_encoder \
   --cross-encoder-model BAAI/bge-reranker-base
 ```
+
+## 回归基线
+
+建议把评测流程固定成下面这个闭环：
+
+1. 在 [eval/datasets/README.md](/Users/lejinbo/LLM/code-snippets/medical-qa-rag/eval/datasets/README.md) 的约束下维护主评测集，例如 `eval/datasets/policy_eval_v1.json`
+2. 复制 [eval/regression_config.example.json](/Users/lejinbo/LLM/code-snippets/medical-qa-rag/eval/regression_config.example.json) 并填入真实 `index_dir` 与 `data`
+3. 第一次建立基线：
+
+```bash
+python rag_pipeline.py regression \
+  --config eval/regression_config.example.json \
+  --output-dir eval/runs/baseline_candidate \
+  --write-baseline eval/baselines/policy_eval_v1_baseline.json
+```
+
+4. 后续每次改检索、切分、重排或 embedding 策略后，运行回归比较：
+
+```bash
+python rag_pipeline.py regression \
+  --config eval/regression_config.example.json \
+  --output-dir eval/runs/latest \
+  --baseline eval/baselines/policy_eval_v1_baseline.json \
+  --fail-on-regression
+```
+
+输出内容包括：
+
+- `summary.csv`
+- `summary.md`
+- `regression_result.json`
+- `regression_result.md`
+- `reports/*.json`，每个 run 一份原始评测报告
+
+### 基线文件
+
+基线文件样例见 [eval/baselines/example_baseline.json](/Users/lejinbo/LLM/code-snippets/medical-qa-rag/eval/baselines/example_baseline.json)。
+
+建议：
+
+- 每个主评测集对应一份 baseline
+- 只有在你确认“当前效果更优且稳定”时，才更新 baseline
+- 对 `allowed_drop` 保持谨慎，默认建议不超过 `0.01`
 
 ### 汇总报表
 

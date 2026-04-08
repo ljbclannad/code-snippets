@@ -105,6 +105,7 @@ _install_langchain_stubs()
 from medical_chunk import chunk_json_with_metadata
 from medical_embedding import build_documents
 from medical_model_chat import evidence_is_weak
+from regression_eval import build_baseline_payload, compare_against_baseline
 
 
 class RagPipelineTest(unittest.TestCase):
@@ -160,6 +161,43 @@ class RagPipelineTest(unittest.TestCase):
         self.assertEqual(docs[0].metadata["source"], "国家医保局")
         self.assertEqual(docs[0].metadata["source_url"], "https://example.com/policy")
         self.assertEqual(docs[0].metadata["title"], "目录调整通知")
+
+    def test_build_baseline_payload_uses_selected_metrics(self) -> None:
+        rows = [
+            {"run_name": "dense-default", "recall@1": 0.4, "mrr@3": 0.5, "hit@3": 0.7},
+            {"run_name": "hybrid-rrf", "recall@1": 0.5, "mrr@3": 0.6, "hit@3": 0.8},
+        ]
+        payload = build_baseline_payload(
+            rows,
+            compare_metrics=["recall@1", "mrr@3"],
+            allowed_drop=0.01,
+            config={"data": "eval.json", "index_dir": "index", "ks": [1, 3]},
+        )
+
+        self.assertEqual(payload["meta"]["allowed_drop"], 0.01)
+        self.assertEqual(payload["runs"]["dense-default"]["recall@1"], 0.4)
+        self.assertNotIn("hit@3", payload["runs"]["dense-default"])
+
+    def test_compare_against_baseline_detects_regression(self) -> None:
+        rows = [{"run_name": "dense-default", "recall@1": 0.35, "mrr@3": 0.45}]
+        baseline = {
+            "runs": {
+                "dense-default": {
+                    "recall@1": 0.4,
+                    "mrr@3": 0.44,
+                }
+            }
+        }
+
+        regressions = compare_against_baseline(
+            rows,
+            baseline,
+            compare_metrics=["recall@1", "mrr@3"],
+            allowed_drop=0.01,
+        )
+
+        self.assertEqual(len(regressions), 1)
+        self.assertEqual(regressions[0]["metric"], "recall@1")
 
 
 if __name__ == "__main__":
