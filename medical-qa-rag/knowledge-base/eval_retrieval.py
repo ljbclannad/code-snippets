@@ -10,6 +10,7 @@ from langchain_core.documents import Document
 
 from medical_model_chat import (
     _convert_dense_scores_if_needed,
+    get_chat_model,
     load_faiss,
     retrieve,
     retrieve_bm25,
@@ -155,10 +156,8 @@ def _build_reranker(args: argparse.Namespace) -> Optional[Reranker]:
             batch_size=args.cross_encoder_batch_size,
         )
     if args.rerank == "llm":
-        from medical_model_chat import chat_model
-
         return LLMReranker(
-            chat_model=chat_model,
+            chat_model=get_chat_model(),
             batch_size=args.llm_rerank_batch_size,
             max_chars_per_doc=args.llm_rerank_max_chars,
             blend_weight=args.llm_rerank_blend_weight,
@@ -220,7 +219,7 @@ def main() -> None:
             retrieved = retrieve_hybrid(
                 vs,
                 query,
-                k=max_k * args.candidate_scale,
+                k=max_k,
                 method=method,
                 dense_weight=args.dense_weight,
                 bm25_weight=args.bm25_weight,

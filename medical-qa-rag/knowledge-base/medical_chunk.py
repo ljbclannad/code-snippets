@@ -14,12 +14,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence
 
 DEFAULT_MAX_CHARS = 500
 DEFAULT_OVERLAP = 80
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_DOCS_DIR = Path(os.getenv("MEDICAL_DOCS_DIR", REPO_ROOT / "medical_docs")).expanduser()
 
 
 # ----------------------------
@@ -288,19 +291,17 @@ def chunk_json_with_metadata(
 # CLI
 # ----------------------------
 def parse_args() -> argparse.Namespace:
-    '''
-        python medical_chunk.py --input ./medical_docs/medical_documents_20251217_104142_cleaned.txt 
-        --strategy fixed
-        --max-chars 500
-        --overlap 80
-        --output ./medical_docs/medical_documents_20251217_104142_cleaned_chunks.json
-    '''
+    """
+    示例：
+        python medical_chunk.py --input ./medical_docs/medical_documents_cleaned.json \
+            --strategy semantic_meta --max-chars 500 --output ./medical_docs/medical_documents_chunks.json
+    """
     parser = argparse.ArgumentParser(description="RAG 切分工具：fixed / structured / semantic / semantic_meta")
     parser.add_argument(
         "--input",
         "-i",
         type=str,
-        default="/Users/lejinbo/LLM/code-snippets/medical_docs/medical_documents_20251226_103300_cleaned.json",
+        required=True,
         help="待切分的文件路径，支持 .txt / .json（含 cleaned_content）。",
     )
     parser.add_argument(
@@ -314,10 +315,22 @@ def parse_args() -> argparse.Namespace:
         "--max-chars", type=int, default=DEFAULT_MAX_CHARS, help="单块最大字符数（fixed/structured/semantic）"
     )
     parser.add_argument(
+        "--min-chars",
+        type=int,
+        default=None,
+        help="semantic/semantic_meta 的最小块长度，默认取 max_chars 的一半。",
+    )
+    parser.add_argument(
         "--overlap",
         type=int,
         default=DEFAULT_OVERLAP,
         help="fixed 重叠字符数；semantic 使用 overlap_sentences=1，可按需调整代码。",
+    )
+    parser.add_argument(
+        "--overlap-sentences",
+        type=int,
+        default=1,
+        help="semantic/semantic_meta 相邻 chunk 之间重复的句子数。",
     )
     parser.add_argument(
         "--output",
@@ -347,12 +360,18 @@ def main() -> None:
     elif args.strategy == "structured":
         chunks = chunk_structured(text or "", max_chars=args.max_chars)
     elif args.strategy == "semantic":
-        chunks = chunk_semantic(text or "", max_chars=args.max_chars, overlap_sentences=1)
+        chunks = chunk_semantic(
+            text or "",
+            max_chars=args.max_chars,
+            min_chars=args.min_chars,
+            overlap_sentences=args.overlap_sentences,
+        )
     else:  # semantic_meta
         chunks = chunk_json_with_metadata(
             input_path,
             max_chars=args.max_chars,
-            overlap_sentences=1,
+            min_chars=args.min_chars,
+            overlap_sentences=args.overlap_sentences,
         )
 
     output_path = (
@@ -366,4 +385,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -9,9 +9,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 from pathlib import Path
 from typing import Iterable, List, Dict, Any
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_DOCS_DIR = Path(os.getenv("MEDICAL_DOCS_DIR", REPO_ROOT / "medical_docs")).expanduser()
 
 # 行级别需要直接丢弃的噪声模式
 NOISE_LINE_PATTERNS: List[re.Pattern[str]] = [
@@ -111,10 +115,10 @@ def iter_target_files(target: Path) -> Iterable[Path]:
 
 
 def main() -> None:
-
-    '''
-        python cleaning.py --input ./medical_docs --output ./medical_docs_cleaned
-    '''
+    """
+    示例：
+        python cleaning.py --input ./medical_docs --output ./medical_docs
+    """
     parser = argparse.ArgumentParser(
         description="清洗 medical_docs 的原始文本/JSON，去除常见噪声。"
     )
@@ -122,14 +126,14 @@ def main() -> None:
         "--input",
         "-i",
         type=str,
-        default="/Users/lejinbo/LLM/code-snippets/medical_docs",
+        default=str(DEFAULT_DOCS_DIR),
         help="待清洗的文件或目录路径（支持 .txt / .json）。",
     )
     parser.add_argument(
         "--output",
         "-o",
         type=str,
-        default="/Users/lejinbo/LLM/code-snippets/medical_docs",
+        default=str(DEFAULT_DOCS_DIR),
         help="输出目录，默认覆盖到 medical_docs 目录旁生成 *_cleaned 文件。",
     )
     args = parser.parse_args()

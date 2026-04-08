@@ -1,7 +1,8 @@
-
+import argparse
 import json
 import os
 import re
+from functools import lru_cache
 from typing import Any, Dict, List, Tuple, Optional
 
 from langchain_openai.chat_models import ChatOpenAI
@@ -13,23 +14,53 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from reranker import CrossEncoderReranker, LLMReranker, Reranker
 
-# ----------------------------
-# 1) 初始化：LLM（DeepSeek）
-# ----------------------------
-chat_model = ChatOpenAI(
-    api_key=os.getenv("DEEPSEEK_API_KEY"),
-    model="deepseek-chat",
-    base_url="https://api.deepseek.com",
-)
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_EMBEDDING_MODEL = os.getenv("MEDICAL_QA_EMBEDDING_MODEL", "text-embedding-v4")
+DEFAULT_CHAT_MODEL = os.getenv("MEDICAL_QA_CHAT_MODEL", "deepseek-chat")
+DEFAULT_CHAT_BASE_URL = os.getenv("MEDICAL_QA_CHAT_BASE_URL", "https://api.deepseek.com")
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _doc_source(doc: Document) -> str:
+    md = doc.metadata or {}
+    return (
+        md.get("source_url")
+        or md.get("source")
+        or md.get("source_name")
+        or md.get("source_file")
+        or md.get("title")
+        or "unknown_source"
+    )
+
+
+@lru_cache(maxsize=1)
+def get_chat_model() -> ChatOpenAI:
+    if not os.getenv("DEEPSEEK_API_KEY"):
+        raise EnvironmentError("请先设置环境变量 DEEPSEEK_API_KEY")
+    return ChatOpenAI(
+        api_key=os.getenv("DEEPSEEK_API_KEY"),
+        model=DEFAULT_CHAT_MODEL,
+        base_url=DEFAULT_CHAT_BASE_URL,
+    )
+
+
+def _build_embeddings() -> DashScopeEmbeddings:
+    if not os.getenv("DASHSCOPE_API_KEY"):
+        raise EnvironmentError("请先设置环境变量 DASHSCOPE_API_KEY（用于 query embedding）")
+    return DashScopeEmbeddings(model=DEFAULT_EMBEDDING_MODEL)
 
 # ----------------------------
 # 2) 加载 FAISS 索引
 #    注意：FAISS.load_local 需要传入 embeddings（用于把 query 向量化）
 # ----------------------------
 def load_faiss(index_dir: str) -> FAISS:
-    if not os.getenv("DASHSCOPE_API_KEY"):
-        raise EnvironmentError("请先设置环境变量 DASHSCOPE_API_KEY（用于 query embedding）")
-    embeddings = DashScopeEmbeddings(model="text-embedding-v4")
+    embeddings = _build_embeddings()
     vs = FAISS.load_local(
         index_dir,
         embeddings,
@@ -57,7 +88,7 @@ def retrieve(
 def _doc_key(doc: Document) -> str:
     """为融合打分生成稳定 key。优先使用 source + chunk_id。"""
     md = doc.metadata or {}
-    source = md.get("source") or md.get("source_url") or "unknown_source"
+    source = _doc_source(doc)
     chunk_id = md.get("chunk_id") or md.get("id")
     if chunk_id is not None:
         return f"{source}::{chunk_id}"
@@ -105,11 +136,13 @@ def _tokenize_zh_en(text: str) -> List[str]:
 
 
 def build_bm25_retriever(vs: FAISS, k: int = 5) -> BM25Retriever:
-    docs = list(getattr(getattr(vs, "docstore", None), "_dict", {}).values())
-    if not docs:
-        raise ValueError("FAISS docstore 中没有文档，无法构建 BM25 检索器")
-
-    retriever = BM25Retriever.from_documents(docs, preprocess_func=_tokenize_zh_en)
+    retriever = getattr(vs, "_medicalqa_bm25_retriever", None)
+    if retriever is None:
+        docs = list(getattr(getattr(vs, "docstore", None), "_dict", {}).values())
+        if not docs:
+            raise ValueError("FAISS docstore 中没有文档，无法构建 BM25 检索器")
+        retriever = BM25Retriever.from_documents(docs, preprocess_func=_tokenize_zh_en)
+        setattr(vs, "_medicalqa_bm25_retriever", retriever)
     retriever.k = k
     return retriever
 
@@ -120,7 +153,7 @@ def retrieve_bm25(
     k: int = 5,
 ) -> List[Tuple[Document, float]]:
     retriever = build_bm25_retriever(vs, k=k)
-    docs = retriever.get_relevant_documents(query)
+    docs = retriever.invoke(query)
 
     results: List[Tuple[Document, float]] = []
     for rank, doc in enumerate(docs, 1):
@@ -153,6 +186,7 @@ def retrieve_hybrid(
     返回融合后的前 k 条 (Document, score)。
     candidate_scale 用于放宽候选数（如 k=5、candidate_scale=2 -> 先取 10 条再融合），提高覆盖。
     """
+    candidate_scale = max(int(candidate_scale), 1)
     candidate_k = max(k * candidate_scale, k)
 
     dense_raw = retrieve(vs, query, k=candidate_k)
@@ -254,8 +288,8 @@ def apply_soft_rerank(
     reranked: List[Tuple[Document, float]] = []
     for doc, score in retrieved:
         md = doc.metadata or {}
-        quality = float(md.get("quality_score", 0.5) or 0.5)
-        freshness = float(md.get("fresh_score", 0.5) or 0.5)
+        quality = _safe_float(md.get("quality_score", 0.5), default=0.5)
+        freshness = _safe_float(md.get("fresh_score", 0.5), default=0.5)
         bonus = 0.5 * (quality + freshness)
         new_score = alpha * float(score) + (1 - alpha) * bonus
         reranked.append((doc, new_score))
@@ -281,7 +315,24 @@ def _split_paragraphs(text: str) -> List[str]:
 
 
 def _keyword_list(query: str) -> List[str]:
-    return [w for w in re.split(r"\s+|,|，|。|？|\?|！|!", query) if len(w) >= 2]
+    stopwords = {"什么", "时候", "多少", "如何", "是否", "哪些", "怎么", "为什么", "情况"}
+    raw_parts = re.findall(r"[\u4e00-\u9fff]+|[a-zA-Z0-9_]+", query.lower())
+
+    keywords: List[str] = []
+    for part in raw_parts:
+        if len(part) < 2:
+            continue
+        if part not in stopwords:
+            keywords.append(part)
+
+        if re.fullmatch(r"[\u4e00-\u9fff]+", part) and len(part) >= 4:
+            for size in (4, 3):
+                for i in range(0, len(part) - size + 1):
+                    piece = part[i : i + size]
+                    if piece not in stopwords:
+                        keywords.append(piece)
+
+    return list(dict.fromkeys(keywords))
 
 
 def _score_text(text: str, keywords: List[str]) -> int:
@@ -422,9 +473,7 @@ def build_citations(
         md = doc.metadata or {}
         text = (doc.page_content or "").strip()
 
-        # 你入库时 metadata 可能只有 source / chunk_id
-        # 如果你后续能提供真实 URL，就放 metadata["source_url"]
-        source_url = md.get("source_url") or md.get("source") or "unknown_source"
+        source_url = _doc_source(doc)
         chunk_id = md.get("chunk_id", md.get("id", None))
 
         cites.append(
@@ -537,12 +586,16 @@ def evidence_is_weak(query: str, citations: List[Dict[str, Any]]) -> bool:
     if not citations:
         return True
 
-    # 粗糙但实用：看 query 关键词是否在 Top1/Top2 snippet 中出现
-    keywords = [w for w in re.split(r"\s+|,|，|。|？|\?|！|!", query) if len(w) >= 2]
-    top_snips = " ".join(c["content"] for c in citations[:5])
-    hit = 1 if any(kw in top_snips for kw in keywords) else 0
-    # 命中太少，就认为证据偏弱（你可以调阈值）
-    return hit > 5
+    keywords = _keyword_list(query)
+    top_snips = " ".join((c.get("content") or c.get("snippet") or "") for c in citations[:3]).strip()
+    if not top_snips:
+        return True
+    if not keywords:
+        return False
+
+    hit_count = sum(1 for kw in keywords if kw in top_snips)
+    required_hits = 1 if len(keywords) <= 3 else 2
+    return hit_count < required_hits
 
 
 # ----------------------------
@@ -575,6 +628,7 @@ def rag_qa(
     dense_weight: float = 0.6,
     bm25_weight: float = 0.4,
     rrf_k: int = 60,
+    candidate_scale: int = 2,
     hard_filters: Optional[Dict[str, Any]] = None,
     soft_rerank_alpha: Optional[float] = None,
     cross_encoder_model: Optional[str] = None,
@@ -607,6 +661,7 @@ def rag_qa(
             dense_weight=dense_weight,
             bm25_weight=bm25_weight,
             rrf_k=rrf_k,
+            candidate_scale=candidate_scale,
         )
     else:
         raise ValueError(f"不支持的检索模式：{retrieval_mode}，可选 dense / bm25 / hybrid_rrf / hybrid_weighted")
@@ -635,7 +690,7 @@ def rag_qa(
     # LLM rerank（按需开启）
     elif llm_rerank:
         llm_reranker = LLMReranker(
-            chat_model=chat_model,
+            chat_model=get_chat_model(),
             batch_size=llm_rerank_batch_size,
             max_chars_per_doc=llm_rerank_max_chars,
             blend_weight=llm_rerank_blend_weight,
@@ -667,7 +722,7 @@ def rag_qa(
             "question": question,
             "answer": "我在当前知识库检索到的证据不足以可靠回答这个问题。你可以补充：政策文件名称/地区/时间范围，或把相关原文段落提供给我，我再基于证据回答。",
             "citations": citations,
-            "notes": "evidence_insufficient",
+            "notes": ["evidence_insufficient"],
         }
 
     conflict_note = detect_conflict(citations)
@@ -722,7 +777,7 @@ def rag_qa(
             )
         )
 
-    resp = chat_model.invoke([system, user])
+    resp = get_chat_model().invoke([system, user])
     answer_text = (resp.content or "").strip()
 
     # 把冲突提示附加到 notes（也可以让模型自己说，这里双保险）
@@ -805,7 +860,41 @@ def run_demo(index_dir: str) -> None:
                 )
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="医疗 RAG 问答与 demo 工具")
+    parser.add_argument("--index-dir", required=True, help="FAISS 索引目录")
+    parser.add_argument("--question", help="单次问答的问题")
+    parser.add_argument("--top-k", type=int, default=5, help="检索返回的候选数")
+    parser.add_argument(
+        "--retrieval-mode",
+        default="dense",
+        choices=["dense", "bm25", "hybrid", "hybrid_rrf", "hybrid_weighted"],
+        help="检索模式",
+    )
+    parser.add_argument("--structured-output", action="store_true", help="是否要求结构化 JSON 输出")
+    parser.add_argument("--demo", action="store_true", help="运行内置 demo 问题集")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    if args.demo:
+        run_demo(args.index_dir)
+        return
+
+    if not args.question:
+        raise SystemExit("非 demo 模式下必须提供 --question")
+
+    vs = load_faiss(args.index_dir)
+    result = rag_qa(
+        vs,
+        args.question,
+        k=args.top_k,
+        retrieval_mode=args.retrieval_mode,
+        structured_output=args.structured_output,
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
 if __name__ == "__main__":
-    # 改成你保存 FAISS 的目录（里面应有 index.faiss + index.pkl）
-    INDEX_DIR = "/Users/lejinbo/LLM/code-snippets/medical_docs/medical_documents_20251217_104142_cleaned_faiss_index"
-    run_demo(INDEX_DIR)
+    main()

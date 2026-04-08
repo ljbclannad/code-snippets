@@ -3,6 +3,7 @@
 从医保局、卫健委、医院等官方网站抓取高质量文档
 """
 
+import argparse
 import requests
 from bs4 import BeautifulSoup
 import json
@@ -69,8 +70,6 @@ class MedicalDocumentCrawler:
                     # 优先从datastore脚本中提取真实列表（页面使用text/xml + dataproxy）
                     candidate_links = self._extract_nhsa_links_from_datastore(soup, base_url)
                     count = 0
-                    filtered_count = 0
-                    
                     for link in candidate_links:
                         if count >= 10:  # 每个栏目抓取10篇
                             break
@@ -80,7 +79,6 @@ class MedicalDocumentCrawler:
                         
                         # 过滤有效的文章链接
                         if href and 'art' in href and len(title) > 10:
-                            filtered_count += 1
                             full_url = urljoin(base_url, href)
                             
                             # 获取文章内容
@@ -570,14 +568,18 @@ class MedicalDocumentCrawler:
         logger.info("="*60 + "\n")
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="医疗文档爬虫")
+    parser.add_argument("--output-dir", default="medical_docs", help="抓取结果输出目录")
+    parser.add_argument("--target-count", type=int, default=50, help="目标文档数量")
+    return parser.parse_args()
+
+
 def main():
     """主函数"""
-    # 创建爬虫实例
-    crawler = MedicalDocumentCrawler(output_dir="medical_docs")
-    
-    # 爬取30-50篇文档
-    target_count = 400
-    documents = crawler.crawl_all(target_count=target_count)
+    args = parse_args()
+    crawler = MedicalDocumentCrawler(output_dir=args.output_dir)
+    documents = crawler.crawl_all(target_count=args.target_count)
     
     # 保存文档
     if documents:
@@ -596,4 +598,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
