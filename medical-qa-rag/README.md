@@ -4,6 +4,8 @@
 
 `抓取文档 -> 清洗文本 -> 切分 chunk -> 向量化 -> 检索/重排 -> 基于证据回答 -> 评测`
 
+如果你需要更完整的结构说明、模块职责和演进方向，请看 [PROJECT_OVERVIEW.md](/Users/lejinbo/LLM/code-snippets/medical-qa-rag/PROJECT_OVERVIEW.md)。
+
 ## 当前能力
 
 - 爬取公开医疗资料，来源包括国家医保局、国家卫健委、PMC OA、LOINC，见 [crawler/MedicalCrawler.py](crawler/MedicalCrawler.py)
