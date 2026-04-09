@@ -106,6 +106,81 @@ docker compose -f governance-suite/docker-compose.yml -p governance-suite up -d
 
 建议先启动基础设施，再启动业务服务。若要做实验，可在启动前设置对应的 `LAB_FAIL_*` 环境变量。
 
+### 命令行启动
+
+在项目根目录执行：
+
+```bash
+mvn -q -pl gateway spring-boot:run
+mvn -q -pl inventory-service spring-boot:run
+mvn -q -pl payment-service spring-boot:run
+mvn -q -pl order-service spring-boot:run
+mvn -q -pl outbox-consumer spring-boot:run
+```
+
+如果你想分终端启动，建议顺序如下：
+
+```bash
+# Terminal 1
+mvn -q -pl gateway spring-boot:run
+
+# Terminal 2
+mvn -q -pl inventory-service spring-boot:run
+
+# Terminal 3
+mvn -q -pl payment-service spring-boot:run
+
+# Terminal 4
+mvn -q -pl order-service spring-boot:run
+
+# Terminal 5
+mvn -q -pl outbox-consumer spring-boot:run
+```
+
+### 带实验开关启动
+
+例如模拟库存扣减失败：
+
+```bash
+LAB_FAIL_INVENTORY_DEDUCT=true mvn -q -pl inventory-service spring-boot:run
+```
+
+例如模拟支付准备失败：
+
+```bash
+LAB_FAIL_PAYMENT_PREPARE=true mvn -q -pl payment-service spring-boot:run
+```
+
+例如模拟 Outbox 投递失败：
+
+```bash
+LAB_FAIL_OUTBOX_PUBLISH=true mvn -q -pl outbox-consumer spring-boot:run
+```
+
+### 停止服务
+
+如果服务是前台启动的，直接在对应终端执行：
+
+```bash
+Ctrl + C
+```
+
+如果你想按端口停止本地服务，可执行：
+
+```bash
+lsof -ti :8080 | xargs kill
+lsof -ti :8081 | xargs kill
+lsof -ti :8082 | xargs kill
+lsof -ti :8083 | xargs kill
+lsof -ti :8090 | xargs kill
+```
+
+也可以一次性停止这 5 个端口上的 Java 进程：
+
+```bash
+lsof -ti :8080 -i :8081 -i :8082 -i :8083 -i :8090 | xargs kill
+```
+
 ## 基础验证链路
 
 ### 1）下单（走网关）
