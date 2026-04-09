@@ -42,7 +42,8 @@ public class NacosRegistrationRetryRunner {
                 return;
             } catch (Exception ex) {
                 if (attempt == maxAttempts) {
-                    throw new IllegalStateException("service registration failed after " + maxAttempts + " attempts", ex);
+                    throw new IllegalStateException("service registration failed after " + maxAttempts + " attempts",
+                            ex);
                 }
                 log.warn("service registration attempt {} failed, retrying in {} ms", attempt, retryIntervalMs, ex);
                 sleepQuietly();
