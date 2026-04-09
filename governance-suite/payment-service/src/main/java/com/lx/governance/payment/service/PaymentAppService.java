@@ -8,6 +8,7 @@ import java.util.concurrent.TimeoutException;
 
 import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -24,16 +25,27 @@ public class PaymentAppService {
     private final PaymentRepository repository;
     private final StringRedisTemplate redisTemplate;
     private final RabbitTemplate rabbitTemplate;
+    private final boolean failPrepare;
+    private final boolean failConfirm;
 
-    public PaymentAppService(PaymentRepository repository, StringRedisTemplate redisTemplate,
-            RabbitTemplate rabbitTemplate) {
+    public PaymentAppService(PaymentRepository repository,
+            StringRedisTemplate redisTemplate,
+            RabbitTemplate rabbitTemplate,
+            @Value("${lab.fail.prepare:false}") boolean failPrepare,
+            @Value("${lab.fail.confirm:false}") boolean failConfirm) {
         this.repository = repository;
         this.redisTemplate = redisTemplate;
         this.rabbitTemplate = rabbitTemplate;
+        this.failPrepare = failPrepare;
+        this.failConfirm = failConfirm;
     }
 
     @SentinelResource(value = "payment_prepare", blockHandler = "blockPrepare", fallback = "fallbackPrepare")
     public PaymentDto prepare(PreparePaymentRequest req) {
+        if (failPrepare) {
+            throw new IllegalStateException("lab injected failure: payment prepare");
+        }
+
         String idemKey = "idem:pay:" + req.getOrderNo();
         Boolean ok = redisTemplate.opsForValue().setIfAbsent(idemKey, "1", Duration.ofMinutes(10));
         if (!Boolean.TRUE.equals(ok)) {
@@ -47,6 +59,10 @@ public class PaymentAppService {
     }
 
     public PaymentDto confirm(String orderNo) {
+        if (failConfirm) {
+            throw new IllegalStateException("lab injected failure: payment confirm");
+        }
+
         repository.updateStatusByOrderNo(orderNo, "SUCCEEDED");
         PaymentDto p = repository.findByOrderNo(orderNo);
         // 复用 traceId，便于串联业务日志与消息发送确认日志。

@@ -6,9 +6,13 @@ spring:
     name: order-service
 
   cloud:
+    service-registry:
+      auto-registration:
+        enabled: false
     nacos:
       discovery:
         server-addr: ${NACOS_ADDR:localhost:8848}
+        register-enabled: ${NACOS_REGISTER_ENABLED:true}
     sentinel:
       transport:
         dashboard: ${SENTINEL_DASHBOARD:localhost:8858}
@@ -95,6 +99,11 @@ id:
     max-backward-ms: ${SNOWFLAKE_MAX_BACKWARD_MS:5}
 
 app:
+  nacos:
+    retry-registration:
+      enabled: true
+      max-attempts: 30
+      retry-interval-ms: 2000
   thread-pool:
     io:
       core-size: 32

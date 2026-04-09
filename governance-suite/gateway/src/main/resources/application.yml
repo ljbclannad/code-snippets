@@ -8,13 +8,17 @@ spring:
     host: ${REDIS_HOST:localhost}
     port: ${REDIS_PORT:36379}
   cloud:
+    service-registry:
+      auto-registration:
+        enabled: false
     nacos:
       discovery:
         server-addr: ${NACOS_ADDR:localhost:8848}
+        register-enabled: ${NACOS_REGISTER_ENABLED:true}
     gateway:
       discovery:
         locator:
-          enabled: true
+          enabled: ${GATEWAY_DISCOVERY_ENABLED:true}
           lower-case-service-id: true
       default-filters:
         - name: RequestRateLimiter
@@ -33,19 +37,19 @@ spring:
           filters:
             - SetStatus=403
         - id: order
-          uri: lb://order-service #按服务名做服务发现 + 负载均衡转发。
+          uri: ${ORDER_SERVICE_URI:lb://order-service}
           predicates:
             - Path=/api/order/**
           filters:
             - StripPrefix=2
         - id: payment
-          uri: lb://payment-service
+          uri: ${PAYMENT_SERVICE_URI:lb://payment-service}
           predicates:
             - Path=/api/payment/**
           filters:
             - StripPrefix=2
         - id: inventory
-          uri: lb://inventory-service
+          uri: ${INVENTORY_SERVICE_URI:lb://inventory-service}
           predicates:
             - Path=/api/inventory/**
           filters:
@@ -84,3 +88,10 @@ spring.cloud.sentinel:
     dashboard: ${SENTINEL_DASHBOARD:localhost:8858}
     port: 8719
   eager: true
+
+app:
+  nacos:
+    retry-registration:
+      enabled: true
+      max-attempts: 30
+      retry-interval-ms: 2000

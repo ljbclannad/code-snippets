@@ -7,7 +7,11 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 
-@FeignClient(name = "inventory-service", path = "/", fallback = InventoryClient.InventoryClientFallback.class)
+@FeignClient(
+        name = "inventory-service",
+        url = "${service.inventory.base-url:}",
+        path = "/",
+        fallback = InventoryClient.InventoryClientFallback.class)
 public interface InventoryClient {
 
     @PostMapping("/deduct")

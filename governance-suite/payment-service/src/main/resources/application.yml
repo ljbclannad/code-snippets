@@ -6,9 +6,13 @@ spring:
     name: payment-service
 
   cloud:
+    service-registry:
+      auto-registration:
+        enabled: false
     nacos:
       discovery:
         server-addr: ${NACOS_ADDR:localhost:8848}
+        register-enabled: ${NACOS_REGISTER_ENABLED:true}
     sentinel:
       transport:
         dashboard: ${SENTINEL_DASHBOARD:localhost:8858}
@@ -73,3 +77,15 @@ management:
     web:
       exposure:
         include: "*"
+
+app:
+  nacos:
+    retry-registration:
+      enabled: true
+      max-attempts: 30
+      retry-interval-ms: 2000
+
+lab:
+  fail:
+    prepare: ${LAB_FAIL_PAYMENT_PREPARE:false}
+    confirm: ${LAB_FAIL_PAYMENT_CONFIRM:false}

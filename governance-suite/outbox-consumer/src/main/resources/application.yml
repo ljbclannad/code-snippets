@@ -19,6 +19,12 @@ spring:
 
 outbox:
   poll-interval-ms: 1000
+  max-retries: 5
+  retry-delay-seconds: 10
+
+lab:
+  fail:
+    publish: ${LAB_FAIL_OUTBOX_PUBLISH:false}
 
 management:
   endpoints:

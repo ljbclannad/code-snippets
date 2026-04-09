@@ -1,9 +1,7 @@
 package com.lx.governance.order.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.stereotype.Component;
 
-@Component
 @ConfigurationProperties(prefix = "app.thread-pool")
 public class ThreadPoolProperties {
 

@@ -7,7 +7,11 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 
-@FeignClient(name = "payment-service", path = "/", fallback = PaymentClient.PaymentClientFallback.class)
+@FeignClient(
+        name = "payment-service",
+        url = "${service.payment.base-url:}",
+        path = "/",
+        fallback = PaymentClient.PaymentClientFallback.class)
 public interface PaymentClient {
 
     @PostMapping("/prepare")

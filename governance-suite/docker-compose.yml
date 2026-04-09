@@ -53,6 +53,8 @@ services:
             MYSQL_SERVICE_DB_PARAM: characterEncoding=utf8&connectTimeout=1000&socketTimeout=3000&autoReconnect=true&useSSL=false&serverTimezone=Asia/Shanghai
         ports:
             - "8848:8848"
+            - "9848:9848"
+            - "9849:9849"
         depends_on:
             - mysql
 

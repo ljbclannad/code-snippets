@@ -3,6 +3,7 @@ package com.lx.governance.inventory.service;
 import java.time.Duration;
 
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -15,15 +16,23 @@ public class InventoryAppService {
 
     private final StockRepository stockRepository;
     private final StringRedisTemplate redisTemplate;
+    private final boolean failDeduct;
 
-    public InventoryAppService(StockRepository stockRepository, StringRedisTemplate redisTemplate) {
+    public InventoryAppService(StockRepository stockRepository,
+                               StringRedisTemplate redisTemplate,
+                               @Value("${lab.fail.deduct:false}") boolean failDeduct) {
         this.stockRepository = stockRepository;
         this.redisTemplate = redisTemplate;
+        this.failDeduct = failDeduct;
     }
 
     @Transactional
     @SentinelResource(value = "inventory_deduct", blockHandler = "blockDeduct", fallback = "fallbackDeduct")
     public void deduct(DeductRequest req) {
+        if (failDeduct) {
+            throw new IllegalStateException("lab injected failure: inventory deduct");
+        }
+
         String idemKey = "idem:stock:" + req.getOrderNo();
         Boolean ok = redisTemplate.opsForValue().setIfAbsent(idemKey, "1", Duration.ofHours(1));
         if (!Boolean.TRUE.equals(ok)) {

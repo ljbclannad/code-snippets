@@ -34,11 +34,13 @@ CREATE TABLE IF NOT EXISTS t_outbox (
   event_type VARCHAR(128) NOT NULL,
   payload LONGTEXT NOT NULL,
   status VARCHAR(16) NOT NULL,
+  retry_count INT NOT NULL DEFAULT 0,
+  next_retry_at DATETIME NULL,
   created_at DATETIME NOT NULL,
   sent_at DATETIME NULL,
   error_reason VARCHAR(512) NULL,
   UNIQUE KEY uk_event_id (event_id),
-  KEY idx_status_id (status, id)
+  KEY idx_status_retry_id (status, next_retry_at, id)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS t_seckill_order_guard (
