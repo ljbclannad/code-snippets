@@ -12,14 +12,14 @@
 
 1. `order-service` 先写订单
 2. 调 `inventory-service` 扣库存
-3. 调 `payment-service` 创建支付单
+3. 调 `payment-service` 按 `user_id` 创建支付单
 4. 任一步失败，Seata 回滚全局事务
 
 ## 关键观察点
 
 - `order-service` 中的 `OrderAppService.create`
 - `inventory-service` 的库存乐观锁更新
-- `payment-service` 的支付准备逻辑
+- `payment-service` 的支付准备逻辑，以及按 `user_id` 的分表路由
 - MySQL 中订单、库存、支付表在失败场景下是否一致
 
 ## 你应该理解的边界

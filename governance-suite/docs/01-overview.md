@@ -2,31 +2,34 @@
 
 `governance-suite` 现在的目标不是“做一个业务系统”，而是做一个可重复实验的分布式学习项目。
 
-这个项目覆盖 6 条主线：
+这个项目覆盖 7 条主线：
 
 1. 服务注册与发现：Nacos + Gateway + OpenFeign
-2. 分布式事务：Seata AT
-3. 最终一致性：Outbox + RabbitMQ
-4. 幂等与防重：Redis Key + 数据库唯一约束
-5. 秒杀削峰：Redis Lua + Redis Stream
-6. 限流与降级：Sentinel + Gateway RedisRateLimiter
+2. 用户体系与认证：用户注册、登录、Token 校验、用户头透传
+3. 分布式事务：Seata AT
+4. 最终一致性：Outbox + RabbitMQ
+5. 幂等与防重：Redis Key + 数据库唯一约束 + 消费去重表
+6. 秒杀削峰：Redis Lua + Redis Stream
+7. 限流与降级：Sentinel + Gateway RedisRateLimiter
 
 ## 建议学习顺序
 
 1. 先跑通最简单的下单链路，理解模块职责。
 2. 再看 Nacos 注册发现和 Feign 调用关系。
-3. 然后看 Seata AT 如何保证下单、扣库存、支付准备的回滚。
-4. 再看 Outbox 如何把“本地事务”和“消息发送”解耦。
-5. 最后再看幂等、秒杀、限流这些高频治理细节。
+3. 再看用户 Token 如何在网关校验并向下游透传。
+4. 然后看 Seata AT 如何保证下单、扣库存、支付准备的回滚。
+5. 再看 Outbox 如何把“本地事务”和“消息发送”解耦。
+6. 最后再看幂等、重复消费、秒杀、限流这些高频治理细节。
 
 ## 模块职责
 
 - `gateway`：统一入口、路由、网关限流、Sentinel 网关拦截
+- `user-service`：用户注册、登录、Token 签发、用户信息聚合查询
 - `order-service`：发起下单事务、写订单、写 Outbox、消费支付成功事件
 - `inventory-service`：扣库存，演示库存侧幂等和乐观锁
-- `payment-service`：准备支付、确认支付并发送支付成功事件
+- `payment-service`：准备支付、确认支付、按 `user_id` 分表存储支付数据
 - `outbox-consumer`：扫描 `t_outbox` 并可靠投递到 RabbitMQ
-- `common`：统一返回、TraceId、异常处理、Nacos 注册重试
+- `common`：统一返回、TraceId、异常处理、Nacos 注册重试、Token 与雪花 ID 能力
 
 ## 这不是生产方案大全
 

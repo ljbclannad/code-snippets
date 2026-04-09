@@ -22,6 +22,8 @@ LAB_FAIL_OUTBOX_PUBLISH=true
 
 关闭故障注入后重启 `outbox-consumer`，记录应继续重试并最终变为 `SENT`。
 
+你也可以继续观察 `order-service` 中的 `t_payment_event_consume`，理解“发送端重试”和“消费端去重”是两件不同的事。
+
 ## 你要思考的问题
 
 - 为什么这里不追求强一致？

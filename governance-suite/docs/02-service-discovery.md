@@ -17,7 +17,7 @@
 
 ## 你应该观察什么
 
-1. 服务启动后，Nacos 控制台里能看到 `gateway`、`order-service`、`payment-service`、`inventory-service`
+1. 服务启动后，Nacos 控制台里能看到 `gateway`、`user-service`、`order-service`、`payment-service`、`inventory-service`
 2. `gateway` 的路由 URI 使用的是 `lb://...`
 3. `order-service` 日志里会提示 Feign 未提供固定 URL，将通过 load-balancing 选择实例
 
@@ -29,6 +29,6 @@
 
 ## 建议实验
 
-- 正常启动 4 个注册到 Nacos 的服务，观察实例列表
+- 正常启动 5 个注册到 Nacos 的服务，观察实例列表
 - 停掉 `inventory-service`，再发起下单，观察 Feign fallback 和错误传播
 - 对比 `lb://service-name` 与固定 `http://host:port` 两种调用方式的差别

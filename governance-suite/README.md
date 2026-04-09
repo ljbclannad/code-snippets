@@ -6,12 +6,13 @@
 
 - Nacos：服务注册与发现
 - Spring Cloud Gateway：统一入口与路由
+- 用户体系：注册、登录、Token 校验、当前用户查询
 - OpenFeign + LoadBalancer：服务间调用
 - Seata AT：同步调用链路的分布式事务
 - RabbitMQ + Outbox：最终一致性与可靠投递
 - Redis：幂等、防重、秒杀预扣减
 - Sentinel：限流、熔断、降级
-- ShardingSphere-JDBC：订单和支付分表
+- ShardingSphere-JDBC：用户、订单、支付分表
 
 ## 学习入口
 
@@ -39,10 +40,11 @@
 ## 模块
 
 - `common`：统一返回、TraceId、异常处理、Nacos 注册重试
-- `gateway`：网关路由、RedisRateLimiter、Sentinel Gateway Block
+- `gateway`：网关路由、RedisRateLimiter、Sentinel Gateway Block、Token 校验与用户头透传
+- `user-service`：用户注册、登录、Token 签发、当前用户与支付信息聚合查询
 - `order-service`：下单主流程、Seata 发起方、Outbox 落库、支付事件消费
 - `inventory-service`：库存扣减、乐观锁、库存侧幂等
-- `payment-service`：支付准备、支付确认、支付成功事件发布
+- `payment-service`：支付准备、支付确认、按 `user_id` 分表、用户支付记录查询
 - `outbox-consumer`：轮询 `t_outbox` 并可靠投递到 RabbitMQ
 
 ## 学习用故障注入
@@ -189,14 +191,45 @@ lsof -ti :8080 -i :8081 -i :8082 -i :8083 -i :8084 -i :8090 | xargs kill
 
 ## 基础验证链路
 
+### 0）注册并登录，获取 Token
+
+注册：
+
+```bash
+curl -X POST http://localhost:8080/api/user/register \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"u1001","password":"123456","displayName":"User 1001"}'
+```
+
+登录：
+
+```bash
+curl -X POST http://localhost:8080/api/user/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"u1001","password":"123456"}'
+```
+
+返回结果里会包含 `token` 和 `user.userId`。后续访问受保护接口时，需要带：
+
+```bash
+-H 'Authorization: Bearer <token>'
+```
+
 ### 1）下单（走网关）
 
 ```bash
 curl -X POST http://localhost:8080/api/order/order \
   -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <token>' \
   -H 'Idempotency-Key: demo-1' \
-  -d '{"customerId":"c1","productId":"p1","quantity":1,"amountCents":100}'
+  -d '{"productId":"p1","quantity":1,"amountCents":100}'
 ```
+
+说明：
+
+- `gateway` 会校验 `Authorization`
+- 校验通过后，会把 `X-User-Id`、`X-Username` 透传给下游
+- `order-service` 会使用认证后的用户 ID 作为支付准备和支付分表的依据
 
 ### 1.1）下单 v2（Redis Lua 原子预扣 + Stream 入队）
 
@@ -212,8 +245,9 @@ redis-cli -p 36379 del seckill:buyers:sku:1001
 ```bash
 curl -X POST http://localhost:8080/api/order/order/v2 \
   -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <token>' \
   -H 'Idempotency-Key: req-1001-u1' \
-  -d '{"customerId":"u1","productId":"1001","quantity":1,"amountCents":100}'
+  -d '{"productId":"1001","quantity":1,"amountCents":100}'
 ```
 
 返回 `code=OK` 表示已原子完成：校验库存、去重购买、`DECR` 扣库存、`XADD` 入 `seckill:stream:orders`。
@@ -229,16 +263,30 @@ curl -X POST http://localhost:8080/api/order/order/v2 \
 
 ```bash
 # 你需要从上一步响应中拿到 orderNo
-curl -X POST http://localhost:8080/api/payment/confirm/<orderNo>
+curl -X POST http://localhost:8080/api/payment/confirm/<orderNo> \
+  -H 'Authorization: Bearer <token>'
 ```
 
 也可以走 `order-service` 的支付回调通道（默认 PASS，统一走 outbox）：
 
 ```bash
-curl -X POST http://localhost:8080/api/order/order/payment/callback/<orderNo>
+curl -X POST http://localhost:8080/api/order/order/payment/callback/<orderNo> \
+  -H 'Authorization: Bearer <token>'
 ```
 
-该链路会先写 `t_outbox(status=NEW)`，随后由 `outbox-consumer` 轮询发布到 RabbitMQ；`order-service` 消费后手动 `ack` 并更新 `t_order.status=PAID`。
+该链路会先写 `t_outbox(status=NEW)`，随后由 `outbox-consumer` 轮询发布到 RabbitMQ；`order-service` 消费后先写 `t_payment_event_consume` 做去重，再更新 `t_order.status=PAID`。
+
+### 2.1）查看当前用户与支付信息关联结果
+
+```bash
+curl http://localhost:8080/api/user/me \
+  -H 'Authorization: Bearer <token>'
+```
+
+返回结果中会同时包含：
+
+- 用户基础信息
+- 该用户在 `payment-service` 中的支付记录列表
 
 ## Outbox 状态说明
 - `NEW`：待首次投递
@@ -296,7 +344,8 @@ docker start gov-rabbitmq
 ### 3）查订单状态
 
 ```bash
-curl http://localhost:8080/api/order/order/<orderNo>
+curl http://localhost:8080/api/order/order/<orderNo> \
+  -H 'Authorization: Bearer <token>'
 ```
 
 看到 status=PAID 说明：MQ 消费链路走通。
@@ -304,6 +353,8 @@ curl http://localhost:8080/api/order/order/<orderNo>
 ## 这个项目适合学什么
 
 - 为什么要有注册中心，而不是全写死地址
+- 为什么用户 ID 更适合作为分表键，而不是用户名这类业务字段
+- 为什么 Token 校验更适合放在网关，而不是每个服务都手写一遍
 - 为什么同步链路适合 Seata，异步链路适合 Outbox
 - 为什么幂等不能只靠前端按钮防重
 - 为什么秒杀要先削峰再落库
