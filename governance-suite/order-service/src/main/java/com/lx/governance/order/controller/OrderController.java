@@ -1,6 +1,7 @@
 package com.lx.governance.order.controller;
 
 import com.lx.governance.common.api.ApiResponse;
+import com.lx.governance.common.auth.AuthHeaders;
 import com.lx.governance.common.trace.Trace;
 import com.lx.governance.order.domain.CreateOrderRequest;
 import com.lx.governance.order.domain.OrderDto;
@@ -21,14 +22,22 @@ public class OrderController {
 
     @PostMapping("/order")
     public ApiResponse<OrderDto> create(@RequestBody CreateOrderRequest req,
+                                        @RequestHeader(value = AuthHeaders.USER_ID, required = false) Long authenticatedUserId,
                                         @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+        if (authenticatedUserId != null) {
+            req.setCustomerId(String.valueOf(authenticatedUserId));
+        }
         OrderDto dto = appService.create(req, idempotencyKey);
         return ApiResponse.ok(dto, Trace.getOrCreate());
     }
 
     @PostMapping("/order/v2")
     public ApiResponse<Map<String, String>> createV2(@RequestBody CreateOrderRequest req,
-                                                      @RequestHeader(value = "Idempotency-Key", required = false) String reqId) {
+                                                     @RequestHeader(value = AuthHeaders.USER_ID, required = false) Long authenticatedUserId,
+                                                     @RequestHeader(value = "Idempotency-Key", required = false) String reqId) {
+        if (authenticatedUserId != null) {
+            req.setCustomerId(String.valueOf(authenticatedUserId));
+        }
         return ApiResponse.ok(appService.createV2(req, reqId), Trace.getOrCreate());
     }
 

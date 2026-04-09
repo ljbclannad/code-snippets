@@ -28,6 +28,12 @@ spring:
             redis-rate-limiter.burstCapacity: ${gateway.rate-limit.burst-capacity:10}
             redis-rate-limiter.requestedTokens: 1
       routes:
+        - id: user
+          uri: ${USER_SERVICE_URI:lb://user-service}
+          predicates:
+            - Path=/api/user/**
+          filters:
+            - StripPrefix=2
         - id: block-ip
           uri: no://op
           order: -100
@@ -90,6 +96,9 @@ spring.cloud.sentinel:
   eager: true
 
 app:
+  auth:
+    token-secret: ${AUTH_TOKEN_SECRET:governance-suite-dev-secret}
+    token-ttl-seconds: ${AUTH_TOKEN_TTL_SECONDS:7200}
   nacos:
     retry-registration:
       enabled: true

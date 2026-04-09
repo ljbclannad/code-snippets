@@ -12,10 +12,12 @@ import com.lx.governance.order.domain.PaymentPrepareRequest;
 import com.lx.governance.order.id.OrderNoGenerator;
 import com.lx.governance.order.repo.OutboxRepository;
 import com.lx.governance.order.repo.OrderRepository;
+import com.lx.governance.order.repo.PaymentEventConsumeRepository;
 import io.seata.spring.annotation.GlobalTransactional;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.util.List;
@@ -28,6 +30,7 @@ public class OrderAppService {
     private final OutboxRepository outboxRepository;
     private final InventoryClient inventoryClient;
     private final PaymentClient paymentClient;
+    private final PaymentEventConsumeRepository paymentEventConsumeRepository;
     private final IdempotencyService idempotencyService;
     private final StringRedisTemplate redisTemplate;
     private final OrderNoGenerator orderNoGenerator;
@@ -59,6 +62,7 @@ public class OrderAppService {
                            OutboxRepository outboxRepository,
                            InventoryClient inventoryClient,
                            PaymentClient paymentClient,
+                           PaymentEventConsumeRepository paymentEventConsumeRepository,
                            IdempotencyService idempotencyService,
                            StringRedisTemplate redisTemplate,
                            OrderNoGenerator orderNoGenerator) {
@@ -66,6 +70,7 @@ public class OrderAppService {
         this.outboxRepository = outboxRepository;
         this.inventoryClient = inventoryClient;
         this.paymentClient = paymentClient;
+        this.paymentEventConsumeRepository = paymentEventConsumeRepository;
         this.idempotencyService = idempotencyService;
         this.redisTemplate = redisTemplate;
         this.orderNoGenerator = orderNoGenerator;
@@ -96,6 +101,7 @@ public class OrderAppService {
 
         PaymentPrepareRequest payReq = new PaymentPrepareRequest();
         payReq.setOrderNo(orderNo);
+        payReq.setUserId(parseUserId(req.getCustomerId()));
         payReq.setAmountCents(req.getAmountCents());
         ApiResponse<String> pay = paymentClient.prepare(payReq);
         if (pay == null || !pay.isSuccess()) {
@@ -128,6 +134,16 @@ public class OrderAppService {
 
     public void markPaid(String orderNo) {
         orderRepository.updateStatus(orderNo, "PAID");
+    }
+
+    @Transactional
+    public boolean markPaidFromEvent(String eventId, String eventType, String orderNo) {
+        boolean firstConsume = paymentEventConsumeRepository.tryMarkConsumed(eventId, eventType, orderNo);
+        if (!firstConsume) {
+            return false;
+        }
+        orderRepository.updateStatus(orderNo, "PAID");
+        return true;
     }
 
     public Map<String, String> paymentCallbackPass(String orderNo) {
@@ -187,5 +203,16 @@ public class OrderAppService {
                 "status", status,
                 "code", code
         );
+    }
+
+    private Long parseUserId(String customerId) {
+        if (customerId == null || customerId.isBlank()) {
+            throw new IllegalArgumentException("missing customerId/userId");
+        }
+        try {
+            return Long.parseLong(customerId);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("customerId must be numeric userId");
+        }
     }
 }

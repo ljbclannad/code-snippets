@@ -3,6 +3,7 @@
 CREATE DATABASE IF NOT EXISTS order_db DEFAULT CHARACTER SET utf8mb4;
 CREATE DATABASE IF NOT EXISTS payment_db DEFAULT CHARACTER SET utf8mb4;
 CREATE DATABASE IF NOT EXISTS inventory_db DEFAULT CHARACTER SET utf8mb4;
+CREATE DATABASE IF NOT EXISTS user_db DEFAULT CHARACTER SET utf8mb4;
 CREATE DATABASE IF NOT EXISTS seata DEFAULT CHARACTER SET utf8mb4;
 
 -- ----------------------------
@@ -53,6 +54,16 @@ CREATE TABLE IF NOT EXISTS t_seckill_order_guard (
   UNIQUE KEY uk_req_id (req_id)
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS t_payment_event_consume (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  event_id VARCHAR(64) NOT NULL,
+  event_type VARCHAR(64) NOT NULL,
+  order_no VARCHAR(64) NOT NULL,
+  created_at DATETIME NOT NULL,
+  UNIQUE KEY uk_event_id (event_id),
+  KEY idx_order_no (order_no)
+) ENGINE=InnoDB;
+
 -- Seata AT undo log
 CREATE TABLE IF NOT EXISTS undo_log (
   id BIGINT NOT NULL AUTO_INCREMENT,
@@ -75,13 +86,17 @@ USE payment_db;
 
 CREATE TABLE IF NOT EXISTS t_payment_0 (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  user_id BIGINT NOT NULL,
   pay_no VARCHAR(64) NOT NULL,
   order_no VARCHAR(64) NOT NULL,
   amount_cents INT NOT NULL,
   status VARCHAR(32) NOT NULL,
+  idempotency_key VARCHAR(128) NOT NULL,
   created_at DATETIME NOT NULL,
   UNIQUE KEY uk_pay_no (pay_no),
-  KEY idx_order_no (order_no)
+  UNIQUE KEY uk_user_order (user_id, order_no),
+  UNIQUE KEY uk_idempotency_key (idempotency_key),
+  KEY idx_user_created (user_id, created_at)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS t_payment_1 LIKE t_payment_0;
@@ -98,6 +113,36 @@ CREATE TABLE IF NOT EXISTS undo_log (
   ext VARCHAR(100) DEFAULT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY ux_undo_log (xid, branch_id)
+) ENGINE=InnoDB;
+
+-- ----------------------------
+-- user_db
+-- ----------------------------
+USE user_db;
+
+CREATE TABLE IF NOT EXISTS t_user_0 (
+  user_id BIGINT NOT NULL,
+  username VARCHAR(64) NOT NULL,
+  display_name VARCHAR(128) NOT NULL,
+  status VARCHAR(16) NOT NULL,
+  created_at DATETIME NOT NULL,
+  PRIMARY KEY (user_id),
+  KEY idx_username (username),
+  KEY idx_created (created_at)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS t_user_1 LIKE t_user_0;
+
+CREATE TABLE IF NOT EXISTS t_user_account (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  user_id BIGINT NOT NULL,
+  username VARCHAR(64) NOT NULL,
+  password_hash VARCHAR(128) NOT NULL,
+  password_salt VARCHAR(64) NOT NULL,
+  status VARCHAR(16) NOT NULL,
+  created_at DATETIME NOT NULL,
+  UNIQUE KEY uk_username (username),
+  UNIQUE KEY uk_user_id (user_id)
 ) ENGINE=InnoDB;
 
 -- ----------------------------

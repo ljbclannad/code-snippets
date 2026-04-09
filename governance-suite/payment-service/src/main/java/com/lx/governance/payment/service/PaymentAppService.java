@@ -2,6 +2,7 @@ package com.lx.governance.payment.service;
 
 import java.time.Duration;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -9,10 +10,13 @@ import java.util.concurrent.TimeoutException;
 import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import com.alibaba.csp.sentinel.annotation.SentinelResource;
+import com.lx.governance.common.auth.AuthHeaders;
+import com.lx.governance.common.id.SnowflakeIdGenerator;
 import com.lx.governance.common.trace.Trace;
 import com.lx.governance.payment.config.RabbitConfig;
 import com.lx.governance.payment.domain.PaymentDto;
@@ -27,17 +31,21 @@ public class PaymentAppService {
     private final RabbitTemplate rabbitTemplate;
     private final boolean failPrepare;
     private final boolean failConfirm;
+    private final SnowflakeIdGenerator payNoGenerator;
 
     public PaymentAppService(PaymentRepository repository,
             StringRedisTemplate redisTemplate,
             RabbitTemplate rabbitTemplate,
             @Value("${lab.fail.prepare:false}") boolean failPrepare,
-            @Value("${lab.fail.confirm:false}") boolean failConfirm) {
+            @Value("${lab.fail.confirm:false}") boolean failConfirm,
+            @Value("${id.snowflake.worker-id:2}") long workerId,
+            @Value("${id.snowflake.max-backward-ms:5}") long maxBackwardMs) {
         this.repository = repository;
         this.redisTemplate = redisTemplate;
         this.rabbitTemplate = rabbitTemplate;
         this.failPrepare = failPrepare;
         this.failConfirm = failConfirm;
+        this.payNoGenerator = new SnowflakeIdGenerator(workerId, maxBackwardMs);
     }
 
     @SentinelResource(value = "payment_prepare", blockHandler = "blockPrepare", fallback = "fallbackPrepare")
@@ -45,37 +53,62 @@ public class PaymentAppService {
         if (failPrepare) {
             throw new IllegalStateException("lab injected failure: payment prepare");
         }
-
-        String idemKey = "idem:pay:" + req.getOrderNo();
-        Boolean ok = redisTemplate.opsForValue().setIfAbsent(idemKey, "1", Duration.ofMinutes(10));
-        if (!Boolean.TRUE.equals(ok)) {
-            // 已准备过
-            return repository.findByOrderNo(req.getOrderNo());
+        if (req.getUserId() == null) {
+            throw new IllegalArgumentException("userId is required for payment prepare");
         }
 
-        String payNo = "P" + System.currentTimeMillis() + (int) (Math.random() * 1000);
-        repository.insert(payNo, req.getOrderNo(), req.getAmountCents(), "PREPARED");
-        return repository.findByOrderNo(req.getOrderNo());
+        String idemKey = "idem:pay:prepare:" + req.getUserId() + ":" + req.getOrderNo();
+        Boolean ok = redisTemplate.opsForValue().setIfAbsent(idemKey, "1", Duration.ofMinutes(10));
+        if (!Boolean.TRUE.equals(ok)) {
+            return repository.findByUserIdAndOrderNo(req.getUserId(), req.getOrderNo());
+        }
+
+        PaymentDto existing = repository.findByUserIdAndOrderNo(req.getUserId(), req.getOrderNo());
+        if (existing != null) {
+            return existing;
+        }
+
+        String payNo = "P" + payNoGenerator.nextId();
+        try {
+            repository.insert(req.getUserId(), payNo, req.getOrderNo(), req.getAmountCents(), "PREPARED", idemKey);
+        } catch (DuplicateKeyException e) {
+            return repository.findByUserIdAndOrderNo(req.getUserId(), req.getOrderNo());
+        }
+        return repository.findByUserIdAndOrderNo(req.getUserId(), req.getOrderNo());
     }
 
-    public PaymentDto confirm(String orderNo) {
+    public PaymentDto confirm(Long userId, String orderNo) {
         if (failConfirm) {
             throw new IllegalStateException("lab injected failure: payment confirm");
         }
 
-        repository.updateStatusByOrderNo(orderNo, "SUCCEEDED");
-        PaymentDto p = repository.findByOrderNo(orderNo);
+        PaymentDto p = userId == null ? repository.findByOrderNo(orderNo) : repository.findByUserIdAndOrderNo(userId, orderNo);
+        if (p == null) {
+            throw new IllegalArgumentException("payment not found");
+        }
+        if ("SUCCEEDED".equalsIgnoreCase(p.getStatus())) {
+            return p;
+        }
+        if (userId == null) {
+            repository.updateStatusByOrderNo(orderNo, "SUCCEEDED");
+        } else {
+            repository.updateStatusByUserIdAndOrderNo(userId, orderNo, "SUCCEEDED");
+        }
+        p = userId == null ? repository.findByOrderNo(orderNo) : repository.findByUserIdAndOrderNo(userId, orderNo);
         // 复用 traceId，便于串联业务日志与消息发送确认日志。
         String traceId = Trace.getOrCreate();
+        String eventId = UUID.randomUUID().toString();
         // 发事件给 order-service
         Map<String, Object> event = Map.of(
+                "eventId", eventId,
                 "orderNo", orderNo,
+                "userId", p != null ? p.getUserId() : null,
                 "payNo", p != null ? p.getPayNo() : null,
                 "amountCents", p != null ? p.getAmountCents() : null,
                 "traceId", traceId);
 
         // CorrelationData 用于将发送请求与 broker confirm 对应起来。
-        CorrelationData correlationData = new CorrelationData(orderNo + ":" + traceId + ":" + System.nanoTime());
+        CorrelationData correlationData = new CorrelationData(eventId);
         rabbitTemplate.convertAndSend(
                 RabbitConfig.EXCHANGE,
                 RabbitConfig.RK_PAYMENT_SUCCEEDED,
@@ -103,6 +136,10 @@ public class PaymentAppService {
         } catch (ExecutionException e) {
             throw new IllegalStateException("publish payment.succeeded confirm failed", e);
         }
+    }
+
+    public java.util.List<PaymentDto> listByUserId(long userId) {
+        return repository.findByUserId(userId);
     }
 
     // Sentinel block handler

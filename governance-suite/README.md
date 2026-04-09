@@ -99,6 +99,7 @@ docker compose -f governance-suite/docker-compose.yml -p governance-suite up -d
 按 Nacos 模式启动：
 
 - `gateway` `8080`
+- `user-service` `8084`
 - `inventory-service` `8083`
 - `payment-service` `8082`
 - `order-service` `8081`
@@ -112,6 +113,7 @@ docker compose -f governance-suite/docker-compose.yml -p governance-suite up -d
 
 ```bash
 mvn -q -pl gateway spring-boot:run
+mvn -q -pl user-service spring-boot:run
 mvn -q -pl inventory-service spring-boot:run
 mvn -q -pl payment-service spring-boot:run
 mvn -q -pl order-service spring-boot:run
@@ -125,15 +127,18 @@ mvn -q -pl outbox-consumer spring-boot:run
 mvn -q -pl gateway spring-boot:run
 
 # Terminal 2
-mvn -q -pl inventory-service spring-boot:run
+mvn -q -pl user-service spring-boot:run
 
 # Terminal 3
-mvn -q -pl payment-service spring-boot:run
+mvn -q -pl inventory-service spring-boot:run
 
 # Terminal 4
-mvn -q -pl order-service spring-boot:run
+mvn -q -pl payment-service spring-boot:run
 
 # Terminal 5
+mvn -q -pl order-service spring-boot:run
+
+# Terminal 6
 mvn -q -pl outbox-consumer spring-boot:run
 ```
 
@@ -172,13 +177,14 @@ lsof -ti :8080 | xargs kill
 lsof -ti :8081 | xargs kill
 lsof -ti :8082 | xargs kill
 lsof -ti :8083 | xargs kill
+lsof -ti :8084 | xargs kill
 lsof -ti :8090 | xargs kill
 ```
 
 也可以一次性停止这 5 个端口上的 Java 进程：
 
 ```bash
-lsof -ti :8080 -i :8081 -i :8082 -i :8083 -i :8090 | xargs kill
+lsof -ti :8080 -i :8081 -i :8082 -i :8083 -i :8084 -i :8090 | xargs kill
 ```
 
 ## 基础验证链路

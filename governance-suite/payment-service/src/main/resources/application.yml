@@ -46,13 +46,13 @@ spring:
             actual-data-nodes: ds0.t_payment_${0..1}
             table-strategy:
               standard:
-                sharding-column: order_no
+                sharding-column: user_id
                 sharding-algorithm-name: pay-inline
         sharding-algorithms:
           pay-inline:
             type: INLINE
             props:
-              algorithm-expression: t_payment_${Math.abs(order_no.hashCode()) % 2}
+              algorithm-expression: t_payment_${user_id % 2}
     props:
       sql-show: true
 
@@ -79,11 +79,19 @@ management:
         include: "*"
 
 app:
+  auth:
+    token-secret: ${AUTH_TOKEN_SECRET:governance-suite-dev-secret}
+    token-ttl-seconds: ${AUTH_TOKEN_TTL_SECONDS:7200}
   nacos:
     retry-registration:
       enabled: true
       max-attempts: 30
       retry-interval-ms: 2000
+
+id:
+  snowflake:
+    worker-id: ${SNOWFLAKE_WORKER_ID:2}
+    max-backward-ms: ${SNOWFLAKE_MAX_BACKWARD_MS:5}
 
 lab:
   fail:

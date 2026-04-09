@@ -2,6 +2,7 @@ package com.lx.governance.payment.domain;
 
 public class PreparePaymentRequest {
     private String orderNo;
+    private Long userId;
     private Integer amountCents;
 
     public String getOrderNo() {
@@ -10,6 +11,14 @@ public class PreparePaymentRequest {
 
     public void setOrderNo(String orderNo) {
         this.orderNo = orderNo;
+    }
+
+    public Long getUserId() {
+        return userId;
+    }
+
+    public void setUserId(Long userId) {
+        this.userId = userId;
     }
 
     public Integer getAmountCents() {

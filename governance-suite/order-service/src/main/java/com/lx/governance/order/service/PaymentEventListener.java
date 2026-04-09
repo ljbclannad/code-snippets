@@ -26,11 +26,19 @@ public class PaymentEventListener {
         long tag = amqpMessage.getMessageProperties().getDeliveryTag();
         try {
             JsonNode node = objectMapper.readTree(message);
+            String eventId = node.path("eventId").asText(null);
             String orderNo = node.get("orderNo").asText();
             String traceId = node.has("traceId") ? node.get("traceId").asText() : null;
             Trace.set(traceId);
+            if (eventId == null || eventId.isBlank()) {
+                throw new IllegalArgumentException("missing eventId");
+            }
+            if (!appService.markPaidFromEvent(eventId, "payment.succeeded", orderNo)) {
+                log.info("Skip duplicate payment.succeeded eventId={} orderNo={}", eventId, orderNo);
+                ack(channel, tag);
+                return;
+            }
             log.info("Received payment.succeeded for orderNo={} message={}", orderNo, message);
-            appService.markPaid(orderNo);
             ack(channel, tag);
         } catch (Exception e) {
             log.error("Failed to handle payment.succeeded message={}", message, e);
@@ -45,11 +53,19 @@ public class PaymentEventListener {
         long tag = amqpMessage.getMessageProperties().getDeliveryTag();
         try {
             JsonNode node = objectMapper.readTree(message);
+            String eventId = node.path("eventId").asText(null);
             String orderNo = node.get("orderNo").asText();
             String traceId = node.has("traceId") ? node.get("traceId").asText() : null;
             Trace.set(traceId);
+            if (eventId == null || eventId.isBlank()) {
+                throw new IllegalArgumentException("missing eventId");
+            }
+            if (!appService.markPaidFromEvent(eventId, "payment.callback.pass", orderNo)) {
+                log.info("Skip duplicate payment.callback.pass eventId={} orderNo={}", eventId, orderNo);
+                ack(channel, tag);
+                return;
+            }
             log.info("Received payment.callback.pass for orderNo={} message={}", orderNo, message);
-            appService.markPaid(orderNo);
             ack(channel, tag);
         } catch (Exception e) {
             log.error("Failed to handle payment.callback.pass message={}", message, e);

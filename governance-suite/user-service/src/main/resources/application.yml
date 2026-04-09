@@ -1,0 +1,64 @@
+server:
+  port: 8084
+
+spring:
+  application:
+    name: user-service
+
+  cloud:
+    service-registry:
+      auto-registration:
+        enabled: false
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        register-enabled: ${NACOS_REGISTER_ENABLED:true}
+
+  shardingsphere:
+    datasource:
+      names: ds0
+      ds0:
+        type: com.zaxxer.hikari.HikariDataSource
+        driver-class-name: com.mysql.cj.jdbc.Driver
+        jdbc-url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/user_db?useSSL=false&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+        username: ${MYSQL_USER:root}
+        password: ${MYSQL_PASS:root}
+    rules:
+      sharding:
+        tables:
+          t_user:
+            actual-data-nodes: ds0.t_user_${0..1}
+            table-strategy:
+              standard:
+                sharding-column: user_id
+                sharding-algorithm-name: user-inline
+          t_user_account:
+            actual-data-nodes: ds0.t_user_account
+        sharding-algorithms:
+          user-inline:
+            type: INLINE
+            props:
+              algorithm-expression: t_user_${user_id % 2}
+    props:
+      sql-show: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "*"
+
+app:
+  nacos:
+    retry-registration:
+      enabled: true
+      max-attempts: 30
+      retry-interval-ms: 2000
+  auth:
+    token-secret: ${AUTH_TOKEN_SECRET:governance-suite-dev-secret}
+    token-ttl-seconds: ${AUTH_TOKEN_TTL_SECONDS:7200}
+
+id:
+  snowflake:
+    worker-id: ${SNOWFLAKE_WORKER_ID:3}
+    max-backward-ms: ${SNOWFLAKE_MAX_BACKWARD_MS:5}
