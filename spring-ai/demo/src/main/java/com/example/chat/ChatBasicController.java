@@ -1,13 +1,18 @@
 package com.example.chat;
 
+import java.util.List;
 import java.util.Map;
 
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.client.advisor.SimpleLoggerAdvisor;
+import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import reactor.core.publisher.Flux;
@@ -16,8 +21,13 @@ import reactor.core.publisher.Flux;
 @RequestMapping("/chat")
 public class ChatBasicController {
 
-    @Autowired(required = true)
-    private ChatClient chatClient;
+    private final ChatClient chatClient;
+    private final ChatMemory chatMemory;
+
+    public ChatBasicController(@Qualifier("DeepSeekChatClient") ChatClient chatClient, ChatMemory chatMemory) {
+        this.chatClient = chatClient;
+        this.chatMemory = chatMemory;
+    }
 
     /**
      * 普通输出
@@ -31,6 +41,26 @@ public class ChatBasicController {
                 .user(userInput)
                 .call()
                 .content();
+    }
+
+    record ActorFilms(String actor, List<String> movies) {
+    }
+
+    /**
+     * 返回entity
+     * 
+     * @param userInput
+     * @return
+     */
+    @GetMapping("/ai/record")
+    List<ActorFilms> generationRecord(String userInput) {
+
+        return this.chatClient.prompt()
+                .user(userInput)
+                .call()
+                .entity(new ParameterizedTypeReference<List<ActorFilms>>() {
+
+                });
     }
 
     /**
@@ -55,8 +85,8 @@ public class ChatBasicController {
      * 
      * @return
      */
-    @GetMapping("/ai/prompt")
-    ChatResponse prompt() {
+    @GetMapping("/ai/prompt/template")
+    ChatResponse promptTemplate() {
         ChatResponse answer = chatClient.prompt()
                 .advisors(new SimpleLoggerAdvisor(
                         request -> "Custom request: " + request.prompt().getUserMessage(),
@@ -68,6 +98,29 @@ public class ChatBasicController {
                 .call()
                 .chatResponse();
         return answer;
+    }
+
+    /**
+     * 对话记忆示例
+     * 使用 {@link MessageChatMemoryAdvisor} 将历史消息自动追加到每次请求的上下文中，实现多轮对话。
+     * - {@code conversationId} 用于隔离不同会话的历史记录，同一 id 的请求共享同一段记忆。
+     * - {@link MessageChatMemoryAdvisor} 将记忆以 Message 列表的形式注入 prompt（区别于
+     * {@code PromptChatMemoryAdvisor} 将记忆拼入 system text）。
+     *
+     * @param userInput      用户输入
+     * @param conversationId 会话 ID，默认 "default"
+     * @return 模型回复
+     */
+    @GetMapping("/ai/memory")
+    String memory(@RequestParam String userInput,
+            @RequestParam(defaultValue = "default") String conversationId) {
+        return chatClient.prompt()
+                .advisors(MessageChatMemoryAdvisor.builder(chatMemory)
+                        .conversationId(conversationId)
+                        .build())
+                .user(userInput)
+                .call()
+                .content();
     }
 
     /**

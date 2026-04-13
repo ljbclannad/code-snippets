@@ -4,7 +4,20 @@ server:
 spring:
   application:
     name: Spring AI Demo
+  datasource:
+    url: jdbc:h2:mem:spring-ai-demo;MODE=MySQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  h2:
+    console:
+      enabled: false
   ai:
+    chat:
+      memory:
+        repository:
+          jdbc:
+            initialize-schema: always
     deepseek:
       api-key: sk-94014330085e47a5845cc2acc1a6446a
       api-base: https://api.deepseek.com
