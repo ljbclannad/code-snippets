@@ -21,7 +21,55 @@ spring:
     deepseek:
       api-key: sk-94014330085e47a5845cc2acc1a6446a
       api-base: https://api.deepseek.com
+    mcp:
+      server:
+        enabled: false
+        annotation-scanner:
+          enabled: false
+      client:
+        enabled: false
 
 logging:
   level:
     org.springframework.ai.chat.client.advisor: DEBUG
+
+---
+spring:
+  config:
+    activate:
+      on-profile: mcp-server
+  ai:
+    mcp:
+      server:
+        enabled: true
+        annotation-scanner:
+          enabled: true
+        name: weather-mcp-server
+        version: 0.0.1
+        type: SYNC
+        protocol: SSE
+
+server:
+  port: 8082
+
+---
+spring:
+  config:
+    activate:
+      on-profile: mcp-client
+  ai:
+    mcp:
+      client:
+        enabled: true
+        name: weather-mcp-client
+        version: 0.0.1
+        type: SYNC
+        request-timeout: 30s
+        sse:
+          connections:
+            weather:
+              url: http://localhost:8082
+              sse-endpoint: /sse
+
+server:
+  port: 8081
