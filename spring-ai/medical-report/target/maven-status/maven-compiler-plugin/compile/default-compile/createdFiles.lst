@@ -1,0 +1,10 @@
+com/medical/report/model/QuestionnaireRequest$ReportFile.class
+com/medical/report/model/QuestionnaireRequest.class
+com/medical/report/MedicalReportApplication.class
+com/medical/report/config/ChatConfig.class
+com/medical/report/model/MedicalReportResponse$MedicalReportResponseBuilder.class
+com/medical/report/model/QuestionnaireRequest$FileInfo.class
+com/medical/report/model/QuestionnaireRequest$MedicalRecord.class
+com/medical/report/controller/MedicalReportController.class
+com/medical/report/model/MedicalReportResponse.class
+com/medical/report/service/MedicalReportService.class

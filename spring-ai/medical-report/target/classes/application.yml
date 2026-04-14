@@ -1,0 +1,14 @@
+server:
+  port: 8083
+
+spring:
+  application:
+    name: medical-report
+  ai:
+    deepseek:
+      api-key: ${DEEPSEEK_API_KEY:sk-94014330085e47a5845cc2acc1a6446a}
+      base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
+
+logging:
+  level:
+    com.medical.report: DEBUG
