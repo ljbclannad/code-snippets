@@ -1,19 +1,23 @@
 # Medical Report Recommendation System
 
-基于 Spring AI 和 Claude API 的医疗报告推荐系统，根据用户问卷和检验报告生成个性化健康建议。
+基于 Spring AI 和 DeepSeek API 的医疗报告推荐系统，根据用户问卷和检验报告生成个性化健康建议。
 
 ## 功能特性
 
 - **健康建议**：饮食、运动、生活方式、睡眠建议
 - **风险评估**：识别健康风险、评估风险等级、提供预防措施
 - **就医指导**：推荐就诊科室、评估紧急程度、建议检查项目
+- **PDF 解析**：自动提取检验报告内容并整合到分析中
+- **智能缓存**：相同问卷自动缓存，提升响应速度
+- **API 文档**：集成 Swagger UI，访问 `/swagger-ui.html`
+- **健康监控**：Actuator 端点监控应用状态
 
 ## 技术栈
 
 - Java 17
 - Spring Boot 3.4.0
-- Spring AI 1.0.0-M4
-- Claude API (Anthropic)
+- Spring AI 1.1.2
+- DeepSeek API
 - Lombok
 
 ## 快速开始
@@ -23,8 +27,8 @@
 设置环境变量：
 
 ```bash
-export ANTHROPIC_BASE_URL="https://api.anthropic.com"
-export ANTHROPIC_AUTH_TOKEN="your-api-key"
+export DEEPSEEK_API_KEY="your-deepseek-api-key"
+export DEEPSEEK_BASE_URL="https://api.deepseek.com"  # 可选，默认值
 ```
 
 ### 启动应用
@@ -35,6 +39,18 @@ mvn spring-boot:run
 ```
 
 应用将在 `http://localhost:8083` 启动。
+
+### API 文档
+
+启动应用后访问：
+- Swagger UI: `http://localhost:8083/swagger-ui.html`
+- OpenAPI JSON: `http://localhost:8083/v3/api-docs`
+
+### 健康检查
+
+```bash
+curl http://localhost:8083/actuator/health
+```
 
 ### API 调用示例
 
@@ -136,26 +152,26 @@ medical-report/
 ```yaml
 spring:
   ai:
-    anthropic:
-      base-url: ${ANTHROPIC_BASE_URL}
-      api-key: ${ANTHROPIC_AUTH_TOKEN}
+    deepseek:
+      api-key: ${DEEPSEEK_API_KEY}
+      base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
       chat:
         options:
-          model: claude-3-5-sonnet-20241022
+          model: deepseek-chat
           temperature: 0.7
-          max-tokens: 4096
 ```
 
 ## 注意事项
 
-1. 确保 `ANTHROPIC_BASE_URL` 和 `ANTHROPIC_AUTH_TOKEN` 环境变量已正确设置
-2. Claude API 调用需要网络连接
+1. 确保 `DEEPSEEK_API_KEY` 环境变量已正确设置
+2. DeepSeek API 调用需要网络连接
 3. 生成的报告仅供参考，不能替代专业医疗诊断
-4. 检验报告文件当前仅记录元数据，未实现 PDF 内容解析
+4. PDF 检验报告会自动解析并整合到分析中
+5. 相同问卷数据会使用缓存，避免重复调用 AI
 
 ## 后续扩展
 
-- [ ] 实现 PDF 检验报告内容提取和分析
-- [ ] 添加报告历史记录功能
 - [ ] 支持多语言报告生成
 - [ ] 集成更多健康数据源
+- [ ] 添加报告历史记录和数据库持久化
+- [ ] 实现流式响应（SSE）提升用户体验

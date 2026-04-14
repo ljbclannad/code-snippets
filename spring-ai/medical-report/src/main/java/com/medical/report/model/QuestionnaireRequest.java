@@ -1,13 +1,27 @@
 package com.medical.report.model;
 
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
+
+import java.io.Serializable;
 import java.util.List;
 
 @Data
-public class QuestionnaireRequest {
+@EqualsAndHashCode
+public class QuestionnaireRequest implements Serializable {
+    @NotBlank(message = "姓名不能为空")
     private String name;
+
+    @NotBlank(message = "年龄不能为空")
+    @Pattern(regexp = "^[0-9]{1,3}$", message = "年龄格式不正确")
     private String age;
+
+    @NotBlank(message = "性别不能为空")
+    @Pattern(regexp = "^(男|女)$", message = "性别只能是男或女")
     private String gender;
+
     private String weight;
     private String height;
     private String bmi;

@@ -6,8 +6,24 @@ spring:
     name: medical-report
   ai:
     deepseek:
-      api-key: ${DEEPSEEK_API_KEY:sk-94014330085e47a5845cc2acc1a6446a}
+      api-key: ${DEEPSEEK_API_KEY}
       base-url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
+      chat:
+        options:
+          model: deepseek-chat
+          temperature: 0.7
+  cache:
+    type: simple
+    cache-names: medicalReports
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
 
 logging:
   level:
