@@ -2,14 +2,17 @@ package com.medical.report.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.medical.report.entity.MedicalReportHistory;
 import com.medical.report.exception.MedicalReportException;
 import com.medical.report.model.MedicalReportResponse;
 import com.medical.report.model.QuestionnaireRequest;
+import com.medical.report.mapper.MedicalReportHistoryMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
@@ -21,19 +24,23 @@ public class MedicalReportService {
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
     private final PdfParserService pdfParserService;
+    private final MedicalReportHistoryMapper historyMapper;
     private final String promptTemplate;
 
     public MedicalReportService(ChatClient chatClient,
                                 PdfParserService pdfParserService,
+                                MedicalReportHistoryMapper historyMapper,
                                 @Value("classpath:prompts/medical-report-template.txt")
                                 org.springframework.core.io.Resource promptResource) throws Exception {
         this.chatClient = chatClient;
         this.pdfParserService = pdfParserService;
+        this.historyMapper = historyMapper;
         this.objectMapper = new ObjectMapper();
         this.promptTemplate = new String(promptResource.getInputStream().readAllBytes());
     }
 
     @Cacheable(value = "medicalReports", key = "#request.hashCode()")
+    @Transactional
     public MedicalReportResponse generateReport(QuestionnaireRequest request) {
         try {
             String prompt = buildPrompt(request);
@@ -46,10 +53,79 @@ public class MedicalReportService {
 
             log.debug("AI response: {}", response);
 
-            return parseResponse(response, request.getName());
+            MedicalReportResponse report = parseResponse(response, request.getName());
+
+            saveToHistory(request, report);
+
+            return report;
         } catch (Exception e) {
             log.error("Failed to generate medical report for patient: {}", request.getName(), e);
             throw new MedicalReportException("生成医疗报告失败: " + e.getMessage(), e);
+        }
+    }
+
+    public void generateReportStream(QuestionnaireRequest request,
+                                     java.util.function.Consumer<String> onChunk,
+                                     java.util.function.Consumer<MedicalReportResponse> onComplete) {
+        try {
+            String prompt = buildPrompt(request);
+            log.debug("Generated prompt for streaming: {}", prompt);
+
+            StringBuilder fullResponse = new StringBuilder();
+
+            chatClient.prompt()
+                    .user(prompt)
+                    .stream()
+                    .content()
+                    .doOnNext(chunk -> {
+                        fullResponse.append(chunk);
+                        onChunk.accept(chunk);
+                    })
+                    .doOnComplete(() -> {
+                        try {
+                            MedicalReportResponse report = parseResponse(fullResponse.toString(), request.getName());
+                            saveToHistory(request, report);
+                            onComplete.accept(report);
+                            log.info("Streaming report generated and saved for patient: {}", request.getName());
+                        } catch (Exception e) {
+                            log.error("Failed to parse streaming response", e);
+                        }
+                    })
+                    .doOnError(error -> {
+                        log.error("Streaming error for patient: {}", request.getName(), error);
+                    })
+                    .subscribe();
+
+        } catch (Exception e) {
+            log.error("Failed to start streaming for patient: {}", request.getName(), e);
+            throw new MedicalReportException("启动流式生成失败: " + e.getMessage(), e);
+        }
+    }
+
+    private void saveToHistory(QuestionnaireRequest request, MedicalReportResponse response) {
+        try {
+            MedicalReportHistory history = new MedicalReportHistory();
+            history.setPatientName(response.getPatientName());
+            history.setAge(request.getAge());
+            history.setGender(request.getGender());
+            history.setQuestionnaireData(objectMapper.writeValueAsString(request));
+            history.setHealthAdvice(String.join("\n", response.getHealthAdvice()));
+            history.setRiskAssessment(String.join("\n", response.getRiskAssessment()));
+            history.setMedicalGuidance(String.join("\n", response.getMedicalGuidance()));
+            history.setReportDate(response.getReportDate());
+
+            if (request.getReportFile() != null &&
+                Boolean.TRUE.equals(request.getReportFile().getIsUpload()) &&
+                request.getReportFile().getFileList() != null &&
+                !request.getReportFile().getFileList().isEmpty()) {
+                history.setPdfUrl(request.getReportFile().getFileList().get(0).getUrl());
+            }
+
+            history.setCreatedAt(java.time.LocalDateTime.now());
+            historyMapper.insert(history);
+            log.info("Saved report history for patient: {}, id: {}", response.getPatientName(), history.getId());
+        } catch (Exception e) {
+            log.error("Failed to save report history", e);
         }
     }
 

@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>医疗报告流式生成演示</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        input, select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            width: 100%;
+            padding: 12px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-top: 10px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #output {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            min-height: 100px;
+            white-space: pre-wrap;
+            font-family: monospace;
+            display: none;
+        }
+        .status {
+            text-align: center;
+            margin-top: 10px;
+            color: #666;
+            font-style: italic;
+        }
+        .complete {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+        .error {
+            color: #f44336;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏥 医疗报告流式生成演示</h1>
+
+        <div class="form-group">
+            <label for="name">患者姓名：</label>
+            <input type="text" id="name" value="张三" required>
+        </div>
+
+        <div class="form-group">
+            <label for="age">年龄：</label>
+            <input type="text" id="age" value="30" required>
+        </div>
+
+        <div class="form-group">
+            <label for="gender">性别：</label>
+            <select id="gender">
+                <option value="男">男</option>
+                <option value="女">女</option>
+            </select>
+        </div>
+
+        <button id="generateBtn" onclick="generateReport()">开始生成报告（流式）</button>
+        <button id="generateNormalBtn" onclick="generateReportNormal()">生成报告（普通）</button>
+
+        <div id="status" class="status"></div>
+        <div id="output"></div>
+    </div>
+
+    <script>
+        let eventSource = null;
+
+        function generateReport() {
+            const name = document.getElementById('name').value;
+            const age = document.getElementById('age').value;
+            const gender = document.getElementById('gender').value;
+
+            if (!name || !age) {
+                alert('请填写患者姓名和年龄');
+                return;
+            }
+
+            const output = document.getElementById('output');
+            const status = document.getElementById('status');
+            const btn = document.getElementById('generateBtn');
+
+            output.style.display = 'block';
+            output.textContent = '';
+            status.textContent = '正在连接...';
+            status.className = 'status';
+            btn.disabled = true;
+
+            const requestData = {
+                name: name,
+                age: age,
+                gender: gender,
+                weight: "70",
+                height: "175",
+                bmi: "22.86",
+                familyDiseases: ["高血压"],
+                conditions: [],
+                preferDiet: "清淡",
+                sportHabits: "每周3次",
+                healthGoals: ["减重", "改善睡眠"]
+            };
+
+            fetch('http://localhost:8083/api/medical-report/generate/stream', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(requestData)
+            }).then(response => {
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                status.textContent = '正在生成报告...';
+
+                function read() {
+                    reader.read().then(({ done, value }) => {
+                        if (done) {
+                            status.textContent = '✅ 生成完成！';
+                            status.className = 'status complete';
+                            btn.disabled = false;
+                            return;
+                        }
+
+                        const chunk = decoder.decode(value, { stream: true });
+                        const lines = chunk.split('\n');
+
+                        lines.forEach(line => {
+                            if (line.startsWith('data:')) {
+                                const data = line.substring(5).trim();
+                                if (data && data !== '[DONE]') {
+                                    output.textContent += data;
+                                    output.scrollTop = output.scrollHeight;
+                                }
+                            }
+                        });
+
+                        read();
+                    });
+                }
+
+                read();
+            }).catch(error => {
+                console.error('Error:', error);
+                status.textContent = '❌ 生成失败: ' + error.message;
+                status.className = 'status error';
+                btn.disabled = false;
+            });
+        }
+
+        function generateReportNormal() {
+            const name = document.getElementById('name').value;
+            const age = document.getElementById('age').value;
+            const gender = document.getElementById('gender').value;
+
+            if (!name || !age) {
+                alert('请填写患者姓名和年龄');
+                return;
+            }
+
+            const output = document.getElementById('output');
+            const status = document.getElementById('status');
+            const btn = document.getElementById('generateNormalBtn');
+
+            output.style.display = 'block';
+            output.textContent = '';
+            status.textContent = '正在生成报告（普通模式）...';
+            status.className = 'status';
+            btn.disabled = true;
+
+            const requestData = {
+                name: name,
+                age: age,
+                gender: gender,
+                weight: "70",
+                height: "175",
+                bmi: "22.86",
+                familyDiseases: ["高血压"],
+                conditions: [],
+                preferDiet: "清淡",
+                sportHabits: "每周3次",
+                healthGoals: ["减重", "改善睡眠"]
+            };
+
+            fetch('http://localhost:8083/api/medical-report/generate', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(requestData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                output.textContent = JSON.stringify(data, null, 2);
+                status.textContent = '✅ 生成完成！';
+                status.className = 'status complete';
+                btn.disabled = false;
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                status.textContent = '❌ 生成失败: ' + error.message;
+                status.className = 'status error';
+                btn.disabled = false;
+            });
+        }
+    </script>
+</body>
+</html>

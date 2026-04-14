@@ -1,6 +1,7 @@
 package com.medical.report.service;
 
 import com.medical.report.exception.MedicalReportException;
+import com.medical.report.mapper.MedicalReportHistoryMapper;
 import com.medical.report.model.MedicalReportResponse;
 import com.medical.report.model.QuestionnaireRequest;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,6 +28,9 @@ class MedicalReportServiceTest {
     private PdfParserService pdfParserService;
 
     @Mock
+    private MedicalReportHistoryMapper historyMapper;
+
+    @Mock
     private ChatClient.ChatClientRequestSpec requestSpec;
 
     @Mock
@@ -36,7 +40,7 @@ class MedicalReportServiceTest {
 
     @BeforeEach
     void setUp() throws Exception {
-        service = new MedicalReportService(chatClient, pdfParserService,
+        service = new MedicalReportService(chatClient, pdfParserService, historyMapper,
                 new ClassPathResource("prompts/medical-report-template.txt"));
     }
 

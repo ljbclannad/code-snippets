@@ -9,6 +9,8 @@
 - **就医指导**：推荐就诊科室、评估紧急程度、建议检查项目
 - **PDF 解析**：自动提取检验报告内容并整合到分析中
 - **智能缓存**：相同问卷自动缓存，提升响应速度
+- **历史记录**：自动保存所有报告到数据库，支持查询和统计
+- **流式响应**：支持 SSE 流式生成，实时展示生成过程，提升用户体验
 - **API 文档**：集成 Swagger UI，访问 `/swagger-ui.html`
 - **健康监控**：Actuator 端点监控应用状态
 
@@ -18,7 +20,11 @@
 - Spring Boot 3.4.0
 - Spring AI 1.1.2
 - DeepSeek API
+- MySQL 8.0+
+- Spring Data JPA
 - Lombok
+- Apache PDFBox 3.0.1
+- SpringDoc OpenAPI 2.3.0
 
 ## 快速开始
 
@@ -29,6 +35,26 @@
 ```bash
 export DEEPSEEK_API_KEY="your-deepseek-api-key"
 export DEEPSEEK_BASE_URL="https://api.deepseek.com"  # 可选，默认值
+export MYSQL_USERNAME="root"  # 可选，默认 root
+export MYSQL_PASSWORD="your-mysql-password"  # MySQL 密码
+```
+
+### 数据库初始化
+
+首先创建数据库：
+
+```bash
+# 连接 MySQL
+mysql -u root -p
+
+# 执行初始化脚本
+source src/main/resources/db/init.sql
+```
+
+或者直接执行：
+
+```bash
+mysql -u root -p < src/main/resources/db/init.sql
 ```
 
 ### 启动应用
@@ -45,6 +71,7 @@ mvn spring-boot:run
 启动应用后访问：
 - Swagger UI: `http://localhost:8083/swagger-ui.html`
 - OpenAPI JSON: `http://localhost:8083/v3/api-docs`
+- 流式生成演示页面: `http://localhost:8083/stream-demo.html`
 
 ### 健康检查
 
@@ -164,14 +191,19 @@ spring:
 ## 注意事项
 
 1. 确保 `DEEPSEEK_API_KEY` 环境变量已正确设置
-2. DeepSeek API 调用需要网络连接
-3. 生成的报告仅供参考，不能替代专业医疗诊断
-4. PDF 检验报告会自动解析并整合到分析中
-5. 相同问卷数据会使用缓存，避免重复调用 AI
+2. 确保 MySQL 服务已启动（localhost:3306）
+3. 首次启动前需要执行数据库初始化脚本
+4. DeepSeek API 调用需要网络连接
+5. 生成的报告仅供参考，不能替代专业医疗诊断
+6. PDF 检验报告会自动解析并整合到分析中
+7. 相同问卷数据会使用缓存，避免重复调用 AI
+8. 所有报告自动保存到 MySQL 数据库
+9. Hibernate 会自动创建/更新表结构（ddl-auto: update）
 
 ## 后续扩展
 
 - [ ] 支持多语言报告生成
 - [ ] 集成更多健康数据源
-- [ ] 添加报告历史记录和数据库持久化
-- [ ] 实现流式响应（SSE）提升用户体验
+- [ ] 支持 MySQL/PostgreSQL 生产数据库
+- [ ] 添加报告导出功能（PDF/Word）
+- [ ] 实现 WebSocket 双向通信

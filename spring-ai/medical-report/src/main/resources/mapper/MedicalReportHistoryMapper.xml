@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.medical.report.mapper.MedicalReportHistoryMapper">
+
+    <resultMap id="BaseResultMap" type="com.medical.report.entity.MedicalReportHistory">
+        <id column="id" property="id"/>
+        <result column="patient_name" property="patientName"/>
+        <result column="age" property="age"/>
+        <result column="gender" property="gender"/>
+        <result column="questionnaire_data" property="questionnaireData"/>
+        <result column="health_advice" property="healthAdvice"/>
+        <result column="risk_assessment" property="riskAssessment"/>
+        <result column="medical_guidance" property="medicalGuidance"/>
+        <result column="report_date" property="reportDate"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="pdf_url" property="pdfUrl"/>
+        <result column="pdf_content" property="pdfContent"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.medical.report.entity.MedicalReportHistory"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO medical_report_history (
+            patient_name, age, gender, questionnaire_data,
+            health_advice, risk_assessment, medical_guidance,
+            report_date, created_at, pdf_url, pdf_content
+        ) VALUES (
+            #{patientName}, #{age}, #{gender}, #{questionnaireData},
+            #{healthAdvice}, #{riskAssessment}, #{medicalGuidance},
+            #{reportDate}, #{createdAt}, #{pdfUrl}, #{pdfContent}
+        )
+    </insert>
+
+    <select id="findById" resultMap="BaseResultMap">
+        SELECT * FROM medical_report_history WHERE id = #{id}
+    </select>
+
+    <select id="findByPatientName" resultMap="BaseResultMap">
+        SELECT * FROM medical_report_history
+        WHERE patient_name = #{patientName}
+        ORDER BY created_at DESC
+    </select>
+
+    <select id="findByPatientNameContaining" resultMap="BaseResultMap">
+        SELECT * FROM medical_report_history
+        WHERE patient_name LIKE CONCAT('%', #{keyword}, '%')
+        ORDER BY created_at DESC
+    </select>
+
+    <select id="findByCreatedAtBetween" resultMap="BaseResultMap">
+        SELECT * FROM medical_report_history
+        WHERE created_at BETWEEN #{startDate} AND #{endDate}
+        ORDER BY created_at DESC
+    </select>
+
+    <select id="findTop10ByOrderByCreatedAtDesc" resultMap="BaseResultMap">
+        SELECT * FROM medical_report_history
+        ORDER BY created_at DESC
+        LIMIT 10
+    </select>
+
+    <select id="countByPatientName" resultType="java.lang.Long">
+        SELECT COUNT(*) FROM medical_report_history
+        WHERE patient_name = #{patientName}
+    </select>
+
+    <delete id="deleteById">
+        DELETE FROM medical_report_history WHERE id = #{id}
+    </delete>
+
+</mapper>

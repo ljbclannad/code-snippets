@@ -3,9 +3,12 @@
 /Users/lejinbo/LLM/code-snippets/spring-ai/medical-report/src/main/java/com/medical/report/config/ChatConfig.java
 /Users/lejinbo/LLM/code-snippets/spring-ai/medical-report/src/main/java/com/medical/report/config/OpenApiConfig.java
 /Users/lejinbo/LLM/code-snippets/spring-ai/medical-report/src/main/java/com/medical/report/controller/MedicalReportController.java
+/Users/lejinbo/LLM/code-snippets/spring-ai/medical-report/src/main/java/com/medical/report/controller/MedicalReportHistoryController.java
+/Users/lejinbo/LLM/code-snippets/spring-ai/medical-report/src/main/java/com/medical/report/entity/MedicalReportHistory.java
 /Users/lejinbo/LLM/code-snippets/spring-ai/medical-report/src/main/java/com/medical/report/exception/ErrorResponse.java
 /Users/lejinbo/LLM/code-snippets/spring-ai/medical-report/src/main/java/com/medical/report/exception/GlobalExceptionHandler.java
 /Users/lejinbo/LLM/code-snippets/spring-ai/medical-report/src/main/java/com/medical/report/exception/MedicalReportException.java
+/Users/lejinbo/LLM/code-snippets/spring-ai/medical-report/src/main/java/com/medical/report/mapper/MedicalReportHistoryMapper.java
 /Users/lejinbo/LLM/code-snippets/spring-ai/medical-report/src/main/java/com/medical/report/model/MedicalReportResponse.java
 /Users/lejinbo/LLM/code-snippets/spring-ai/medical-report/src/main/java/com/medical/report/model/QuestionnaireRequest.java
 /Users/lejinbo/LLM/code-snippets/spring-ai/medical-report/src/main/java/com/medical/report/service/MedicalReportService.java
