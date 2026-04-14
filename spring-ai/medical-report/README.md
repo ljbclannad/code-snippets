@@ -14,6 +14,16 @@
 - **API 文档**：集成 Swagger UI，访问 `/swagger-ui.html`
 - **健康监控**：Actuator 端点监控应用状态
 
+### Spring AI 高级特性 ✨
+
+- **Function Calling**：AI 自动调用 Java 方法查询患者历史报告
+- **Structured Output**：使用 BeanOutputConverter 类型安全解析 AI 响应
+- **Prompt Template**：模板化管理复杂提示词，支持变量替换
+- **Token Counting**：自动统计 Token 使用量和 API 成本
+- **Retry & Circuit Breaker**：自动重试和熔断保护，提升系统稳定性
+
+> 详细使用说明请查看 [SPRING_AI_FEATURES.md](./SPRING_AI_FEATURES.md)
+
 ## 技术栈
 
 - Java 17
@@ -125,30 +135,31 @@ curl -X POST http://localhost:8083/api/medical-report/generate \
 
 ```json
 {
-  "patientName": "董丽莉",
-  "reportDate": "2026-04-14",
-  "healthAdvice": {
-    "dietaryRecommendations": "建议减少油盐糖摄入...",
-    "exerciseRecommendations": "建议每周至少150分钟中等强度运动...",
-    "lifestyleRecommendations": "改善睡眠习惯，23点前入睡...",
-    "sleepRecommendations": "建立规律作息，避免熬夜..."
-  },
-  "riskAssessment": {
-    "overallRiskLevel": "中等",
-    "identifiedRisks": [
-      {
-        "riskType": "代谢综合征",
-        "severity": "中",
-        "description": "PCOS合并肥胖家族史..."
-      }
+  "report": {
+    "patientName": "董丽莉",
+    "reportDate": "2026-04-14",
+    "healthAdvice": [
+      "建议减少油盐糖摄入...",
+      "建议每周至少150分钟中等强度运动...",
+      "改善睡眠习惯，23点前入睡..."
     ],
-    "preventiveMeasures": "定期体检，控制体重..."
+    "riskAssessment": [
+      "代谢综合征风险：中等",
+      "PCOS合并肥胖家族史..."
+    ],
+    "medicalGuidance": [
+      "推荐科室：妇科、内分泌科、消化内科",
+      "紧急程度：非紧急，建议3个月内就诊",
+      "建议检查：性激素六项、糖耐量测试"
+    ]
   },
-  "medicalGuidance": {
-    "recommendedSpecialties": "妇科、内分泌科、消化内科",
-    "urgencyLevel": "非紧急，建议3个月内就诊",
-    "suggestedTests": "性激素六项、糖耐量测试、妇科超声",
-    "followUpAdvice": "每3-6个月复查一次"
+  "tokenUsage": {
+    "inputTokens": 1250,
+    "outputTokens": 850,
+    "totalTokens": 2100,
+    "estimatedCost": 0.000413,
+    "model": "deepseek-chat",
+    "responseTimeMs": 3200
   }
 }
 ```

@@ -1,6 +1,7 @@
 package com.medical.report.controller;
 
 import com.medical.report.model.MedicalReportResponse;
+import com.medical.report.model.MedicalReportResponseWithMetadata;
 import com.medical.report.model.QuestionnaireRequest;
 import com.medical.report.service.MedicalReportService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -30,22 +31,27 @@ public class MedicalReportController {
     private final ExecutorService executorService = Executors.newCachedThreadPool();
 
     @PostMapping("/generate")
-    @Operation(summary = "生成医疗报告", description = "根据问卷数据和检验报告生成个性化健康建议")
+    @Operation(summary = "生成医疗报告", description = "根据问卷数据和检验报告生成个性化健康建议，返回报告和Token使用统计")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "报告生成成功"),
             @ApiResponse(responseCode = "400", description = "请求参数校验失败"),
             @ApiResponse(responseCode = "500", description = "报告生成失败")
     })
-    public ResponseEntity<MedicalReportResponse> generateReport(
+    public ResponseEntity<MedicalReportResponseWithMetadata> generateReport(
             @Valid @RequestBody QuestionnaireRequest request) {
 
         log.info("Received report generation request for patient: {}", request.getName());
 
-        MedicalReportResponse report = medicalReportService.generateReport(request);
+        MedicalReportResponseWithMetadata response = medicalReportService.generateReport(request);
 
-        log.info("Report generated successfully for patient: {}", request.getName());
+        log.info("Report generated successfully for patient: {} - Tokens: {}/{}, Cost: ${}, Time: {}ms",
+                request.getName(),
+                response.getTokenUsage().getInputTokens(),
+                response.getTokenUsage().getOutputTokens(),
+                String.format("%.6f", response.getTokenUsage().getEstimatedCost()),
+                response.getTokenUsage().getResponseTimeMs());
 
-        return ResponseEntity.ok(report);
+        return ResponseEntity.ok(response);
     }
 
     @PostMapping(value = "/generate/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)

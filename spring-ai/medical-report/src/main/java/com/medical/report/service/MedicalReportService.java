@@ -2,15 +2,23 @@ package com.medical.report.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.medical.report.converter.MedicalReportSchema;
 import com.medical.report.entity.MedicalReportHistory;
 import com.medical.report.exception.MedicalReportException;
 import com.medical.report.model.MedicalReportResponse;
+import com.medical.report.model.MedicalReportResponseWithMetadata;
 import com.medical.report.model.QuestionnaireRequest;
+import com.medical.report.model.TokenUsageInfo;
 import com.medical.report.mapper.MedicalReportHistoryMapper;
+import com.medical.report.template.MedicalReportPromptTemplate;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.converter.BeanOutputConverter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.annotation.Cacheable;
+import org.springframework.retry.annotation.Backoff;
+import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,39 +33,71 @@ public class MedicalReportService {
     private final ObjectMapper objectMapper;
     private final PdfParserService pdfParserService;
     private final MedicalReportHistoryMapper historyMapper;
-    private final String promptTemplate;
+    private final MedicalReportPromptTemplate promptTemplate;
+    private final BeanOutputConverter<MedicalReportSchema> outputConverter;
 
     public MedicalReportService(ChatClient chatClient,
                                 PdfParserService pdfParserService,
                                 MedicalReportHistoryMapper historyMapper,
-                                @Value("classpath:prompts/medical-report-template.txt")
-                                org.springframework.core.io.Resource promptResource) throws Exception {
+                                MedicalReportPromptTemplate promptTemplate) {
         this.chatClient = chatClient;
         this.pdfParserService = pdfParserService;
         this.historyMapper = historyMapper;
+        this.promptTemplate = promptTemplate;
         this.objectMapper = new ObjectMapper();
-        this.promptTemplate = new String(promptResource.getInputStream().readAllBytes());
+        this.outputConverter = new BeanOutputConverter<>(MedicalReportSchema.class);
     }
 
     @Cacheable(value = "medicalReports", key = "#request.hashCode()")
     @Transactional
-    public MedicalReportResponse generateReport(QuestionnaireRequest request) {
+    @Retryable(
+            retryFor = {Exception.class},
+            maxAttempts = 3,
+            backoff = @Backoff(delay = 2000, multiplier = 2)
+    )
+    public MedicalReportResponseWithMetadata generateReport(QuestionnaireRequest request) {
+        long startTime = System.currentTimeMillis();
         try {
-            String prompt = buildPrompt(request);
-            log.debug("Generated prompt: {}", prompt);
+            String pdfContent = extractPdfContent(request.getReportFile());
+            String prompt = promptTemplate.createPrompt(request, pdfContent);
 
-            String response = chatClient.prompt()
-                    .user(prompt)
+            // Add structured output format instruction
+            String fullPrompt = prompt + "\n\n请严格按照以下JSON格式返回结果：\n" + outputConverter.getFormat();
+
+            log.debug("Generated prompt: {}", fullPrompt);
+
+            ChatResponse chatResponse = chatClient.prompt()
+                    .user(fullPrompt)
                     .call()
-                    .content();
+                    .chatResponse();
 
-            log.debug("AI response: {}", response);
+            String responseContent = chatResponse.getResult().getOutput().getContent();
+            log.debug("AI response: {}", responseContent);
 
-            MedicalReportResponse report = parseResponse(response, request.getName());
+            MedicalReportSchema schema = outputConverter.convert(responseContent);
+            MedicalReportResponse report = schema.toResponse(
+                    request.getName(),
+                    LocalDate.now().format(DateTimeFormatter.ISO_DATE)
+            );
+
+            long responseTime = System.currentTimeMillis() - startTime;
+            TokenUsageInfo tokenUsage = TokenUsageInfo.fromMetadata(
+                    chatResponse.getMetadata(),
+                    responseTime
+            );
+
+            log.info("Report generated - Tokens: {}/{}, Cost: ${}, Time: {}ms",
+                    tokenUsage.getInputTokens(),
+                    tokenUsage.getOutputTokens(),
+                    String.format("%.6f", tokenUsage.getEstimatedCost()),
+                    tokenUsage.getResponseTimeMs());
 
             saveToHistory(request, report);
 
-            return report;
+            return MedicalReportResponseWithMetadata.builder()
+                    .report(report)
+                    .tokenUsage(tokenUsage)
+                    .build();
         } catch (Exception e) {
             log.error("Failed to generate medical report for patient: {}", request.getName(), e);
             throw new MedicalReportException("生成医疗报告失败: " + e.getMessage(), e);
@@ -68,13 +108,16 @@ public class MedicalReportService {
                                      java.util.function.Consumer<String> onChunk,
                                      java.util.function.Consumer<MedicalReportResponse> onComplete) {
         try {
-            String prompt = buildPrompt(request);
-            log.debug("Generated prompt for streaming: {}", prompt);
+            String pdfContent = extractPdfContent(request.getReportFile());
+            String prompt = promptTemplate.createPrompt(request, pdfContent);
+            String fullPrompt = prompt + "\n\n请严格按照以下JSON格式返回结果：\n" + outputConverter.getFormat();
+
+            log.debug("Generated prompt for streaming: {}", fullPrompt);
 
             StringBuilder fullResponse = new StringBuilder();
 
             chatClient.prompt()
-                    .user(prompt)
+                    .user(fullPrompt)
                     .stream()
                     .content()
                     .doOnNext(chunk -> {
@@ -83,7 +126,11 @@ public class MedicalReportService {
                     })
                     .doOnComplete(() -> {
                         try {
-                            MedicalReportResponse report = parseResponse(fullResponse.toString(), request.getName());
+                            MedicalReportSchema schema = outputConverter.convert(fullResponse.toString());
+                            MedicalReportResponse report = schema.toResponse(
+                                    request.getName(),
+                                    LocalDate.now().format(DateTimeFormatter.ISO_DATE)
+                            );
                             saveToHistory(request, report);
                             onComplete.accept(report);
                             log.info("Streaming report generated and saved for patient: {}", request.getName());
@@ -129,71 +176,23 @@ public class MedicalReportService {
         }
     }
 
-    private String buildPrompt(QuestionnaireRequest request) {
+    private String extractPdfContent(QuestionnaireRequest.ReportFile reportFile) {
         try {
-            String questionnaireJson = objectMapper.writerWithDefaultPrettyPrinter()
-                    .writeValueAsString(request);
-
-            String hasPdf = "";
-            String pdfContent = "";
-
-            if (request.getReportFile() != null &&
-                Boolean.TRUE.equals(request.getReportFile().getIsUpload()) &&
-                request.getReportFile().getFileList() != null &&
-                !request.getReportFile().getFileList().isEmpty()) {
-
-                String pdfText = extractPdfContent(request.getReportFile().getFileList().get(0));
-                if (pdfText != null && !pdfText.isBlank()) {
-                    hasPdf = "和检验报告";
-                    pdfContent = "\n\n检验报告内容：\n" + pdfText;
-                }
+            if (reportFile == null || !Boolean.TRUE.equals(reportFile.getIsUpload()) ||
+                reportFile.getFileList() == null || reportFile.getFileList().isEmpty()) {
+                return null;
             }
 
-            return promptTemplate
-                    .replace("{hasPdf}", hasPdf)
-                    .replace("{questionnaireData}", questionnaireJson)
-                    .replace("{pdfContent}", pdfContent);
-        } catch (JsonProcessingException e) {
-            throw new MedicalReportException("问卷数据序列化失败", e);
-        }
-    }
-
-    private String extractPdfContent(QuestionnaireRequest.FileInfo fileInfo) {
-        try {
+            QuestionnaireRequest.FileInfo fileInfo = reportFile.getFileList().get(0);
             if (fileInfo == null || fileInfo.getUrl() == null) {
                 return null;
             }
+
             log.info("Extracting PDF content from: {}", fileInfo.getName());
             return pdfParserService.extractTextFromUrl(fileInfo.getUrl());
         } catch (Exception e) {
             log.warn("Failed to extract PDF content, continuing without it: {}", e.getMessage());
             return null;
         }
-    }
-
-    private MedicalReportResponse parseResponse(String response, String patientName) {
-        String jsonContent = extractJson(response);
-
-        try {
-            MedicalReportResponse report = objectMapper.readValue(jsonContent, MedicalReportResponse.class);
-            report.setPatientName(patientName);
-            report.setReportDate(LocalDate.now().format(DateTimeFormatter.ISO_DATE));
-            return report;
-        } catch (JsonProcessingException e) {
-            throw new MedicalReportException("AI响应解析失败，返回内容格式不正确", e);
-        }
-    }
-
-    private String extractJson(String response) {
-        String cleaned = response.trim();
-        if (cleaned.startsWith("```json")) {
-            cleaned = cleaned.substring(7);
-        } else if (cleaned.startsWith("```")) {
-            cleaned = cleaned.substring(3);
-        }
-        if (cleaned.endsWith("```")) {
-            cleaned = cleaned.substring(0, cleaned.length() - 3);
-        }
-        return cleaned.trim();
     }
 }
