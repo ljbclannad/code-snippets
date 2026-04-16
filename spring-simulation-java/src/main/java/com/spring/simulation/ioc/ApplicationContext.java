@@ -1,0 +1,426 @@
+package com.spring.simulation.ioc;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public class ApplicationContext {
+    private BeanFactory beanFactory = new BeanFactory();
+    private List<BeanPostProcessor> beanPostProcessors = new ArrayList<>();
+    private List<BeanFactoryPostProcessor> beanFactoryPostProcessors = new ArrayList<>();
+    private List<String> registeredBeanNames = new ArrayList<>();
+
+    public ApplicationContext() {
+        beanFactory.setApplicationContext(this);
+    }
+
+    /**
+     * Spring 容器初始化的核心方法：refresh()
+     *
+     * 为什么要分 12 个阶段？
+     * 1. 职责分离：每个阶段负责特定的初始化任务，便于理解和维护
+     * 2. 扩展性：子类可以重写特定阶段来定制行为（模板方法模式）
+     * 3. 有序性：确保初始化步骤按正确顺序执行
+     * 4. 可控性：每个阶段都是明确的检查点，便于调试和监控
+     *
+     * 这 12 个阶段是 Spring 框架设计的精髓，理解它们就理解了 Spring 的启动流程
+     */
+    public void refresh() throws Exception {
+        System.out.println("\n========== Spring Container Initialization Started ==========");
+        System.out.println("Simulating org.springframework.context.support.AbstractApplicationContext.refresh()");
+
+        // 阶段 1: 准备刷新
+        prepareRefresh();
+
+        // 阶段 2: 获取 BeanFactory
+        obtainFreshBeanFactory();
+
+        // 阶段 3: 准备 BeanFactory
+        prepareBeanFactory();
+
+        // 阶段 4: BeanFactory 后置处理（子类扩展点）
+        postProcessBeanFactory();
+
+        // 阶段 5: 调用 BeanFactoryPostProcessor（修改 Bean 定义的最后机会）
+        // 阶段1到阶段5都是在做BeanFactory和
+        invokeBeanFactoryPostProcessors();
+
+        // 阶段 6: 注册 BeanPostProcessor（AOP 代理创建的关键）
+        registerBeanPostProcessors();
+
+        // 阶段 7: 初始化消息源（国际化）
+        initMessageSource();
+
+        // 阶段 8: 初始化事件多播器（事件发布机制）
+        initApplicationEventMulticaster();
+
+        // 阶段 9: 子类扩展点（如 Web 容器启动）
+        onRefresh();
+
+        // 阶段 10: 注册监听器
+        registerListeners();
+
+        // 阶段 11: 实例化所有单例 Bean（最重要的阶段）
+        finishBeanFactoryInitialization();
+
+        // 阶段 12: 完成刷新，发布事件
+        finishRefresh();
+
+        System.out.println("\n========== Spring Container Initialization Completed ==========\n");
+    }
+
+    /**
+     * 阶段 1: 准备刷新
+     *
+     * 设计原因：初始化容器的基础环境
+     * 1. 记录启动时间（用于监控和日志）
+     * 2. 初始化属性源（Environment，如系统属性、环境变量）
+     * 3. 验证必需的属性是否存在（如数据库连接配置）
+     */
+    protected void prepareRefresh() {
+        System.out.println("\n[Phase 1] prepareRefresh()");
+        System.out.println("  - Setting startup date");
+        System.out.println("  - Initializing property sources");
+        System.out.println("  - Validating required properties");
+    }
+
+    /**
+     * 阶段 2: 获取 BeanFactory
+     *
+     * 设计原因：加载 Bean 定义
+     * 1. 刷新 BeanFactory（如果已存在则销毁重建）
+     * 2. 加载 Bean 定义（从 XML、注解、Java Config 等）
+     * 3. 返回可用的 BeanFactory
+     *
+     * 这是 Bean 定义注册的阶段，但 Bean 还未实例化
+     */
+    protected BeanFactory obtainFreshBeanFactory() {
+        System.out.println("\n[Phase 2] obtainFreshBeanFactory()");
+        System.out.println("  - Refreshing BeanFactory");
+        System.out.println("  - Loading bean definitions");
+        scanAndRegisterBeans();
+        return beanFactory;
+    }
+
+    /**
+     * 阶段 3: 准备 BeanFactory
+     *
+     * 设计原因：配置 BeanFactory 的标准特性
+     * 1. 设置类加载器（用于加载 Bean 的 Class）
+     * 2. 注册默认的 BeanPostProcessor（如处理 Aware 接口的处理器）
+     * 3. 注册环境相关的 Bean（Environment、SystemProperties 等）
+     */
+    protected void prepareBeanFactory() {
+        System.out.println("\n[Phase 3] prepareBeanFactory()");
+        System.out.println("  - Setting class loader");
+        System.out.println("  - Registering default bean post processors");
+        System.out.println("  - Registering environment beans");
+
+        // 案例：注册环境相关的 Bean
+        registerEnvironmentBean();
+    }
+
+    /**
+     * 注册环境 Bean
+     * 模拟 Spring 注册 Environment、SystemProperties、SystemEnvironment 等内置 Bean
+     */
+    private void registerEnvironmentBean() {
+        // 创建一个简单的环境 Bean（模拟 Spring 的 Environment）
+        BeanDefinition envBeanDef = new BeanDefinition("environment", Environment.class);
+        beanFactory.registerBeanDefinition("environment", envBeanDef);
+        registeredBeanNames.add("environment");
+
+        System.out.println("    * Registered environment bean: 'environment' -> " + Environment.class.getSimpleName());
+        System.out.println("      (用于访问系统属性、环境变量等)");
+    }
+
+    /**
+     * 简单的环境 Bean 类
+     * 模拟 Spring 的 org.springframework.core.env.Environment
+     */
+    public static class Environment {
+        public String getProperty(String key) {
+            return System.getProperty(key);
+        }
+
+        public String getEnv(String key) {
+            return System.getenv(key);
+        }
+
+        @Override
+        public String toString() {
+            return "Environment[OS=" + System.getProperty("os.name") +
+                    ", Java=" + System.getProperty("java.version") + "]";
+        }
+    }
+
+    /**
+     * 阶段 4: BeanFactory 后置处理
+     *
+     * 设计原因：子类扩展点
+     * 例如：Web 容器会在这里注册 Servlet 相关的作用域（request、session）
+     *
+     * 案例：模拟 Web 容器注册自定义作用域和环境 Bean
+     * 1. 注册 request/session 作用域（Web 环境特有）
+     * 2. 注册 ServletContext、ServletConfig 等 Web 环境 Bean
+     * 3. 添加 Web 相关的依赖解析器
+     */
+    protected void postProcessBeanFactory() {
+        System.out.println("\n[Phase 4] postProcessBeanFactory()");
+        System.out.println("  - Hook for subclasses to modify BeanFactory");
+
+        // 案例：模拟 Web 容器的后置处理
+        if (isWebEnvironment()) {
+            System.out.println("  - [Web Container] Registering web-specific scopes:");
+            System.out.println("    * request scope (每个 HTTP 请求一个实例)");
+            System.out.println("    * session scope (每个 HTTP 会话一个实例)");
+            System.out.println("    * application scope (整个 Web 应用一个实例)");
+
+            System.out.println("  - [Web Container] Registering web environment beans:");
+            System.out.println("    * ServletContext (Servlet 上下文)");
+            System.out.println("    * ServletConfig (Servlet 配置)");
+            System.out.println("    * HttpServletRequest (请求对象，request 作用域)");
+            System.out.println("    * HttpSession (会话对象，session 作用域)");
+
+            System.out.println("  - [Web Container] Adding web-aware dependency resolvers");
+        }
+    }
+
+    /**
+     * 判断是否为 Web 环境
+     * 实际 Spring 会检查 classpath 中是否存在 Servlet 相关类
+     */
+    protected boolean isWebEnvironment() {
+        // 简化实现：可以通过系统属性或环境变量判断
+        return System.getProperty("spring.web.enabled", "true").equals("true");
+    }
+
+    /**
+     * 阶段 5: 调用 BeanFactoryPostProcessor
+     *
+     * 设计原因：这是修改 Bean 定义的最后机会！
+     * 1. BeanDefinitionRegistryPostProcessor：可以动态注册新的 Bean 定义
+     * 2. BeanFactoryPostProcessor：可以修改已有的 Bean 定义（如修改属性值）
+     * 3. @Configuration 类的处理就在这里（ConfigurationClassPostProcessor）
+     *
+     * 为什么要在实例化 Bean 之前执行？
+     * 因为这里修改的是 Bean 的"配方"（BeanDefinition），必须在"做菜"（实例化）之前改
+     *
+     * 应用场景：
+     * - PropertyPlaceholderConfigurer：替换 ${...} 占位符
+     * - @Configuration 类的解析和注册
+     */
+    protected void invokeBeanFactoryPostProcessors() throws Exception {
+        System.out.println("\n[Phase 5] invokeBeanFactoryPostProcessors()");
+        System.out.println("  - Invoking BeanDefinitionRegistryPostProcessors");
+        System.out.println("  - Invoking BeanFactoryPostProcessors");
+        System.out.println("  - Number of BeanFactoryPostProcessors: " + beanFactoryPostProcessors.size());
+        for (BeanFactoryPostProcessor processor : beanFactoryPostProcessors) {
+            System.out.println("    - Executing: " + processor.getClass().getSimpleName());
+            processor.postProcessBeanFactory(beanFactory);
+        }
+        System.out.println("  - Processing @Configuration classes");
+    }
+
+    /**
+     * 阶段 6: 注册 BeanPostProcessor
+     *
+     * 设计原因：这是 AOP 实现的关键阶段！
+     * 1. 从容器中找到所有 BeanPostProcessor 类型的 Bean
+     * 2. 按优先级排序（PriorityOrdered > Ordered > 普通）
+     * 3. 注册到 BeanFactory 中
+     *
+     * 为什么 BeanPostProcessor 这么重要？
+     * - AOP 代理就是通过 BeanPostProcessor 创建的
+     * - @Autowired、@Value 等注解的处理也是通过 BeanPostProcessor
+     * - 几乎所有的 Bean 增强功能都依赖 BeanPostProcessor
+     *
+     * 注意：这里只是注册，真正执行是在 Bean 创建时（阶段 11）
+     */
+    protected void registerBeanPostProcessors() throws Exception {
+        System.out.println("\n[Phase 6] registerBeanPostProcessors()");
+
+        // 步骤 1: 注册手动添加的 BeanPostProcessor（编程式添加的）
+        System.out.println("  - Registering programmatically added BeanPostProcessors");
+        for (BeanPostProcessor processor : beanPostProcessors) {
+            beanFactory.addBeanPostProcessor(processor);
+            System.out.println("    - Registered: " + processor.getClass().getSimpleName());
+        }
+
+        // 步骤 2: 从 BeanFactory 中查找所有 BeanPostProcessor 类型的 Bean
+        System.out.println("  - Discovering BeanPostProcessor beans from BeanFactory");
+        List<String> postProcessorNames = new ArrayList<>();
+        for (String beanName : registeredBeanNames) {
+            BeanDefinition bd = beanFactory.getBeanDefinition(beanName);
+            if (bd != null && BeanPostProcessor.class.isAssignableFrom(bd.getBeanClass())) {
+                postProcessorNames.add(beanName);
+            }
+        }
+
+        // 步骤 3: 按优先级分类（模拟 PriorityOrdered > Ordered > 普通）
+        List<BeanPostProcessor> priorityOrderedPostProcessors = new ArrayList<>();
+        List<BeanPostProcessor> orderedPostProcessors = new ArrayList<>();
+        List<BeanPostProcessor> regularPostProcessors = new ArrayList<>();
+
+        for (String ppName : postProcessorNames) {
+            BeanPostProcessor pp = (BeanPostProcessor) beanFactory.getBean(ppName);
+
+            // 简化实现：根据类名判断优先级
+            if (pp.getClass().getSimpleName().contains("Priority")) {
+                priorityOrderedPostProcessors.add(pp);
+            } else if (pp.getClass().getSimpleName().contains("Ordered")) {
+                orderedPostProcessors.add(pp);
+            } else {
+                regularPostProcessors.add(pp);
+            }
+        }
+
+        // 步骤 4: 按优先级顺序注册 (通过 List 顺序实现优先级)
+        System.out.println("  - Registering BeanPostProcessors by priority:");
+
+        // 先注册 PriorityOrdered
+        for (BeanPostProcessor pp : priorityOrderedPostProcessors) {
+            beanFactory.addBeanPostProcessor(pp);
+            System.out.println("    - [PriorityOrdered] " + pp.getClass().getSimpleName());
+        }
+
+        // 再注册 Ordered
+        for (BeanPostProcessor pp : orderedPostProcessors) {
+            beanFactory.addBeanPostProcessor(pp);
+            System.out.println("    - [Ordered] " + pp.getClass().getSimpleName());
+        }
+
+        // 最后注册普通的
+        for (BeanPostProcessor pp : regularPostProcessors) {
+            beanFactory.addBeanPostProcessor(pp);
+            System.out.println("    - [Regular] " + pp.getClass().getSimpleName());
+        }
+
+        System.out.println("  - Total BeanPostProcessors registered: " +
+                (beanPostProcessors.size() + priorityOrderedPostProcessors.size() +
+                        orderedPostProcessors.size() + regularPostProcessors.size()));
+    }
+
+    /**
+     * 阶段 7: 初始化消息源
+     *
+     * 设计原因：国际化支持
+     * MessageSource 用于根据 Locale 获取不同语言的消息
+     */
+    protected void initMessageSource() {
+        System.out.println("\n[Phase 7] initMessageSource()");
+        System.out.println("  - Initializing MessageSource for i18n");
+    }
+
+    /**
+     * 阶段 8: 初始化事件多播器
+     *
+     * 设计原因：事件发布机制的基础设施
+     * ApplicationEventMulticaster 负责将事件分发给所有监听器
+     */
+    protected void initApplicationEventMulticaster() {
+        System.out.println("\n[Phase 8] initApplicationEventMulticaster()");
+        System.out.println("  - Initializing event multicaster");
+    }
+
+    /**
+     * 阶段 9: 子类扩展点
+     *
+     * 设计原因：特定类型容器的初始化
+     * 例如：SpringBoot 的 Web 容器（Tomcat、Jetty）就在这里启动
+     */
+    protected void onRefresh() {
+        System.out.println("\n[Phase 9] onRefresh()");
+        System.out.println("  - Hook for subclasses (e.g., web container startup)");
+    }
+
+    /**
+     * 阶段 10: 注册监听器
+     *
+     * 设计原因：注册应用事件监听器
+     * 监听器可以响应容器事件（如 ContextRefreshedEvent、ContextClosedEvent）
+     */
+    protected void registerListeners() {
+        System.out.println("\n[Phase 10] registerListeners()");
+        System.out.println("  - Registering application listeners");
+    }
+
+    /**
+     * 阶段 11: 完成 BeanFactory 初始化（最重要的阶段）
+     *
+     * 设计原因：实例化所有非懒加载的单例 Bean
+     * 1. 冻结 Bean 定义（不再允许修改）
+     * 2. 实例化所有单例 Bean（触发完整的 Bean 生命周期）
+     *
+     * 为什么要在这个阶段实例化？
+     * 1. 前面的阶段已经完成了所有准备工作（Bean 定义、BeanPostProcessor 等）
+     * 2. 此时实例化可以确保所有扩展点都已就绪
+     * 3. 提前实例化可以在启动时发现问题，而不是运行时
+     *
+     * 这个阶段会触发：
+     * - Bean 的完整生命周期（实例化、依赖注入、初始化等）
+     * - 循环依赖的解决
+     * - AOP 代理的创建
+     */
+    protected void finishBeanFactoryInitialization() throws Exception {
+        System.out.println("\n[Phase 11] finishBeanFactoryInitialization()");
+        System.out.println("  - Freezing bean definitions");
+        System.out.println("  - Instantiating all remaining singleton beans");
+        instantiateSingletons();
+    }
+
+    /**
+     * 阶段 12: 完成刷新
+     *
+     * 设计原因：容器启动的收尾工作
+     * 1. 发布 ContextRefreshedEvent 事件（通知监听器容器已就绪）
+     * 2. 启动生命周期处理器（如定时任务）
+     * 3. 清理资源缓存
+     */
+    protected void finishRefresh() {
+        System.out.println("\n[Phase 12] finishRefresh()");
+        System.out.println("  - Publishing ContextRefreshedEvent");
+        System.out.println("  - Starting lifecycle processors");
+    }
+
+    protected void scanAndRegisterBeans() {
+        System.out.println("  - Scanning for bean definitions...");
+    }
+
+    private void instantiateSingletons() throws Exception {
+        for (String beanName : registeredBeanNames) {
+            beanFactory.getBean(beanName);
+        }
+    }
+
+    public void registerBeanDefinition(String beanName, Class<?> beanClass) {
+        BeanDefinition beanDefinition = new BeanDefinition(beanName, beanClass);
+        beanFactory.registerBeanDefinition(beanName, beanDefinition);
+        registeredBeanNames.add(beanName);
+    }
+
+    public void registerBeanDefinition(String beanName, BeanDefinition beanDefinition) {
+        beanFactory.registerBeanDefinition(beanName, beanDefinition);
+        registeredBeanNames.add(beanName);
+    }
+
+    public void addBeanPostProcessor(BeanPostProcessor processor) {
+        beanPostProcessors.add(processor);
+    }
+
+    public void addBeanFactoryPostProcessor(BeanFactoryPostProcessor processor) {
+        beanFactoryPostProcessors.add(processor);
+    }
+
+    public Object getBean(String beanName) throws Exception {
+        return beanFactory.getBean(beanName);
+    }
+
+    public BeanFactory getBeanFactory() {
+        return beanFactory;
+    }
+
+    public void close() throws Exception {
+        System.out.println("\n========== Closing Application Context ==========");
+        beanFactory.destroySingletons();
+    }
+}
