@@ -399,7 +399,8 @@ public class BeanFactory {
                 Object dependency = getBean(dependencyName);
                 field.set(bean, dependency);
                 System.out.println(
-                        "   [Autowired] Injected " + dependencyName + " into " + bean.getClass().getSimpleName() + " (field)");
+                        "   [Autowired] Injected " + dependencyName + " into " + bean.getClass().getSimpleName()
+                                + " (field)");
             }
         }
 
@@ -419,7 +420,7 @@ public class BeanFactory {
                     method.invoke(bean, dependency);
                     System.out.println(
                             "   [Autowired] Injected " + dependencyName + " into " + bean.getClass().getSimpleName() +
-                            " (setter: " + method.getName() + ")");
+                                    " (setter: " + method.getName() + ")");
                 }
             }
         }
@@ -545,5 +546,43 @@ public class BeanFactory {
 
     public BeanDefinition getBeanDefinition(String beanName) {
         return beanDefinitions.get(beanName);
+    }
+
+    /**
+     * 按类型查找 Bean
+     * 用于支持 @Autowired 的类型注入
+     *
+     * @param type 要查找的 Bean 类型
+     * @return 匹配的 Bean 实例，如果找不到或找到多个则返回 null
+     */
+    public Object getBeanByType(Class<?> type) throws Exception {
+        Object matchedBean = null;
+        String matchedBeanName = null;
+        int matchCount = 0;
+
+        // 遍历所有 Bean 定义，查找类型匹配的 Bean
+        for (Map.Entry<String, BeanDefinition> entry : beanDefinitions.entrySet()) {
+            String beanName = entry.getKey();
+            BeanDefinition beanDefinition = entry.getValue();
+
+            // 检查 Bean 类型是否匹配（包括子类和实现类）
+            if (type.isAssignableFrom(beanDefinition.getBeanClass())) {
+                matchCount++;
+                matchedBean = getBean(beanName);
+                matchedBeanName = beanName;
+
+                // 如果找到多个匹配的 Bean，抛出异常
+                if (matchCount > 1) {
+                    throw new RuntimeException("Expected single matching bean of type [" +
+                            type.getName() + "] but found " + matchCount);
+                }
+            }
+        }
+
+        if (matchedBean != null) {
+            System.out.println("[IoC] Found bean by type: " + type.getSimpleName() + " -> " + matchedBeanName);
+        }
+
+        return matchedBean;
     }
 }

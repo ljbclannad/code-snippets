@@ -32,6 +32,15 @@ public class SpringSimulationDemo {
         UserRepository userRepository = (UserRepository) context.getBean("userRepository");
 
         JdkDynamicAopProxy aopProxy = new JdkDynamicAopProxy(userRepository);
+        /*
+         * BeforeAdvice 进入 → before 逻辑 → proceed()
+         * AroundAdvice 进入 → before 逻辑(第1次) → proceed()
+         * AfterAdvice 进入 → proceed()
+         * 目标方法执行
+         * AfterAdvice → after 逻辑 → 退出
+         * AroundAdvice → after 逻辑(第2次) → 退出
+         * BeforeAdvice 退出
+         */
         aopProxy.addInterceptor(new BeforeAdvice("LoggingAspect"));
         aopProxy.addInterceptor(new AroundAdvice("PerformanceAspect"));
         aopProxy.addInterceptor(new AfterAdvice("CleanupAspect"));
