@@ -4,6 +4,7 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -35,8 +36,84 @@ public class JdkDynamicAopProxy implements InvocationHandler {
         this.target = target;
     }
 
+    /**
+     * 添加拦截器
+     * 注意：添加后需要调用 sortInterceptors() 来按 Ordered 排序
+     */
     public void addInterceptor(MethodInterceptor interceptor) {
         interceptors.add(interceptor);
+    }
+
+    /**
+     * 对拦截器进行排序（按 Ordered 接口）
+     *
+     * 排序规则：
+     * 1. PriorityOrdered > Ordered > 普通（没有实现接口）
+     * 2. 在同一优先级内，按 getOrder() 值排序（数字越小越先执行）
+     *
+     * 这个方法在 Spring AOP 中的生效时机：
+     * - 在创建代理对象之前调用
+     * - 确保拦截器按正确的顺序执行
+     */
+    public void sortInterceptors() {
+        interceptors.sort(new Comparator<MethodInterceptor>() {
+            @Override
+            public int compare(MethodInterceptor o1, MethodInterceptor o2) {
+                // 步骤 1: 判断优先级类别
+                int priority1 = getPriorityLevel(o1);
+                int priority2 = getPriorityLevel(o2);
+
+                if (priority1 != priority2) {
+                    // 优先级不同，按优先级排序（数字越小越先执行）
+                    return Integer.compare(priority1, priority2);
+                }
+
+                // 步骤 2: 优先级相同，按 Order 值排序
+                int order1 = getOrder(o1);
+                int order2 = getOrder(o2);
+                return Integer.compare(order1, order2);
+            }
+
+            /**
+             * 获取优先级级别
+             * 1 = PriorityOrdered
+             * 2 = Ordered
+             * 3 = 普通（没有实现接口）
+             */
+            private int getPriorityLevel(MethodInterceptor interceptor) {
+                if (interceptor instanceof PriorityOrdered) {
+                    return 1;
+                } else if (interceptor instanceof Ordered) {
+                    return 2;
+                } else {
+                    return 3;
+                }
+            }
+
+            /**
+             * 获取 Order 值
+             */
+            private int getOrder(MethodInterceptor interceptor) {
+                if (interceptor instanceof Ordered) {
+                    return ((Ordered) interceptor).getOrder();
+                }
+                return Ordered.LOWEST_PRECEDENCE;  // 默认最低优先级
+            }
+        });
+
+        System.out.println("[AOP] Interceptors sorted by order:");
+        for (int i = 0; i < interceptors.size(); i++) {
+            MethodInterceptor interceptor = interceptors.get(i);
+            String orderInfo = "";
+            if (interceptor instanceof PriorityOrdered) {
+                orderInfo = " [PriorityOrdered, order=" + ((PriorityOrdered) interceptor).getOrder() + "]";
+            } else if (interceptor instanceof Ordered) {
+                orderInfo = " [Ordered, order=" + ((Ordered) interceptor).getOrder() + "]";
+            } else {
+                orderInfo = " [Regular, no order]";
+            }
+            System.out.println("  " + (i + 1) + ". " + interceptor.getClass().getSimpleName() + orderInfo);
+        }
     }
 
     /**
