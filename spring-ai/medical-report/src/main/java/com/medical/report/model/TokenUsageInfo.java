@@ -30,7 +30,7 @@ public class TokenUsageInfo {
 
         var usage = metadata.getUsage();
         int inputTokens = usage.getPromptTokens() != null ? usage.getPromptTokens().intValue() : 0;
-        int outputTokens = usage.getGenerationTokens() != null ? usage.getGenerationTokens().intValue() : 0;
+        int outputTokens = usage.getCompletionTokens() != null ? usage.getCompletionTokens().intValue() : 0;
         int totalTokens = usage.getTotalTokens() != null ? usage.getTotalTokens().intValue() : 0;
 
         // DeepSeek pricing: $0.14/1M input tokens, $0.28/1M output tokens

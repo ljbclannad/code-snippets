@@ -14,6 +14,16 @@
 - **API 文档**：集成 Swagger UI，访问 `/swagger-ui.html`
 - **健康监控**：Actuator 端点监控应用状态
 
+### 🚀 性能优化特性
+
+- **SSE 连接管理**：统一管理流式连接，支持最大 100 并发，自动清理和错误处理
+- **智能线程池**：专用线程池隔离 SSE 和报告生成任务，优化资源利用
+- **上下文窗口管理**：智能 Token 估算和内容截断，防止超出模型限制
+- **并发处理**：支持高并发请求，合理的拒绝策略和优雅关闭
+- **性能监控**：实时监控连接数、线程使用和内存占用
+
+> 详细优化说明请查看 [OPTIMIZATION_GUIDE.md](./OPTIMIZATION_GUIDE.md)
+
 ### Spring AI 高级特性 ✨
 
 - **Function Calling**：AI 自动调用 Java 方法查询患者历史报告
@@ -91,6 +101,8 @@ curl http://localhost:8083/actuator/health
 
 ### API 调用示例
 
+#### 标准生成（同步）
+
 ```bash
 curl -X POST http://localhost:8083/api/medical-report/generate \
   -H "Content-Type: application/json" \
@@ -129,6 +141,27 @@ curl -X POST http://localhost:8083/api/medical-report/generate \
       }]
     }
   }'
+```
+
+#### 流式生成（SSE）
+
+```bash
+curl -X POST http://localhost:8083/api/medical-report/generate/stream \
+  -H "Content-Type: application/json" \
+  -d @test-request.json \
+  --no-buffer
+```
+
+#### 查询活跃连接数
+
+```bash
+curl http://localhost:8083/api/medical-report/connections
+```
+
+#### 运行优化测试
+
+```bash
+./test-optimization.sh
 ```
 
 ### 响应格式
@@ -171,16 +204,29 @@ medical-report/
 ├── src/main/java/com/medical/report/
 │   ├── MedicalReportApplication.java
 │   ├── config/
-│   │   └── ChatConfig.java
+│   │   ├── AsyncConfig.java              # 异步线程池配置
+│   │   ├── ChatConfig.java               # Spring AI 配置
+│   │   ├── CacheConfig.java              # 缓存配置
+│   │   └── ResilienceConfig.java         # 弹性配置
 │   ├── controller/
-│   │   └── MedicalReportController.java
+│   │   └── MedicalReportController.java  # REST API 控制器
 │   ├── service/
-│   │   └── MedicalReportService.java
+│   │   ├── MedicalReportService.java     # 核心业务逻辑
+│   │   └── PdfParserService.java         # PDF 解析服务
+│   ├── manager/
+│   │   ├── SseConnectionManager.java     # SSE 连接管理器
+│   │   └── ContextWindowManager.java     # 上下文窗口管理器
+│   ├── monitor/
+│   │   └── PerformanceMonitor.java       # 性能监控
 │   └── model/
 │       ├── QuestionnaireRequest.java
 │       └── MedicalReportResponse.java
-└── src/main/resources/
-    └── application.yml
+├── src/main/resources/
+│   ├── application.yml
+│   └── db/init.sql
+├── OPTIMIZATION_GUIDE.md                 # 优化指南
+├── test-optimization.sh                  # 优化测试脚本
+└── pom.xml
 ```
 
 ## 配置说明

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.medical.report.converter.MedicalReportSchema;
 import com.medical.report.entity.MedicalReportHistory;
 import com.medical.report.exception.MedicalReportException;
+import com.medical.report.manager.ContextWindowManager;
 import com.medical.report.model.MedicalReportResponse;
 import com.medical.report.model.MedicalReportResponseWithMetadata;
 import com.medical.report.model.QuestionnaireRequest;
@@ -35,15 +36,18 @@ public class MedicalReportService {
     private final MedicalReportHistoryMapper historyMapper;
     private final MedicalReportPromptTemplate promptTemplate;
     private final BeanOutputConverter<MedicalReportSchema> outputConverter;
+    private final ContextWindowManager contextWindowManager;
 
     public MedicalReportService(ChatClient chatClient,
                                 PdfParserService pdfParserService,
                                 MedicalReportHistoryMapper historyMapper,
-                                MedicalReportPromptTemplate promptTemplate) {
+                                MedicalReportPromptTemplate promptTemplate,
+                                ContextWindowManager contextWindowManager) {
         this.chatClient = chatClient;
         this.pdfParserService = pdfParserService;
         this.historyMapper = historyMapper;
         this.promptTemplate = promptTemplate;
+        this.contextWindowManager = contextWindowManager;
         this.objectMapper = new ObjectMapper();
         this.outputConverter = new BeanOutputConverter<>(MedicalReportSchema.class);
     }
@@ -59,20 +63,42 @@ public class MedicalReportService {
         long startTime = System.currentTimeMillis();
         try {
             String pdfContent = extractPdfContent(request.getReportFile());
+
+            // Optimize PDF content to fit context window
+            if (pdfContent != null) {
+                int pdfTokens = contextWindowManager.estimateTokens(pdfContent);
+                log.info("PDF content tokens: {}", pdfTokens);
+
+                if (pdfTokens > 50000) {
+                    pdfContent = contextWindowManager.optimizeContent(pdfContent, 50000);
+                    log.info("PDF content optimized to fit context window");
+                }
+            }
+
             String prompt = promptTemplate.createPrompt(request, pdfContent);
 
-            // Add structured output format instruction
+            // Validate total prompt size
+            int totalTokens = contextWindowManager.estimateTokens(prompt);
+            log.info("Total prompt tokens: {}", totalTokens);
+
+            if (!contextWindowManager.isWithinLimit(prompt)) {
+                log.warn("Prompt exceeds safe limit, optimizing...");
+                prompt = contextWindowManager.optimizeContent(prompt,
+                        contextWindowManager.getSafeTokenLimit());
+            }
+
             String fullPrompt = prompt + "\n\n请严格按照以下JSON格式返回结果：\n" + outputConverter.getFormat();
 
-            log.debug("Generated prompt: {}", fullPrompt);
+            log.debug("Generated prompt with {} estimated tokens",
+                    contextWindowManager.estimateTokens(fullPrompt));
 
             ChatResponse chatResponse = chatClient.prompt()
                     .user(fullPrompt)
                     .call()
                     .chatResponse();
 
-            String responseContent = chatResponse.getResult().getOutput().getContent();
-            log.debug("AI response: {}", responseContent);
+            String responseContent = chatResponse.getResult().getOutput().getText();
+            log.debug("AI response received");
 
             MedicalReportSchema schema = outputConverter.convert(responseContent);
             MedicalReportResponse report = schema.toResponse(
@@ -109,10 +135,29 @@ public class MedicalReportService {
                                      java.util.function.Consumer<MedicalReportResponse> onComplete) {
         try {
             String pdfContent = extractPdfContent(request.getReportFile());
+
+            // Optimize PDF content for streaming
+            if (pdfContent != null) {
+                int pdfTokens = contextWindowManager.estimateTokens(pdfContent);
+                if (pdfTokens > 50000) {
+                    pdfContent = contextWindowManager.optimizeContent(pdfContent, 50000);
+                    log.info("PDF content optimized for streaming: {} tokens", pdfTokens);
+                }
+            }
+
             String prompt = promptTemplate.createPrompt(request, pdfContent);
+
+            // Validate and optimize prompt
+            if (!contextWindowManager.isWithinLimit(prompt)) {
+                prompt = contextWindowManager.optimizeContent(prompt,
+                        contextWindowManager.getSafeTokenLimit());
+                log.info("Prompt optimized for streaming");
+            }
+
             String fullPrompt = prompt + "\n\n请严格按照以下JSON格式返回结果：\n" + outputConverter.getFormat();
 
-            log.debug("Generated prompt for streaming: {}", fullPrompt);
+            log.debug("Starting stream with {} estimated tokens",
+                    contextWindowManager.estimateTokens(fullPrompt));
 
             StringBuilder fullResponse = new StringBuilder();
 

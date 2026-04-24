@@ -1,9 +1,11 @@
 package com.medical.report.service;
 
 import com.medical.report.exception.MedicalReportException;
+import com.medical.report.manager.ContextWindowManager;
 import com.medical.report.mapper.MedicalReportHistoryMapper;
-import com.medical.report.model.MedicalReportResponse;
+import com.medical.report.model.MedicalReportResponseWithMetadata;
 import com.medical.report.model.QuestionnaireRequest;
+import com.medical.report.template.MedicalReportPromptTemplate;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -37,11 +39,16 @@ class MedicalReportServiceTest {
     private ChatClient.CallResponseSpec callSpec;
 
     private MedicalReportService service;
+    private MedicalReportPromptTemplate promptTemplate;
+    private ContextWindowManager contextWindowManager;
 
     @BeforeEach
     void setUp() throws Exception {
-        service = new MedicalReportService(chatClient, pdfParserService, historyMapper,
+        promptTemplate = new MedicalReportPromptTemplate(
                 new ClassPathResource("prompts/medical-report-template.txt"));
+        contextWindowManager = new ContextWindowManager();
+        service = new MedicalReportService(chatClient, pdfParserService, historyMapper,
+                promptTemplate, contextWindowManager);
     }
 
     @Test
@@ -60,14 +67,15 @@ class MedicalReportServiceTest {
         when(requestSpec.call()).thenReturn(callSpec);
         when(callSpec.content()).thenReturn(mockAiResponse);
 
-        MedicalReportResponse response = service.generateReport(request);
+        MedicalReportResponseWithMetadata response = service.generateReport(request);
 
         assertNotNull(response);
-        assertEquals("张三", response.getPatientName());
-        assertNotNull(response.getReportDate());
-        assertEquals(2, response.getHealthAdvice().size());
-        assertEquals(1, response.getRiskAssessment().size());
-        assertEquals(1, response.getMedicalGuidance().size());
+        assertNotNull(response.getReport());
+        assertEquals("张三", response.getReport().getPatientName());
+        assertNotNull(response.getReport().getReportDate());
+        assertEquals(2, response.getReport().getHealthAdvice().size());
+        assertEquals(1, response.getReport().getRiskAssessment().size());
+        assertEquals(1, response.getReport().getMedicalGuidance().size());
 
         verify(chatClient, times(1)).prompt();
     }
@@ -90,10 +98,10 @@ class MedicalReportServiceTest {
         when(requestSpec.call()).thenReturn(callSpec);
         when(callSpec.content()).thenReturn(mockAiResponse);
 
-        MedicalReportResponse response = service.generateReport(request);
+        MedicalReportResponseWithMetadata response = service.generateReport(request);
 
         assertNotNull(response);
-        assertEquals(1, response.getHealthAdvice().size());
+        assertEquals(1, response.getReport().getHealthAdvice().size());
     }
 
     @Test
@@ -137,7 +145,7 @@ class MedicalReportServiceTest {
         when(requestSpec.call()).thenReturn(callSpec);
         when(callSpec.content()).thenReturn(mockAiResponse);
 
-        MedicalReportResponse response = service.generateReport(request);
+        MedicalReportResponseWithMetadata response = service.generateReport(request);
 
         assertNotNull(response);
         verify(pdfParserService, times(1)).extractTextFromUrl(any());

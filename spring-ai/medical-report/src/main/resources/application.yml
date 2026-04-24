@@ -20,6 +20,20 @@ spring:
     driver-class-name: com.mysql.cj.jdbc.Driver
     username: ${MYSQL_USERNAME:root}
     password: ${MYSQL_PASSWORD:}
+  task:
+    execution:
+      pool:
+        core-size: 10
+        max-size: 50
+        queue-capacity: 200
+        keep-alive: 60s
+        thread-name-prefix: async-
+      shutdown:
+        await-termination: true
+        await-termination-period: 30s
+    scheduling:
+      pool:
+        size: 2
 
 mybatis:
   mapper-locations: classpath:mapper/*.xml
@@ -61,3 +75,15 @@ resilience4j:
 logging:
   level:
     com.medical.report: DEBUG
+    org.springframework.ai: INFO
+
+# SSE Configuration
+sse:
+  timeout: 300000  # 5 minutes
+  max-connections: 100
+
+# Context Window Configuration
+context:
+  max-tokens: 128000
+  safe-limit: 100000
+  pdf-limit: 50000
