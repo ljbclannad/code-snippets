@@ -64,6 +64,20 @@ CREATE TABLE IF NOT EXISTS t_payment_event_consume (
   KEY idx_order_no (order_no)
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS t_id_segment (
+  biz_tag VARCHAR(64) PRIMARY KEY COMMENT '业务标识',
+  max_id BIGINT NOT NULL COMMENT '当前已分配的最大ID',
+  step INT NOT NULL COMMENT '步长',
+  description VARCHAR(256) COMMENT '描述',
+  updated_at DATETIME NOT NULL COMMENT '更新时间',
+  INDEX idx_updated (updated_at)
+) ENGINE=InnoDB COMMENT='ID号段分配表';
+
+INSERT INTO t_id_segment VALUES
+('order_no', 0, 2000, 'Order number segment', NOW()),
+('pay_no', 0, 2000, 'Payment number segment', NOW()),
+('user_id', 0, 1000, 'User ID segment', NOW());
+
 -- Seata AT undo log
 CREATE TABLE IF NOT EXISTS undo_log (
   id BIGINT NOT NULL AUTO_INCREMENT,

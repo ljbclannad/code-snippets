@@ -16,7 +16,7 @@ import org.springframework.stereotype.Service;
 
 import com.alibaba.csp.sentinel.annotation.SentinelResource;
 import com.lx.governance.common.auth.AuthHeaders;
-import com.lx.governance.common.id.SnowflakeIdGenerator;
+import com.lx.governance.common.id.IdGenerator;
 import com.lx.governance.common.trace.Trace;
 import com.lx.governance.payment.config.RabbitConfig;
 import com.lx.governance.payment.domain.PaymentDto;
@@ -31,21 +31,22 @@ public class PaymentAppService {
     private final RabbitTemplate rabbitTemplate;
     private final boolean failPrepare;
     private final boolean failConfirm;
-    private final SnowflakeIdGenerator payNoGenerator;
+    private final IdGenerator payNoGenerator;
 
     public PaymentAppService(PaymentRepository repository,
             StringRedisTemplate redisTemplate,
             RabbitTemplate rabbitTemplate,
             @Value("${lab.fail.prepare:false}") boolean failPrepare,
             @Value("${lab.fail.confirm:false}") boolean failConfirm,
-            @Value("${id.snowflake.worker-id:2}") long workerId,
-            @Value("${id.snowflake.max-backward-ms:5}") long maxBackwardMs) {
+            @Value("${id.mode:segment}") String mode,
+            IdGenerator payNoSegmentGenerator,
+            IdGenerator payNoSnowflakeGenerator) {
         this.repository = repository;
         this.redisTemplate = redisTemplate;
         this.rabbitTemplate = rabbitTemplate;
         this.failPrepare = failPrepare;
         this.failConfirm = failConfirm;
-        this.payNoGenerator = new SnowflakeIdGenerator(workerId, maxBackwardMs);
+        this.payNoGenerator = "snowflake".equalsIgnoreCase(mode) ? payNoSnowflakeGenerator : payNoSegmentGenerator;
     }
 
     @SentinelResource(value = "payment_prepare", blockHandler = "blockPrepare", fallback = "fallbackPrepare")

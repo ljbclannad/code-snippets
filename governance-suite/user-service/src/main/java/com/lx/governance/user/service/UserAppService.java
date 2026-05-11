@@ -3,7 +3,7 @@ package com.lx.governance.user.service;
 import com.lx.governance.common.auth.AuthTokenClaims;
 import com.lx.governance.common.auth.AuthTokenService;
 import com.lx.governance.common.auth.PasswordCodec;
-import com.lx.governance.common.id.SnowflakeIdGenerator;
+import com.lx.governance.common.id.IdGenerator;
 import com.lx.governance.common.api.ApiResponse;
 import com.lx.governance.user.client.PaymentQueryClient;
 import com.lx.governance.user.domain.LoginRequest;
@@ -30,21 +30,22 @@ public class UserAppService {
     private final UserProfileRepository userProfileRepository;
     private final PaymentQueryClient paymentQueryClient;
     private final AuthTokenService authTokenService;
-    private final SnowflakeIdGenerator userIdGenerator;
+    private final IdGenerator userIdGenerator;
     private final long tokenTtlSeconds;
 
     public UserAppService(UserAccountRepository userAccountRepository,
                           UserProfileRepository userProfileRepository,
                           PaymentQueryClient paymentQueryClient,
                           AuthTokenService authTokenService,
-                          @Value("${id.snowflake.worker-id:3}") long workerId,
-                          @Value("${id.snowflake.max-backward-ms:5}") long maxBackwardMs,
+                          @Value("${id.mode:segment}") String mode,
+                          IdGenerator userIdSegmentGenerator,
+                          IdGenerator userIdSnowflakeGenerator,
                           @Value("${app.auth.token-ttl-seconds:7200}") long tokenTtlSeconds) {
         this.userAccountRepository = userAccountRepository;
         this.userProfileRepository = userProfileRepository;
         this.paymentQueryClient = paymentQueryClient;
         this.authTokenService = authTokenService;
-        this.userIdGenerator = new SnowflakeIdGenerator(workerId, maxBackwardMs);
+        this.userIdGenerator = "snowflake".equalsIgnoreCase(mode) ? userIdSnowflakeGenerator : userIdSegmentGenerator;
         this.tokenTtlSeconds = tokenTtlSeconds;
     }
 

@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicLong;
  *   <li><b>可反解调试</b>：提供 {@link #parse(long)} 静态方法，方便日志追踪与问题定位。</li>
  * </ol>
  */
-public final class SnowflakeIdGenerator {
+public final class SnowflakeIdGenerator implements IdGenerator {
 
     // ─── 自定义纪元：2024-01-01 00:00:00 UTC ─────────────────────────────────
     private static final long EPOCH = 1_704_067_200_000L;
