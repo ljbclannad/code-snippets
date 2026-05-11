@@ -1,14 +1,15 @@
 package com.lx.governance.payment.config;
 
-import com.lx.governance.common.id.IdSegmentRepository;
-import com.zaxxer.hikari.HikariDataSource;
+import javax.sql.DataSource;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-import javax.sql.DataSource;
+import com.lx.governance.common.id.IdSegmentRepository;
+import com.zaxxer.hikari.HikariDataSource;
 
 /**
  * ID 号段数据源配置。
@@ -27,8 +28,8 @@ public class IdSegmentDataSourceConfig {
         HikariDataSource dataSource = new HikariDataSource();
         dataSource.setDriverClassName("com.mysql.cj.jdbc.Driver");
         dataSource.setJdbcUrl(String.format(
-            "jdbc:mysql://%s:%d/order_db?useSSL=false&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai",
-            host, port));
+                "jdbc:mysql://%s:%d/payment_db?useSSL=false&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai",
+                host, port));
         dataSource.setUsername(username);
         dataSource.setPassword(password);
         dataSource.setMaximumPoolSize(5);

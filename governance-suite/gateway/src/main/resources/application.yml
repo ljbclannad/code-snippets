@@ -10,7 +10,7 @@ spring:
   cloud:
     service-registry:
       auto-registration:
-        enabled: false
+        enabled: true
     nacos:
       discovery:
         server-addr: ${NACOS_ADDR:localhost:8848}
@@ -81,7 +81,13 @@ management:
   endpoints:
     web:
       exposure:
-        include: "*"
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+  health:
+    defaults:
+      enabled: true
 
 logging:
   level:

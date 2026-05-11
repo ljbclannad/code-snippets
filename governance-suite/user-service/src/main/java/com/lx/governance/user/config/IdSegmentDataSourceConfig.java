@@ -27,7 +27,7 @@ public class IdSegmentDataSourceConfig {
         HikariDataSource dataSource = new HikariDataSource();
         dataSource.setDriverClassName("com.mysql.cj.jdbc.Driver");
         dataSource.setJdbcUrl(String.format(
-            "jdbc:mysql://%s:%d/order_db?useSSL=false&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai",
+            "jdbc:mysql://%s:%d/user_db?useSSL=false&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai",
             host, port));
         dataSource.setUsername(username);
         dataSource.setPassword(password);

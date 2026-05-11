@@ -7,7 +7,13 @@ import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.cloud.openfeign.EnableFeignClients;
 import org.springframework.context.annotation.Bean;
 
-@SpringBootApplication
+@SpringBootApplication(scanBasePackages = {
+    "com.lx.governance.user",
+    "com.lx.governance.common.auth",
+    "com.lx.governance.common.trace",
+    "com.lx.governance.common.web",
+    "com.lx.governance.common.api"
+})
 @EnableFeignClients
 public class UserServiceApplication {
     public static void main(String[] args) {
