@@ -19,9 +19,10 @@ spring:
         port: 8721
       eager: true
 
-  redis:
-    host: ${REDIS_HOST:localhost}
-    port: ${REDIS_PORT:36379}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:36379}
 
   rabbitmq:
     host: ${RABBIT_HOST:localhost}
@@ -132,3 +133,11 @@ app:
     scheduled:
       pool-size: 8
       thread-name-prefix: scheduled-exec-
+
+spring.cloud.openfeign:
+  client:
+    config:
+      default:
+        connectTimeout: 5000
+        readTimeout: 5000
+        contract: org.springframework.cloud.openfeign.support.SpringMvcContract

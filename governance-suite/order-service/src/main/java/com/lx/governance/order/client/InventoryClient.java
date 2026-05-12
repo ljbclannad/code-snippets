@@ -1,21 +1,23 @@
 package com.lx.governance.order.client;
 
-import com.lx.governance.common.api.ApiResponse;
-import com.lx.governance.order.domain.InventoryDeductRequest;
+import feign.Headers;
+import feign.RequestLine;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.stereotype.Component;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
+
+import com.lx.governance.common.api.ApiResponse;
+import com.lx.governance.order.config.FeignConfig;
+import com.lx.governance.order.domain.InventoryDeductRequest;
 
 @FeignClient(
         name = "inventory-service",
-        url = "${service.inventory.base-url:}",
-        path = "/",
+        configuration = FeignConfig.class,
         fallback = InventoryClient.InventoryClientFallback.class)
 public interface InventoryClient {
 
-    @PostMapping("/deduct")
-    ApiResponse<String> deduct(@RequestBody InventoryDeductRequest req);
+    @RequestLine("POST /deduct")
+    @Headers("Content-Type: application/json")
+    ApiResponse<String> deduct(InventoryDeductRequest req);
 
     @Component
     class InventoryClientFallback implements InventoryClient {

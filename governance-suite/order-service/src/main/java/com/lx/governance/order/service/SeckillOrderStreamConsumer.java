@@ -12,7 +12,6 @@ import org.springframework.data.redis.connection.stream.ReadOffset;
 import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.connection.stream.StreamReadOptions;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -72,7 +71,7 @@ public class SeckillOrderStreamConsumer {
      * <p>
      * fixedDelay 保证单实例内串行触发，避免在本类中并发处理导致额外复杂度。
      */
-    @Scheduled(fixedDelay = 50)
+    // @Scheduled(fixedDelay = 50)
     public void consume() {
         // 消费前确保消费组存在；流 key 尚未创建时先跳过本轮。
         ensureGroup();
@@ -150,11 +149,16 @@ public class SeckillOrderStreamConsumer {
             groupReady = true;
         } catch (Exception e) {
             String message = e.getMessage();
-            if (message != null && message.contains("BUSYGROUP")) {
+            Throwable cause = e.getCause();
+            String causeMessage = cause != null ? cause.getMessage() : null;
+
+            if ((message != null && message.contains("BUSYGROUP")) ||
+                    (causeMessage != null && causeMessage.contains("BUSYGROUP"))) {
                 groupReady = true;
                 return;
             }
-            if (message != null && message.contains("requires the key to exist")) {
+            if ((message != null && message.contains("requires the key to exist")) ||
+                    (causeMessage != null && causeMessage.contains("requires the key to exist"))) {
                 return;
             }
             throw e;

@@ -1,21 +1,23 @@
 package com.lx.governance.order.client;
 
-import com.lx.governance.common.api.ApiResponse;
-import com.lx.governance.order.domain.PaymentPrepareRequest;
+import feign.Headers;
+import feign.RequestLine;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.stereotype.Component;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
+
+import com.lx.governance.common.api.ApiResponse;
+import com.lx.governance.order.config.FeignConfig;
+import com.lx.governance.order.domain.PaymentPrepareRequest;
 
 @FeignClient(
         name = "payment-service",
-        url = "${service.payment.base-url:}",
-        path = "/",
+        configuration = FeignConfig.class,
         fallback = PaymentClient.PaymentClientFallback.class)
 public interface PaymentClient {
 
-    @PostMapping("/prepare")
-    ApiResponse<String> prepare(@RequestBody PaymentPrepareRequest req);
+    @RequestLine("POST /prepare")
+    @Headers("Content-Type: application/json")
+    ApiResponse<String> prepare(PaymentPrepareRequest req);
 
     @Component
     class PaymentClientFallback implements PaymentClient {

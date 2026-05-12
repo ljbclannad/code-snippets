@@ -4,9 +4,10 @@ server:
 spring:
   application:
     name: gateway
-  redis:
-    host: ${REDIS_HOST:localhost}
-    port: ${REDIS_PORT:36379}
+  data:
+    redis:
+      host: localhost
+      port: 36379
   cloud:
     service-registry:
       auto-registration:
