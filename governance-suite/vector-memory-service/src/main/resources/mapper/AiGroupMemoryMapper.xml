@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lx.governance.vectormemory.mapper.AiGroupMemoryMapper">
+
+    <!-- 结果映射 -->
+    <resultMap id="BaseResultMap" type="com.lx.governance.vectormemory.entity.AiGroupMemoryEntity">
+        <id column="id" property="id" jdbcType="BIGINT"/>
+        <result column="customer_id" property="customerId" jdbcType="VARCHAR"/>
+        <result column="group_id" property="groupId" jdbcType="VARCHAR"/>
+        <result column="memory_type" property="memoryType" jdbcType="VARCHAR"/>
+        <result column="memory_key" property="memoryKey" jdbcType="VARCHAR"/>
+        <result column="memory_content" property="memoryContent" jdbcType="VARCHAR"/>
+        <result column="embedding_id" property="embeddingId" jdbcType="VARCHAR"/>
+        <result column="confidence_score" property="confidenceScore" jdbcType="DECIMAL"/>
+        <result column="source_message" property="sourceMessage" jdbcType="VARCHAR"/>
+        <result column="extracted_at" property="extractedAt" jdbcType="TIMESTAMP"/>
+        <result column="is_deleted" property="isDeleted" jdbcType="TINYINT"/>
+        <result column="create_time" property="createTime" jdbcType="TIMESTAMP"/>
+        <result column="update_time" property="updateTime" jdbcType="TIMESTAMP"/>
+    </resultMap>
+
+    <!-- 基础列 -->
+    <sql id="Base_Column_List">
+        id, customer_id, group_id, memory_type, memory_key, memory_content,
+        embedding_id, confidence_score, source_message, extracted_at,
+        is_deleted, create_time, update_time
+    </sql>
+
+    <!-- 插入记忆 -->
+    <insert id="insert" parameterType="com.lx.governance.vectormemory.entity.AiGroupMemoryEntity"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO b_ai_group_memory (
+            customer_id, group_id, memory_type, memory_key, memory_content,
+            embedding_id, confidence_score, source_message, extracted_at, is_deleted
+        ) VALUES (
+            #{customerId}, #{groupId}, #{memoryType}, #{memoryKey}, #{memoryContent},
+            #{embeddingId}, #{confidenceScore}, #{sourceMessage}, #{extractedAt}, 0
+        )
+    </insert>
+
+    <!-- 更新向量ID -->
+    <update id="updateEmbeddingId">
+        UPDATE b_ai_group_memory
+        SET embedding_id = #{embeddingId},
+            update_time = NOW()
+        WHERE id = #{id}
+    </update>
+
+    <!-- 查询群组记忆 -->
+    <select id="selectByGroupIdAndCustomerId" resultMap="BaseResultMap">
+        SELECT
+        <include refid="Base_Column_List"/>
+        FROM b_ai_group_memory
+        WHERE group_id = #{groupId}
+          AND customer_id = #{customerId}
+          AND is_deleted = 0
+        ORDER BY create_time DESC
+    </select>
+
+    <!-- 根据ID查询 -->
+    <select id="selectById" resultMap="BaseResultMap">
+        SELECT
+        <include refid="Base_Column_List"/>
+        FROM b_ai_group_memory
+        WHERE id = #{id}
+    </select>
+
+    <!-- 根据向量ID批量查询 -->
+    <select id="selectByEmbeddingIds" resultMap="BaseResultMap">
+        SELECT
+        <include refid="Base_Column_List"/>
+        FROM b_ai_group_memory
+        WHERE embedding_id IN
+        <foreach collection="embeddingIds" item="embeddingId" open="(" separator="," close=")">
+            #{embeddingId}
+        </foreach>
+        AND is_deleted = 0
+    </select>
+
+    <!-- 检查相似记忆 -->
+    <select id="countSimilarMemory" resultType="int">
+        SELECT COUNT(*)
+        FROM b_ai_group_memory
+        WHERE group_id = #{groupId}
+          AND customer_id = #{customerId}
+          AND memory_content = #{content}
+          AND is_deleted = 0
+    </select>
+
+    <!-- 软删除 -->
+    <update id="deleteById">
+        UPDATE b_ai_group_memory
+        SET is_deleted = 1,
+            update_time = NOW()
+        WHERE id = #{id}
+    </update>
+
+</mapper>
