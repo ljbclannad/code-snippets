@@ -15,6 +15,9 @@
     <module>payment-service</module>
     <module>inventory-service</module>
     <module>outbox-consumer</module>
+    <module>user-profile-service</module>
+    <module>vector-memory-service</module>
+    <module>ai-chat-service</module>
   </modules>
 
   <properties>
@@ -27,6 +30,8 @@
     <seata.version>2.0.0</seata.version>
     <maven.compiler.release>${java.version}</maven.compiler.release>
     <mysql.version>8.0.33</mysql.version>
+    <!-- Spring AI -->
+    <spring-ai.version>1.0.0-M3</spring-ai.version>
   </properties>
 
   <dependencyManagement>
@@ -49,6 +54,14 @@
         <groupId>com.alibaba.cloud</groupId>
         <artifactId>spring-cloud-alibaba-dependencies</artifactId>
         <version>${spring-cloud-alibaba.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <!-- Spring AI BOM -->
+      <dependency>
+        <groupId>org.springframework.ai</groupId>
+        <artifactId>spring-ai-bom</artifactId>
+        <version>${spring-ai.version}</version>
         <type>pom</type>
         <scope>import</scope>
       </dependency>
@@ -86,4 +99,26 @@
       </plugins>
     </pluginManagement>
   </build>
+
+  <repositories>
+    <repository>
+      <id>spring-milestones</id>
+      <name>Spring Milestones</name>
+      <url>https://repo.spring.io/milestone</url>
+      <snapshots>
+        <enabled>false</enabled>
+      </snapshots>
+    </repository>
+  </repositories>
+
+  <pluginRepositories>
+    <pluginRepository>
+      <id>spring-milestones</id>
+      <name>Spring Milestones</name>
+      <url>https://repo.spring.io/milestone</url>
+      <snapshots>
+        <enabled>false</enabled>
+      </snapshots>
+    </pluginRepository>
+  </pluginRepositories>
 </project>
