@@ -2,12 +2,12 @@ package com.lx.governance.vectormemory.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lx.governance.vectormemory.dto.MemoryExtractionResult;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Service;
@@ -19,11 +19,16 @@ import org.springframework.stereotype.Service;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class DeepSeekService {
 
     private final ChatModel chatModel;
     private final ObjectMapper objectMapper;
+
+    public DeepSeekService(@Qualifier("openAiChatModel") ChatModel chatModel,
+                           ObjectMapper objectMapper) {
+        this.chatModel = chatModel;
+        this.objectMapper = objectMapper;
+    }
 
     /**
      * 从对话中提取记忆

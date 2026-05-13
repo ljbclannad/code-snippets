@@ -11,7 +11,9 @@ import org.springframework.scheduling.annotation.EnableAsync;
  *
  * 向量记忆服务 - 负责向量化存储和检索用户记忆
  */
-@SpringBootApplication
+@SpringBootApplication(exclude = {
+        org.springframework.ai.autoconfigure.vectorstore.milvus.MilvusVectorStoreAutoConfiguration.class
+})
 @EnableAsync
 @EnableRetry
 @MapperScan("com.lx.governance.vectormemory.mapper")

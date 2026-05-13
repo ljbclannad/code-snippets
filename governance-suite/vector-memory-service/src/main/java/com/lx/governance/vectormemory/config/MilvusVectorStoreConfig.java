@@ -64,7 +64,7 @@ public class MilvusVectorStoreConfig {
     @Bean(name = "groupMemoryVectorStore")
     public VectorStore groupMemoryVectorStore(
             MilvusServiceClient milvusServiceClient,
-            EmbeddingModel embeddingModel) {
+            @Qualifier("dashscopeEmbeddingModel") EmbeddingModel embeddingModel) {
 
         log.info("Creating groupMemoryVectorStore with collection: ai_group_memories");
 
@@ -87,7 +87,7 @@ public class MilvusVectorStoreConfig {
     @Qualifier("userMemoryVectorStore")
     public VectorStore userMemoryVectorStore(
             MilvusServiceClient milvusServiceClient,
-            EmbeddingModel embeddingModel) {
+            @Qualifier("dashscopeEmbeddingModel") EmbeddingModel embeddingModel) {
 
         log.info("Creating userMemoryVectorStore with collection: ai_user_memories");
 
