@@ -1,0 +1,14 @@
+package com.lx.governance.aichat;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.scheduling.annotation.EnableAsync;
+
+@SpringBootApplication
+@EnableAsync
+public class AiChatServiceApplication {
+
+    public static void main(String[] args) {
+        SpringApplication.run(AiChatServiceApplication.class, args);
+    }
+}

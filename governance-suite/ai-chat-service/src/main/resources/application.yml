@@ -1,0 +1,47 @@
+server:
+  port: 8103
+
+spring:
+  application:
+    name: ai-chat-service
+  cloud:
+    nacos:
+      discovery:
+        server-addr: localhost:8848
+        namespace: public
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+
+# Dify API Configuration
+dify:
+  api:
+    base-url: ${DIFY_API_BASE_URL:https://api.dify.ai/v1}
+    key: ${DIFY_API_KEY:your-dify-api-key}
+    timeout: 30000
+
+# Service Timeout Configuration
+service:
+  timeout:
+    user-profile: 5000
+    vector-memory: 5000
+    dify-api: 30000
+
+# Actuator Configuration
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+# Logging Configuration
+logging:
+  level:
+    com.lx.governance.aichat: INFO
+    org.springframework.web: INFO
+    org.springframework.amqp: INFO
