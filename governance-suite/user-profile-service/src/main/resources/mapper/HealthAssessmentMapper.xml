@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lx.governance.profile.mapper.HealthAssessmentMapper">
+
+    <select id="selectLatestByCustomerId" resultType="com.lx.governance.profile.entity.HealthAssessmentEntity">
+        SELECT
+            id,
+            customer_id,
+            bmi,
+            blood_pressure,
+            blood_sugar,
+            assessment_date,
+            health_goals,
+            create_time
+        FROM t_health_assessment
+        WHERE customer_id = #{customerId}
+          AND is_deleted = 0
+        ORDER BY assessment_date DESC
+        LIMIT 1
+    </select>
+
+</mapper>

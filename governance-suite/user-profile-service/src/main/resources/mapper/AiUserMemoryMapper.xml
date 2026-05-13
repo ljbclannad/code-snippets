@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lx.governance.profile.mapper.AiUserMemoryMapper">
+
+    <select id="selectByCustomerId" resultType="com.lx.governance.profile.entity.AiUserMemoryEntity">
+        SELECT
+            id,
+            customer_id,
+            memory_type,
+            memory_key,
+            memory_content,
+            embedding_id,
+            confidence_score,
+            source,
+            verified,
+            verified_by,
+            verified_at,
+            is_deleted,
+            create_time,
+            update_time
+        FROM b_ai_user_memory
+        WHERE customer_id = #{customerId}
+          AND is_deleted = 0
+        ORDER BY verified DESC, confidence_score DESC, create_time DESC
+    </select>
+
+</mapper>
