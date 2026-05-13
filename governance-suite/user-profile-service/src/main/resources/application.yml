@@ -1,0 +1,50 @@
+server:
+  port: 8101
+
+spring:
+  application:
+    name: user-profile-service
+  
+  cloud:
+    nacos:
+      discovery:
+        server-addr: localhost:8848
+  
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+  
+  redis:
+    host: localhost
+    port: 36379
+  
+  cache:
+    type: redis
+    redis:
+      time-to-live: 300000  # 5分钟
+  
+  datasource:
+    url: jdbc:mysql://localhost:3306/governance?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: root
+    password: root
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+mybatis:
+  mapper-locations: classpath:mapper/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.lx.governance.profile: INFO
