@@ -44,7 +44,7 @@ CREATE TABLE `b_ai_user_memory` (
   `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `update_time` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uk_customer_type_key` (`customer_id`, `memory_type`, `memory_key`),
+  UNIQUE KEY `uk_customer_type_key` (`customer_id`, `memory_type`, `memory_key`, `is_deleted`),
   KEY `idx_embedding_id` (`embedding_id`),
   KEY `idx_verified` (`verified`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI用户全局记忆表';
