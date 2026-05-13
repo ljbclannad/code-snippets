@@ -61,7 +61,7 @@ seata:
   enabled: true
   application-id: ${spring.application.name}
   tx-service-group: payment_tx_group
-  enable-auto-data-source-proxy: true
+  enable-auto-data-source-proxy: false
   data-source-proxy-mode: AT
   service:
     vgroup-mapping:

@@ -1,28 +1,26 @@
 package com.lx.governance.order.client;
 
-import feign.Headers;
-import feign.RequestLine;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.stereotype.Component;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 
 import com.lx.governance.common.api.ApiResponse;
-import com.lx.governance.order.config.FeignConfig;
+import com.lx.governance.order.domain.PaymentDto;
 import com.lx.governance.order.domain.PaymentPrepareRequest;
 
 @FeignClient(
         name = "payment-service",
-        configuration = FeignConfig.class,
         fallback = PaymentClient.PaymentClientFallback.class)
 public interface PaymentClient {
 
-    @RequestLine("POST /prepare")
-    @Headers("Content-Type: application/json")
-    ApiResponse<String> prepare(PaymentPrepareRequest req);
+    @PostMapping("/prepare")
+    ApiResponse<PaymentDto> prepare(@RequestBody PaymentPrepareRequest req);
 
     @Component
     class PaymentClientFallback implements PaymentClient {
         @Override
-        public ApiResponse<String> prepare(PaymentPrepareRequest req) {
+        public ApiResponse<PaymentDto> prepare(PaymentPrepareRequest req) {
             return ApiResponse.fail("PAYMENT_UNAVAILABLE", "payment-service fallback", null);
         }
     }

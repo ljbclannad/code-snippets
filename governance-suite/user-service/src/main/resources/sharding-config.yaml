@@ -1,0 +1,29 @@
+dataSources:
+  ds0:
+    dataSourceClassName: com.zaxxer.hikari.HikariDataSource
+    driverClassName: com.mysql.cj.jdbc.Driver
+    jdbcUrl: jdbc:mysql://localhost:3306/user_db?useSSL=false&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: root
+    password: root
+
+rules:
+- !SHARDING
+  tables:
+    t_user:
+      actualDataNodes: ds0.t_user_${0..1}
+      tableStrategy:
+        standard:
+          shardingColumn: user_id
+          shardingAlgorithmName: user-inline
+    t_user_account:
+      actualDataNodes: ds0.t_user_account
+    t_id_segment:
+      actualDataNodes: ds0.t_id_segment
+  shardingAlgorithms:
+    user-inline:
+      type: INLINE
+      props:
+        algorithm-expression: t_user_${user_id % 2}
+
+props:
+  sql-show: true

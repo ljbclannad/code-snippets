@@ -83,13 +83,13 @@ seata:
 
 feign:
   sentinel:
-    enabled: true
+    enabled: false
 
 management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,bulkhead
   endpoint:
     health:
       show-details: always
@@ -141,3 +141,24 @@ spring.cloud.openfeign:
         connectTimeout: 5000
         readTimeout: 5000
         contract: org.springframework.cloud.openfeign.support.SpringMvcContract
+
+# Bulkhead 配置
+bulkhead:
+  enabled: true
+  default:
+    core-pool-size: 5
+    max-pool-size: 10
+    queue-capacity: 20
+    timeout-seconds: 3
+    keep-alive-seconds: 60
+  services:
+    inventory-service:
+      core-pool-size: 8
+      max-pool-size: 15
+      queue-capacity: 30
+      timeout-seconds: 5
+    payment-service:
+      core-pool-size: 10
+      max-pool-size: 20
+      queue-capacity: 50
+      timeout-seconds: 10

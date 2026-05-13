@@ -8,6 +8,7 @@ import com.lx.governance.order.client.PaymentClient;
 import com.lx.governance.order.domain.CreateOrderRequest;
 import com.lx.governance.order.domain.InventoryDeductRequest;
 import com.lx.governance.order.domain.OrderDto;
+import com.lx.governance.order.domain.PaymentDto;
 import com.lx.governance.order.domain.PaymentPrepareRequest;
 import com.lx.governance.order.id.OrderNoGenerator;
 import com.lx.governance.order.repo.OutboxRepository;
@@ -103,7 +104,7 @@ public class OrderAppService {
         payReq.setOrderNo(orderNo);
         payReq.setUserId(parseUserId(req.getCustomerId()));
         payReq.setAmountCents(req.getAmountCents());
-        ApiResponse<String> pay = paymentClient.prepare(payReq);
+        ApiResponse<PaymentDto> pay = paymentClient.prepare(payReq);
         if (pay == null || !pay.isSuccess()) {
             throw new IllegalArgumentException("Payment prepare failed: " + (pay == null ? "null" : pay.getMessage()));
         }

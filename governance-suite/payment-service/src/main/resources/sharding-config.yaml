@@ -1,0 +1,27 @@
+dataSources:
+  ds0:
+    dataSourceClassName: com.zaxxer.hikari.HikariDataSource
+    driverClassName: com.mysql.cj.jdbc.Driver
+    jdbcUrl: jdbc:mysql://localhost:3306/payment_db?useSSL=false&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: root
+    password: root
+
+rules:
+- !SHARDING
+  tables:
+    t_payment:
+      actualDataNodes: ds0.t_payment_$->{0..1}
+      tableStrategy:
+        standard:
+          shardingColumn: user_id
+          shardingAlgorithmName: payment-inline
+    t_id_segment:
+      actualDataNodes: ds0.t_id_segment
+  shardingAlgorithms:
+    payment-inline:
+      type: INLINE
+      props:
+        algorithm-expression: t_payment_$->{user_id % 2}
+
+props:
+  sql-show: true
