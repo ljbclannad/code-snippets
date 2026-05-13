@@ -129,6 +129,7 @@ services:
             - "9091:9091"
         volumes:
             - gov_milvus_data:/var/lib/milvus
+        command: ["milvus", "run", "standalone"]
         depends_on:
             etcd:
                 condition: service_healthy

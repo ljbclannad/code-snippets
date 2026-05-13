@@ -37,18 +37,15 @@ public class AiChatService {
                 correlationId);
 
         try {
-            // Convert customerId to Long for client calls
-            Long customerId = Long.parseLong(request.getCustomerId());
-
             // 并行获取用户画像和向量记忆
             CompletableFuture<UserProfileDTO> profileFuture = CompletableFuture.supplyAsync(() ->
-                userProfileClient.requestUserProfile(customerId)
+                userProfileClient.requestUserProfile(request.getCustomerId())
             );
 
             CompletableFuture<List<MemoryItemDTO>> memoriesFuture = CompletableFuture.supplyAsync(() ->
                 vectorMemoryClient.requestGroupMemories(
                     request.getGroupId(),
-                    customerId,
+                    request.getCustomerId(),
                     request.getMessage()
                 )
             );
@@ -70,7 +67,7 @@ public class AiChatService {
                 try {
                     vectorMemoryClient.triggerMemoryExtraction(
                         request.getGroupId(),
-                        customerId,
+                        request.getCustomerId(),
                         request.getMessage(),
                         difyResponse.getAnswer()
                     );

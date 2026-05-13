@@ -9,6 +9,7 @@ import com.lx.governance.vectormemory.service.MemoryExtractionService;
 import com.lx.governance.vectormemory.service.MemoryRetrievalService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Component;
@@ -37,9 +38,10 @@ public class VectorMemoryMessageListener {
      * 响应路由: vector.memory.exchange -> vector.memory.response.{correlationId}
      *
      * @param request 记忆检索请求消息
+     * @param message 原始消息（用于获取 replyTo）
      */
     @RabbitListener(queues = "vector.memory.request")
-    public void handleMemoryRequest(MemoryRequestMessage request) {
+    public void handleMemoryRequest(MemoryRequestMessage request, Message message) {
         // 设置 traceId（如果请求中包含，使用 correlationId 作为 traceId）
         if (request.getCorrelationId() != null) {
             Trace.set(request.getCorrelationId());
@@ -47,9 +49,10 @@ public class VectorMemoryMessageListener {
             Trace.getOrCreate();
         }
 
-        log.info("收到记忆检索请求 - correlationId: {}, groupId: {}, customerId: {}, query: {}, topK: {}",
+        String replyTo = message.getMessageProperties().getReplyTo();
+        log.info("收到记忆检索请求 - correlationId: {}, groupId: {}, customerId: {}, query: {}, topK: {}, replyTo: {}",
                 request.getCorrelationId(), request.getGroupId(), request.getCustomerId(),
-                truncate(request.getQuery(), 50), request.getTopK());
+                truncate(request.getQuery(), 50), request.getTopK(), replyTo);
 
         MemoryResponseMessage response = new MemoryResponseMessage();
         response.setCorrelationId(request.getCorrelationId());
@@ -91,15 +94,21 @@ public class VectorMemoryMessageListener {
                     request.getCorrelationId(), e.getMessage(), e);
         }
 
-        // 发送响应到指定的 routing key
-        String routingKey = "vector.memory.response." + request.getCorrelationId();
+        // 发送响应：优先使用 replyTo，否则使用动态路由键
         try {
-            rabbitTemplate.convertAndSend("vector.memory.exchange", routingKey, response);
-            log.info("记忆检索响应已发送 - correlationId: {}, routingKey: {}, success: {}",
-                    request.getCorrelationId(), routingKey, response.getSuccess());
+            if (replyTo != null && !replyTo.isEmpty()) {
+                rabbitTemplate.convertAndSend("", replyTo, response);
+                log.info("记忆检索响应已发送到 replyTo 队列 - correlationId: {}, replyTo: {}, success: {}",
+                        request.getCorrelationId(), replyTo, response.getSuccess());
+            } else {
+                String routingKey = "vector.memory.response." + request.getCorrelationId();
+                rabbitTemplate.convertAndSend("vector.memory.exchange", routingKey, response);
+                log.info("记忆检索响应已发送到路由键 - correlationId: {}, routingKey: {}, success: {}",
+                        request.getCorrelationId(), routingKey, response.getSuccess());
+            }
         } catch (Exception e) {
-            log.error("发送记忆检索响应失败 - correlationId: {}, routingKey: {}, 错误: {}",
-                    request.getCorrelationId(), routingKey, e.getMessage(), e);
+            log.error("发送记忆检索响应失败 - correlationId: {}, 错误: {}",
+                    request.getCorrelationId(), e.getMessage(), e);
         } finally {
             // 清理 traceId
             Trace.clear();

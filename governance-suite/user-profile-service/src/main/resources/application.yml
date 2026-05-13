@@ -16,10 +16,11 @@ spring:
     username: guest
     password: guest
   
-  redis:
-    host: localhost
-    port: 36379
-  
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:36379}
+
   cache:
     type: redis
     redis:

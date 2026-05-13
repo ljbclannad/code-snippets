@@ -5,6 +5,7 @@ import com.lx.governance.profile.dto.*;
 import com.lx.governance.profile.service.UserProfileService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Component;
@@ -18,13 +19,14 @@ public class UserProfileMessageListener {
     private final RabbitTemplate rabbitTemplate;
 
     @RabbitListener(queues = "user.profile.request")
-    public void handleProfileRequest(UserProfileRequestMessage request) {
+    public void handleProfileRequest(UserProfileRequestMessage request, Message message) {
         String correlationId = request.getCorrelationId();
         String customerId = request.getCustomerId();
+        String replyTo = message.getMessageProperties().getReplyTo();
 
         Trace.set(correlationId);
 
-        log.info("[{}] 收到用户画像请求: customerId={}", correlationId, customerId);
+        log.info("[{}] 收到用户画像请求: customerId={}, replyTo={}", correlationId, customerId, replyTo);
 
         UserProfileResponseMessage response = new UserProfileResponseMessage();
         response.setCorrelationId(correlationId);
@@ -47,13 +49,18 @@ public class UserProfileMessageListener {
             response.setErrorMessage("构建用户画像失败: " + e.getMessage());
         }
 
-        String responseRoutingKey = "user.profile.response." + correlationId;
-        rabbitTemplate.convertAndSend(
-            "user.profile.exchange",
-            responseRoutingKey,
-            response
-        );
-
-        log.info("[{}] 用户画像响应已发送: success={}", correlationId, response.getSuccess());
+        // Use replyTo if provided, otherwise fall back to dynamic routing key
+        if (replyTo != null && !replyTo.isEmpty()) {
+            rabbitTemplate.convertAndSend("", replyTo, response);
+            log.info("[{}] 用户画像响应已发送到 replyTo 队列: {}, success={}", correlationId, replyTo, response.getSuccess());
+        } else {
+            String responseRoutingKey = "user.profile.response." + correlationId;
+            rabbitTemplate.convertAndSend(
+                "user.profile.exchange",
+                responseRoutingKey,
+                response
+            );
+            log.info("[{}] 用户画像响应已发送到路由键: {}, success={}", correlationId, responseRoutingKey, response.getSuccess());
+        }
     }
 }

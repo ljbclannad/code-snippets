@@ -13,13 +13,13 @@ import org.springframework.web.client.RestClient;
 @Configuration
 public class RestClientConfig {
 
-    @Value("${dify.base-url}")
+    @Value("${dify.api.base-url}")
     private String difyBaseUrl;
 
-    @Value("${dify.api-key}")
+    @Value("${dify.api.key}")
     private String difyApiKey;
 
-    @Value("${dify.timeout:30000}")
+    @Value("${dify.api.timeout:30000}")
     private int timeout;
 
     /**
