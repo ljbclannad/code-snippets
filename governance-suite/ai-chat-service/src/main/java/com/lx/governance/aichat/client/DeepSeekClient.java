@@ -1,6 +1,7 @@
 package com.lx.governance.aichat.client;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.lx.governance.aichat.context.ContextBudgetManager;
 import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.DifyResponse;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
@@ -28,6 +29,7 @@ import java.util.UUID;
 public class DeepSeekClient {
 
     private final RestClient deepSeekRestClient;
+    private final ContextBudgetManager contextBudgetManager;
 
     @Value("${deepseek.model:deepseek-chat}")
     private String model;
@@ -80,7 +82,7 @@ public class DeepSeekClient {
         List<Message> messages = new ArrayList<>();
 
         // System message with context
-        String systemPrompt = buildSystemPrompt(userProfile, memories);
+        String systemPrompt = buildSystemPrompt(userProfile, memories, request.getMessage());
         messages.add(Message.builder()
                 .role("system")
                 .content(systemPrompt)
@@ -103,28 +105,9 @@ public class DeepSeekClient {
     /**
      * Build system prompt with user profile and memories
      */
-    private String buildSystemPrompt(UserProfileDTO userProfile, List<MemoryItemDTO> memories) {
-        StringBuilder prompt = new StringBuilder();
-        prompt.append("你是一个专业的健康顾问助手。请根据以下用户信息提供个性化的健康建议。\n\n");
-
-        // Add user profile
-        if (userProfile != null) {
-            prompt.append("## 用户画像信息\n");
-            prompt.append(userProfile.toString());
-            prompt.append("\n");
-        }
-
-        // Add memories
-        if (memories != null && !memories.isEmpty()) {
-            prompt.append("\n## 历史对话记忆\n");
-            for (int i = 0; i < Math.min(memories.size(), 5); i++) {
-                MemoryItemDTO memory = memories.get(i);
-                prompt.append(String.format("- %s (相似度: %.2f)\n", memory.getContent(), memory.getSimilarity()));
-            }
-        }
-
-        prompt.append("\n请基于以上信息，提供专业、个性化的健康建议。");
-        return prompt.toString();
+    private String buildSystemPrompt(UserProfileDTO userProfile, List<MemoryItemDTO> memories, String userMessage) {
+        // 使用上下文预算管理器构建系统提示词
+        return contextBudgetManager.buildBudgetedSystemPrompt(userProfile, memories, userMessage);
     }
 
     /**
