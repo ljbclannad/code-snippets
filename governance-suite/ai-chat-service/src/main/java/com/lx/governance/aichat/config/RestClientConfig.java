@@ -8,7 +8,7 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
 /**
- * RestClient configuration for Dify API integration
+ * RestClient configuration for AI API integration
  */
 @Configuration
 public class RestClientConfig {
@@ -20,7 +20,16 @@ public class RestClientConfig {
     private String difyApiKey;
 
     @Value("${dify.api.timeout:30000}")
-    private int timeout;
+    private int difyTimeout;
+
+    @Value("${deepseek.api.base-url:https://api.deepseek.com}")
+    private String deepSeekBaseUrl;
+
+    @Value("${deepseek.api.key}")
+    private String deepSeekApiKey;
+
+    @Value("${deepseek.api.timeout:60000}")
+    private int deepSeekTimeout;
 
     /**
      * Create RestClient bean for Dify API calls
@@ -31,14 +40,27 @@ public class RestClientConfig {
                 .baseUrl(difyBaseUrl)
                 .defaultHeader("Authorization", "Bearer " + difyApiKey)
                 .defaultHeader("Content-Type", "application/json")
-                .requestFactory(clientHttpRequestFactory())
+                .requestFactory(clientHttpRequestFactory(difyTimeout))
+                .build();
+    }
+
+    /**
+     * Create RestClient bean for DeepSeek API calls
+     */
+    @Bean
+    public RestClient deepSeekRestClient() {
+        return RestClient.builder()
+                .baseUrl(deepSeekBaseUrl)
+                .defaultHeader("Authorization", "Bearer " + deepSeekApiKey)
+                .defaultHeader("Content-Type", "application/json")
+                .requestFactory(clientHttpRequestFactory(deepSeekTimeout))
                 .build();
     }
 
     /**
      * Create HTTP request factory with timeout configuration
      */
-    private ClientHttpRequestFactory clientHttpRequestFactory() {
+    private ClientHttpRequestFactory clientHttpRequestFactory(int timeout) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(timeout);
         factory.setReadTimeout(timeout);

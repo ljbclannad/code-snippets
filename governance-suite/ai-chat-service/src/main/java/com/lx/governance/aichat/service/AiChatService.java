@@ -1,5 +1,6 @@
 package com.lx.governance.aichat.service;
 
+import com.lx.governance.aichat.client.DeepSeekClient;
 import com.lx.governance.aichat.client.DifyClient;
 import com.lx.governance.aichat.client.UserProfileClient;
 import com.lx.governance.aichat.client.VectorMemoryClient;
@@ -24,6 +25,7 @@ public class AiChatService {
     private final UserProfileClient userProfileClient;
     private final VectorMemoryClient vectorMemoryClient;
     private final DifyClient difyClient;
+    private final DeepSeekClient deepSeekClient;
 
     public ChatResponse handleChatRequest(ChatRequest request) {
         String correlationId = UUID.randomUUID().toString();
@@ -59,8 +61,11 @@ public class AiChatService {
 
             log.info("上下文获取完成 - customerId: {}, correlationId: {}", request.getCustomerId(), correlationId);
 
-            // 调用 Dify API
-            DifyResponse difyResponse = difyClient.chat(request, profile, memories);
+            // 调用 DeepSeek API (直接调用)
+            DifyResponse difyResponse = deepSeekClient.chat(request, profile, memories);
+
+            // 调用 Dify API (已注释，保留代码)
+            // DifyResponse difyResponse = difyClient.chat(request, profile, memories);
 
             // 异步触发记忆提取
             CompletableFuture.runAsync(() -> {

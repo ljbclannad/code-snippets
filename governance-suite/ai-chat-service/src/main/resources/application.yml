@@ -15,12 +15,20 @@ spring:
     username: guest
     password: guest
 
-# Dify API Configuration
+# Dify API Configuration (已注释，保留配置)
 dify:
   api:
     base-url: ${DIFY_API_BASE_URL:https://api.dify.ai/v1}
     key: ${DIFY_API_KEY:your-dify-api-key}
     timeout: 30000
+
+# DeepSeek API Configuration (当前使用)
+deepseek:
+  api:
+    base-url: ${DEEPSEEK_API_BASE_URL:https://api.deepseek.com}
+    key: ${DEEPSEEK_API_KEY:your-deepseek-api-key}
+    timeout: 60000
+  model: ${DEEPSEEK_MODEL:deepseek-chat}
 
 # Service Timeout Configuration
 service:
