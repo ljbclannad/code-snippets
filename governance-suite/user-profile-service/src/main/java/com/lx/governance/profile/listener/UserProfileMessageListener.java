@@ -51,14 +51,22 @@ public class UserProfileMessageListener {
 
         // Use replyTo if provided, otherwise fall back to dynamic routing key
         if (replyTo != null && !replyTo.isEmpty()) {
-            rabbitTemplate.convertAndSend("", replyTo, response);
+            // 必须设置 correlationId header，否则 RPC 客户端无法匹配响应
+            rabbitTemplate.convertAndSend("", replyTo, response, msg -> {
+                msg.getMessageProperties().setCorrelationId(correlationId);
+                return msg;
+            });
             log.info("[{}] 用户画像响应已发送到 replyTo 队列: {}, success={}", correlationId, replyTo, response.getSuccess());
         } else {
             String responseRoutingKey = "user.profile.response." + correlationId;
             rabbitTemplate.convertAndSend(
                 "user.profile.exchange",
                 responseRoutingKey,
-                response
+                response,
+                msg -> {
+                    msg.getMessageProperties().setCorrelationId(correlationId);
+                    return msg;
+                }
             );
             log.info("[{}] 用户画像响应已发送到路由键: {}, success={}", correlationId, responseRoutingKey, response.getSuccess());
         }

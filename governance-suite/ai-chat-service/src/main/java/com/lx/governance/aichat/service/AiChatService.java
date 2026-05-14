@@ -20,8 +20,8 @@ import java.util.concurrent.CompletableFuture;
 public class AiChatService {
 
     // 使用简化版本的客户端
-    private final UserProfileClientSimple userProfileClient;
-    private final VectorMemoryClientSimple vectorMemoryClient;
+    private final UserProfileClientFixed userProfileClient;
+    private final VectorMemoryClientFixed vectorMemoryClient;
     private final DifyClient difyClient;
     private final DeepSeekClient deepSeekClient;
 
@@ -38,17 +38,16 @@ public class AiChatService {
 
         try {
             // 并行获取用户画像和向量记忆
-            CompletableFuture<UserProfileDTO> profileFuture = CompletableFuture.supplyAsync(() ->
-                userProfileClient.requestUserProfile(request.getCustomerId())
-            );
+            CompletableFuture<UserProfileDTO> profileFuture =
+                userProfileClient.requestUserProfile(request.getCustomerId());
 
-            CompletableFuture<List<MemoryItemDTO>> memoriesFuture = CompletableFuture.supplyAsync(() ->
-                vectorMemoryClient.requestGroupMemories(
+            CompletableFuture<List<MemoryItemDTO>> memoriesFuture =
+                vectorMemoryClient.requestMemories(
                     request.getGroupId(),
                     request.getCustomerId(),
-                    request.getMessage()
-                )
-            );
+                    request.getMessage(),
+                    5
+                );
 
             // 等待两个结果
             CompletableFuture.allOf(profileFuture, memoriesFuture).join();
@@ -65,19 +64,19 @@ public class AiChatService {
             // 调用 Dify API (已注释，保留代码)
             // DifyResponse difyResponse = difyClient.chat(request, profile, memories);
 
-            // 异步触发记忆提取
-            CompletableFuture.runAsync(() -> {
-                try {
-                    vectorMemoryClient.triggerMemoryExtraction(
-                        request.getGroupId(),
-                        request.getCustomerId(),
-                        request.getMessage(),
-                        difyResponse.getAnswer()
-                    );
-                } catch (Exception e) {
-                    log.error("记忆提取触发失败 - customerId: {}, correlationId: {}", request.getCustomerId(), correlationId, e);
-                }
-            });
+            // 异步触发记忆提取 (暂时注释，VectorMemoryClientFixed 未实现此方法)
+            // CompletableFuture.runAsync(() -> {
+            //     try {
+            //         vectorMemoryClient.triggerMemoryExtraction(
+            //             request.getGroupId(),
+            //             request.getCustomerId(),
+            //             request.getMessage(),
+            //             difyResponse.getAnswer()
+            //         );
+            //     } catch (Exception e) {
+            //         log.error("记忆提取触发失败 - customerId: {}, correlationId: {}", request.getCustomerId(), correlationId, e);
+            //     }
+            // });
 
             long duration = System.currentTimeMillis() - startTime;
             log.info("聊天请求处理完成 - customerId: {}, correlationId: {}, 耗时: {}ms",

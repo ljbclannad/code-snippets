@@ -1,0 +1,95 @@
+package com.lx.governance.aichat.client;
+
+import com.lx.governance.aichat.dto.MemoryItemDTO;
+import com.lx.governance.aichat.dto.MemoryRequestMessage;
+import com.lx.governance.aichat.dto.MemoryResponseMessage;
+import com.lx.governance.common.trace.Trace;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.core.Message;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * 向量记忆客户端 - 使用固定响应队列
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class VectorMemoryClientFixed {
+
+    private final RabbitTemplate rabbitTemplate;
+
+    private static final String REQUEST_QUEUE = "vector.memory.request";
+    private static final String REPLY_QUEUE = "ai.chat.vector.memory.reply";
+    private static final long TIMEOUT_MS = 5000;
+
+    private final Map<String, CompletableFuture<MemoryResponseMessage>> pendingRequests = new ConcurrentHashMap<>();
+
+    public CompletableFuture<List<MemoryItemDTO>> requestMemories(String groupId, String customerId, String query, Integer topK) {
+        String correlationId = Trace.getOrCreate();
+        long startTime = System.currentTimeMillis();
+
+        log.info("Sending memory request: groupId={}, customerId={}, query={}, topK={}, correlationId={}",
+                groupId, customerId, query, topK, correlationId);
+
+        MemoryRequestMessage request = new MemoryRequestMessage();
+        request.setGroupId(groupId);
+        request.setCustomerId(customerId);
+        request.setQuery(query);
+        request.setTopK(topK != null ? topK : 5);
+        request.setCorrelationId(correlationId);
+        request.setTimestamp(System.currentTimeMillis());
+
+        CompletableFuture<MemoryResponseMessage> future = new CompletableFuture<>();
+        pendingRequests.put(correlationId, future);
+
+        rabbitTemplate.convertAndSend(REQUEST_QUEUE, request, message -> {
+            message.getMessageProperties().setReplyTo(REPLY_QUEUE);
+            message.getMessageProperties().setCorrelationId(correlationId);
+            return message;
+        });
+
+        return future.orTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                .handle((response, ex) -> {
+                    pendingRequests.remove(correlationId);
+                    long duration = System.currentTimeMillis() - startTime;
+
+                    if (ex != null) {
+                        log.error("Memory request timeout: groupId={}, timeout={}ms, duration={}ms",
+                                groupId, TIMEOUT_MS, duration);
+                        throw new RuntimeException("Memory request timeout after " + TIMEOUT_MS + "ms");
+                    }
+
+                    if (!response.getSuccess()) {
+                        log.error("Memory request failed: groupId={}, error={}, duration={}ms",
+                                groupId, response.getErrorMessage(), duration);
+                        throw new RuntimeException("Failed to request memories: " + response.getErrorMessage());
+                    }
+
+                    log.info("Memory request succeeded: groupId={}, count={}, duration={}ms",
+                            groupId, response.getData().size(), duration);
+                    return response.getData();
+                });
+    }
+
+    @RabbitListener(queues = REPLY_QUEUE)
+    public void handleResponse(MemoryResponseMessage response, Message message) {
+        String correlationId = message.getMessageProperties().getCorrelationId();
+        log.info("Received memory response: correlationId={}, success={}", correlationId, response.getSuccess());
+
+        CompletableFuture<MemoryResponseMessage> future = pendingRequests.remove(correlationId);
+        if (future != null) {
+            future.complete(response);
+        } else {
+            log.warn("No pending request found for correlationId: {}", correlationId);
+        }
+    }
+}

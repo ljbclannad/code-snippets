@@ -96,15 +96,23 @@ public class VectorMemoryMessageListener {
 
         // 发送响应：优先使用 replyTo，否则使用动态路由键
         try {
+            String correlationId = request.getCorrelationId();
             if (replyTo != null && !replyTo.isEmpty()) {
-                rabbitTemplate.convertAndSend("", replyTo, response);
+                // 必须设置 correlationId header，否则 RPC 客户端无法匹配响应
+                rabbitTemplate.convertAndSend("", replyTo, response, msg -> {
+                    msg.getMessageProperties().setCorrelationId(correlationId);
+                    return msg;
+                });
                 log.info("记忆检索响应已发送到 replyTo 队列 - correlationId: {}, replyTo: {}, success: {}",
-                        request.getCorrelationId(), replyTo, response.getSuccess());
+                        correlationId, replyTo, response.getSuccess());
             } else {
-                String routingKey = "vector.memory.response." + request.getCorrelationId();
-                rabbitTemplate.convertAndSend("vector.memory.exchange", routingKey, response);
+                String routingKey = "vector.memory.response." + correlationId;
+                rabbitTemplate.convertAndSend("vector.memory.exchange", routingKey, response, msg -> {
+                    msg.getMessageProperties().setCorrelationId(correlationId);
+                    return msg;
+                });
                 log.info("记忆检索响应已发送到路由键 - correlationId: {}, routingKey: {}, success: {}",
-                        request.getCorrelationId(), routingKey, response.getSuccess());
+                        correlationId, routingKey, response.getSuccess());
             }
         } catch (Exception e) {
             log.error("发送记忆检索响应失败 - correlationId: {}, 错误: {}",

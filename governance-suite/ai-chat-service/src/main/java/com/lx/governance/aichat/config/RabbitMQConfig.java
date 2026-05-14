@@ -84,20 +84,18 @@ public class RabbitMQConfig {
     }
 
     /**
-     * Create temporary response queue for user profile requests
+     * 固定的用户画像响应队列
      */
     @Bean
-    public Queue userProfileResponseQueue() {
-        String queueName = "user.profile.response." + UUID.randomUUID().toString();
-        return new Queue(queueName, true, false, true);
+    public Queue userProfileReplyQueue() {
+        return new Queue("ai.chat.user.profile.reply", true);
     }
 
     /**
-     * Create temporary response queue for vector memory requests
+     * 固定的向量记忆响应队列
      */
     @Bean
-    public Queue vectorMemoryResponseQueue() {
-        String queueName = "vector.memory.response." + UUID.randomUUID().toString();
-        return new Queue(queueName, true, false, true);
+    public Queue vectorMemoryReplyQueue() {
+        return new Queue("ai.chat.vector.memory.reply", true);
     }
 }
