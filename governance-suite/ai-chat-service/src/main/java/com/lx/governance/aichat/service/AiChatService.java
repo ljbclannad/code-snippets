@@ -1,9 +1,6 @@
 package com.lx.governance.aichat.service;
 
-import com.lx.governance.aichat.client.DeepSeekClient;
-import com.lx.governance.aichat.client.DifyClient;
-import com.lx.governance.aichat.client.UserProfileClient;
-import com.lx.governance.aichat.client.VectorMemoryClient;
+import com.lx.governance.aichat.client.*;
 import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.ChatResponse;
 import com.lx.governance.aichat.dto.DifyResponse;
@@ -22,8 +19,9 @@ import java.util.concurrent.CompletableFuture;
 @RequiredArgsConstructor
 public class AiChatService {
 
-    private final UserProfileClient userProfileClient;
-    private final VectorMemoryClient vectorMemoryClient;
+    // 使用简化版本的客户端
+    private final UserProfileClientSimple userProfileClient;
+    private final VectorMemoryClientSimple vectorMemoryClient;
     private final DifyClient difyClient;
     private final DeepSeekClient deepSeekClient;
 

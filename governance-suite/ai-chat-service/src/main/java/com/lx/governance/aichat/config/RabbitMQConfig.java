@@ -56,6 +56,21 @@ public class RabbitMQConfig {
     }
 
     /**
+     * RabbitTemplate with reply support for RPC
+     */
+    @Bean
+    public org.springframework.amqp.rabbit.core.RabbitTemplate rabbitTemplate(
+            ConnectionFactory connectionFactory,
+            MessageConverter jsonMessageConverter) {
+        org.springframework.amqp.rabbit.core.RabbitTemplate template =
+            new org.springframework.amqp.rabbit.core.RabbitTemplate(connectionFactory);
+        template.setMessageConverter(jsonMessageConverter);
+        template.setReplyTimeout(10000);
+        template.setMandatory(true);
+        return template;
+    }
+
+    /**
      * Configure RabbitListener container factory with JSON message converter
      */
     @Bean
