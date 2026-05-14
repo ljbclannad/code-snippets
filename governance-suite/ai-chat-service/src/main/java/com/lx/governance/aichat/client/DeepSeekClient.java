@@ -109,30 +109,9 @@ public class DeepSeekClient {
 
         // Add user profile
         if (userProfile != null) {
-            prompt.append("## 用户基本信息\n");
-            if (userProfile.getBasicInfo() != null) {
-                prompt.append(String.format("- 姓名: %s\n", userProfile.getBasicInfo().getName()));
-                prompt.append(String.format("- 年龄: %d岁\n", userProfile.getBasicInfo().getAge()));
-                prompt.append(String.format("- 性别: %s\n", userProfile.getBasicInfo().getGender()));
-            }
-
-            if (userProfile.getHealthProfile() != null) {
-                prompt.append("\n## 健康档案\n");
-                prompt.append(String.format("- BMI: %.1f\n", userProfile.getHealthProfile().getBmi()));
-                prompt.append(String.format("- 血压: %s mmHg\n", userProfile.getHealthProfile().getBloodPressure()));
-                prompt.append(String.format("- 血糖: %.1f mmol/L\n", userProfile.getHealthProfile().getBloodSugar()));
-                if (userProfile.getHealthProfile().getHealthGoals() != null) {
-                    prompt.append(String.format("- 健康目标: %s\n", userProfile.getHealthProfile().getHealthGoals()));
-                }
-            }
-
-            if (userProfile.getGlobalMemories() != null && !userProfile.getGlobalMemories().isEmpty()) {
-                prompt.append("\n## 重要健康记录\n");
-                for (UserProfileDTO.GlobalMemory memory : userProfile.getGlobalMemories()) {
-                    prompt.append(String.format("- [%s] %s: %s\n",
-                            memory.getType(), memory.getKey(), memory.getContent()));
-                }
-            }
+            prompt.append("## 用户画像信息\n");
+            prompt.append(userProfile.toString());
+            prompt.append("\n");
         }
 
         // Add memories

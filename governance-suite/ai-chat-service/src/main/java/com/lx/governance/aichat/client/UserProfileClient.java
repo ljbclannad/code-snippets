@@ -59,19 +59,18 @@ public class UserProfileClient {
             requestPayload.put("correlationId", correlationId);
             requestPayload.put("customerId", customerId);
 
-            // Build message properties
-            MessageProperties properties = new MessageProperties();
-            properties.setCorrelationId(correlationId);
-            properties.setReplyTo(userProfileResponseQueue.getName());
+            String replyToQueue = userProfileResponseQueue.getName();
 
             log.info("Sending user profile request: customerId={}, correlationId={}, replyTo={}",
-                    customerId, correlationId, userProfileResponseQueue.getName());
+                    customerId, correlationId, replyToQueue);
 
             // Send request using convertAndSend (will use JSON converter)
             rabbitTemplate.convertAndSend(USER_PROFILE_EXCHANGE, USER_PROFILE_REQUEST_ROUTING_KEY,
                     requestPayload, message -> {
-                        message.getMessageProperties().setCorrelationId(correlationId);
-                        message.getMessageProperties().setReplyTo(userProfileResponseQueue.getName());
+                        MessageProperties props = message.getMessageProperties();
+                        props.setCorrelationId(correlationId);
+                        props.setReplyTo(replyToQueue);
+                        props.setContentType("application/json");
                         return message;
                     });
 

@@ -66,14 +66,18 @@ public class VectorMemoryClient {
             requestPayload.put("topK", 5);
             requestPayload.put("timestamp", System.currentTimeMillis());
 
+            String replyToQueue = vectorMemoryResponseQueue.getName();
+
             log.info("Sending vector memory request: groupId={}, customerId={}, query={}, correlationId={}, replyTo={}",
-                    groupId, customerId, query, correlationId, vectorMemoryResponseQueue.getName());
+                    groupId, customerId, query, correlationId, replyToQueue);
 
             // Send request using convertAndSend (will use JSON converter)
             rabbitTemplate.convertAndSend(VECTOR_MEMORY_EXCHANGE, VECTOR_MEMORY_REQUEST_ROUTING_KEY,
                     requestPayload, message -> {
-                        message.getMessageProperties().setCorrelationId(correlationId);
-                        message.getMessageProperties().setReplyTo(vectorMemoryResponseQueue.getName());
+                        MessageProperties props = message.getMessageProperties();
+                        props.setCorrelationId(correlationId);
+                        props.setReplyTo(replyToQueue);
+                        props.setContentType("application/json");
                         return message;
                     });
 
