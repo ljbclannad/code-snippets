@@ -1,11 +1,14 @@
 package com.lx.governance.aichat.client;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.lx.governance.aichat.config.ContextBudgetProperties;
 import com.lx.governance.aichat.context.ContextBudgetManager;
 import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.DifyResponse;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.UserProfileDTO;
+import com.lx.governance.aichat.monitor.TokenMonitor;
+import com.lx.governance.aichat.monitor.TokenUsageMetrics;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -30,6 +33,8 @@ public class DeepSeekClient {
 
     private final RestClient deepSeekRestClient;
     private final ContextBudgetManager contextBudgetManager;
+    private final TokenMonitor tokenMonitor;
+    private final ContextBudgetProperties properties;
 
     @Value("${deepseek.model:deepseek-chat}")
     private String model;
@@ -63,6 +68,9 @@ public class DeepSeekClient {
                     response.getUsage().getPromptTokens(),
                     response.getUsage().getCompletionTokens(),
                     response.getUsage().getTotalTokens());
+
+            // 记录 Token 使用情况
+            recordTokenUsage(response, duration);
 
             // Convert to DifyResponse format
             return convertToDifyResponse(response, request.getConversationId());
@@ -108,6 +116,49 @@ public class DeepSeekClient {
     private String buildSystemPrompt(UserProfileDTO userProfile, List<MemoryItemDTO> memories, String userMessage) {
         // 使用上下文预算管理器构建系统提示词
         return contextBudgetManager.buildBudgetedSystemPrompt(userProfile, memories, userMessage);
+    }
+
+    /**
+     * 记录 Token 使用情况
+     */
+    private void recordTokenUsage(DeepSeekResponse response, long duration) {
+        if (response.getUsage() == null) {
+            return;
+        }
+
+        TokenUsageMetrics metrics = TokenUsageMetrics.builder()
+                .timestamp(java.time.LocalDateTime.now())
+                // 从 ContextBudgetManager 获取各部分的 token 使用情况
+                .coreProfileTokens(contextBudgetManager.getLastCoreProfileTokens())
+                .memoriesTokens(contextBudgetManager.getLastMemoriesTokens())
+                .conversationTokens(contextBudgetManager.getLastConversationTokens())
+                .extendedProfileTokens(contextBudgetManager.getLastExtendedProfileTokens())
+                .systemPromptTokens(contextBudgetManager.getLastTotalTokens())
+                // API 返回的 token 使用情况
+                .promptTokens(response.getUsage().getPromptTokens())
+                .completionTokens(response.getUsage().getCompletionTokens())
+                .totalTokens(response.getUsage().getTotalTokens())
+                // 性能指标
+                .contextBuildTime(duration)
+                .apiResponseTime(duration)
+                .build();
+
+        // 检查是否超预算
+        int totalBudget = properties.getTotalBudget();
+        metrics.setOverBudget(response.getUsage().getPromptTokens() > totalBudget);
+
+        // 检查是否需要告警
+        if (properties.getAlert().isEnabled()) {
+            int promptThreshold = properties.getAlert().getPromptTokensThreshold();
+            int totalThreshold = properties.getAlert().getTotalTokensThreshold();
+            metrics.setShouldAlert(
+                    response.getUsage().getPromptTokens() > promptThreshold ||
+                    response.getUsage().getTotalTokens() > totalThreshold
+            );
+        }
+
+        // 记录到监控系统
+        tokenMonitor.recordTokenUsage(metrics);
     }
 
     /**
