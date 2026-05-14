@@ -53,3 +53,35 @@ logging:
     com.lx.governance.aichat: INFO
     org.springframework.web: INFO
     org.springframework.amqp: INFO
+
+# AI 上下文管理配置
+ai:
+  context:
+    # Token 预算配置
+    total-budget: 4000              # 总预算
+    user-message-reserve: 500       # 为用户消息预留
+
+    # 各部分预算分配（按优先级）
+    core-profile-budget: 800        # 核心画像（必须）
+    relevant-memories-budget: 1200  # 相关记忆（重要）
+    conversation-history-budget: 600 # 对话历史（重要）
+    extended-profile-budget: 400    # 扩展画像（可选）
+
+    # 记忆检索配置
+    memory:
+      max-count: 10                 # 最多检索数量
+      similarity-threshold: 0.7     # 相似度阈值
+      short-term-days: 3            # 短期记忆天数
+      mid-term-days: 30             # 中期记忆天数
+      enable-deduplication: true    # 启用去重
+
+    # 对话历史配置
+    conversation:
+      max-rounds: 5                 # 最多保留轮数
+      enabled: true                 # 是否启用对话历史
+
+    # 告警配置
+    alert:
+      enabled: true                 # 是否启用告警
+      prompt-tokens-threshold: 6000  # Prompt tokens 告警阈值
+      total-tokens-threshold: 28000  # Total tokens 告警阈值
