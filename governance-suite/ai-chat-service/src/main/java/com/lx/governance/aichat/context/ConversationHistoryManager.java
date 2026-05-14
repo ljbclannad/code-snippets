@@ -99,7 +99,8 @@ public class ConversationHistoryManager {
         // 从最新的消息开始添加（保证最近的对话不被截断）
         for (int i = history.size() - 1; i >= 0; i--) {
             ConversationMessage message = history.get(i);
-            String line = message.getRole().getValue() + ": " + message.getContent() + "\n";
+            String roleName = getRoleDisplayName(message.getRole());
+            String line = roleName + ": " + message.getContent() + "\n";
             int tokens = estimateTokens(line);
 
             if (usedTokens + tokens <= budget) {
@@ -206,12 +207,20 @@ public class ConversationHistoryManager {
 
         StringBuilder sb = new StringBuilder();
         for (ConversationMessage message : messages) {
-            sb.append(message.getRole().getValue())
+            String roleName = getRoleDisplayName(message.getRole());
+            sb.append(roleName)
               .append(": ")
               .append(message.getContent())
               .append("\n");
         }
         return sb.toString();
+    }
+
+    /**
+     * 获取角色的中文显示名称
+     */
+    private String getRoleDisplayName(ConversationMessage.Role role) {
+        return role == ConversationMessage.Role.USER ? "用户" : "助手";
     }
 
     /**

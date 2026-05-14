@@ -3,11 +3,13 @@ package com.lx.governance.aichat.config;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.test.context.TestPropertySource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest
+@Import(TestConfig.class)
 @TestPropertySource(properties = {
     "ai.context.total-budget=4000",
     "ai.context.user-message-reserve=500",
