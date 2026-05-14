@@ -52,9 +52,8 @@ public class DeepSeekService {
             String extractionPrompt = buildExtractionPrompt(userMessage, aiResponse);
 
             // 配置 OpenAI 兼容选项（用于 DeepSeek）
+            // 注意：DeepSeek 不支持 response_format，改用 Prompt 引导返回 JSON
             OpenAiChatOptions options = OpenAiChatOptions.builder()
-                    .withResponseFormat(new OpenAiApi.ChatCompletionRequest.ResponseFormat(
-                            OpenAiApi.ChatCompletionRequest.ResponseFormat.Type.JSON_OBJECT))
                     .withTemperature(0.7)
                     .withMaxTokens(2000)
                     .build();
@@ -65,8 +64,11 @@ public class DeepSeekService {
 
             log.debug("DeepSeek 原始响应: {}", responseContent);
 
+            // 提取 JSON 部分（可能包含 markdown 代码块）
+            String jsonContent = extractJsonFromResponse(responseContent);
+
             // 解析 JSON 响应
-            MemoryExtractionResult result = objectMapper.readValue(responseContent, MemoryExtractionResult.class);
+            MemoryExtractionResult result = objectMapper.readValue(jsonContent, MemoryExtractionResult.class);
 
             long duration = System.currentTimeMillis() - startTime;
             int memoryCount = result.getMemories() != null ? result.getMemories().size() : 0;
@@ -79,6 +81,28 @@ public class DeepSeekService {
             log.error("记忆提取失败 - 耗时: {}ms, 错误: {}", duration, e.getMessage(), e);
             throw new RuntimeException("记忆提取失败: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * 从响应中提取 JSON 内容
+     */
+    private String extractJsonFromResponse(String response) {
+        // 如果响应包含 markdown 代码块，提取其中的 JSON
+        if (response.contains("```json")) {
+            int start = response.indexOf("```json") + 7;
+            int end = response.indexOf("```", start);
+            if (end > start) {
+                return response.substring(start, end).trim();
+            }
+        } else if (response.contains("```")) {
+            int start = response.indexOf("```") + 3;
+            int end = response.indexOf("```", start);
+            if (end > start) {
+                return response.substring(start, end).trim();
+            }
+        }
+        // 否则直接返回原响应
+        return response.trim();
     }
 
     /**

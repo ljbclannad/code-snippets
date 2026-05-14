@@ -50,7 +50,7 @@ spring:
           port: 19530
         database-name: default
         collection-name: user_memory_vectors
-        embedding-dimension: 1024
+        embedding-dimension: 1536
         index-type: IVF_FLAT
         metric-type: COSINE
         nlist: 1024
@@ -98,6 +98,7 @@ logging:
   level:
     com.lx.governance.vectormemory: INFO
     org.springframework.ai: DEBUG
+    org.springframework.web.client: DEBUG
     io.milvus: INFO
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{50} - %msg%n"

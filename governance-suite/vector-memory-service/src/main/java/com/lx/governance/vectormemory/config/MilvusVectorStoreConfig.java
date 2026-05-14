@@ -5,7 +5,9 @@ import io.milvus.param.ConnectParam;
 import io.milvus.param.IndexType;
 import io.milvus.param.MetricType;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.embedding.BatchingStrategy;
 import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.ai.embedding.TokenCountBatchingStrategy;
 import org.springframework.ai.vectorstore.MilvusVectorStore;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -47,13 +49,33 @@ public class MilvusVectorStoreConfig {
         log.info("Initializing MilvusServiceClient: host={}, port={}, database={}",
                 milvusHost, milvusPort, databaseName);
 
-        return new MilvusServiceClient(
+        MilvusServiceClient client = new MilvusServiceClient(
                 ConnectParam.newBuilder()
                         .withHost(milvusHost)
                         .withPort(milvusPort)
                         .withDatabaseName(databaseName)
                         .build()
         );
+
+        // 删除旧集合（如果存在）以确保使用新的维度配置
+        try {
+            if (client.hasCollection(io.milvus.param.collection.HasCollectionParam.newBuilder()
+                    .withCollectionName("ai_group_memories").build()).getData()) {
+                log.warn("删除旧集合: ai_group_memories");
+                client.dropCollection(io.milvus.param.collection.DropCollectionParam.newBuilder()
+                        .withCollectionName("ai_group_memories").build());
+            }
+            if (client.hasCollection(io.milvus.param.collection.HasCollectionParam.newBuilder()
+                    .withCollectionName("ai_user_memories").build()).getData()) {
+                log.warn("删除旧集合: ai_user_memories");
+                client.dropCollection(io.milvus.param.collection.DropCollectionParam.newBuilder()
+                        .withCollectionName("ai_user_memories").build());
+            }
+        } catch (Exception e) {
+            log.error("删除旧集合失败", e);
+        }
+
+        return client;
     }
 
     /**
@@ -76,7 +98,8 @@ public class MilvusVectorStoreConfig {
                 .withEmbeddingDimension(embeddingDimension)
                 .build();
 
-        return new MilvusVectorStore(milvusServiceClient, embeddingModel, config, true, null);
+        BatchingStrategy batchingStrategy = new TokenCountBatchingStrategy();
+        return new MilvusVectorStore(milvusServiceClient, embeddingModel, config, true, batchingStrategy);
     }
 
     /**
@@ -99,6 +122,7 @@ public class MilvusVectorStoreConfig {
                 .withEmbeddingDimension(embeddingDimension)
                 .build();
 
-        return new MilvusVectorStore(milvusServiceClient, embeddingModel, config, true, null);
+        BatchingStrategy batchingStrategy = new TokenCountBatchingStrategy();
+        return new MilvusVectorStore(milvusServiceClient, embeddingModel, config, true, batchingStrategy);
     }
 }

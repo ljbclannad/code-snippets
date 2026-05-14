@@ -64,19 +64,19 @@ public class AiChatService {
             // 调用 Dify API (已注释，保留代码)
             // DifyResponse difyResponse = difyClient.chat(request, profile, memories);
 
-            // 异步触发记忆提取 (暂时注释，VectorMemoryClientFixed 未实现此方法)
-            // CompletableFuture.runAsync(() -> {
-            //     try {
-            //         vectorMemoryClient.triggerMemoryExtraction(
-            //             request.getGroupId(),
-            //             request.getCustomerId(),
-            //             request.getMessage(),
-            //             difyResponse.getAnswer()
-            //         );
-            //     } catch (Exception e) {
-            //         log.error("记忆提取触发失败 - customerId: {}, correlationId: {}", request.getCustomerId(), correlationId, e);
-            //     }
-            // });
+            // 异步触发记忆提取
+            CompletableFuture.runAsync(() -> {
+                try {
+                    vectorMemoryClient.triggerMemoryExtraction(
+                        request.getGroupId(),
+                        request.getCustomerId(),
+                        request.getMessage(),
+                        difyResponse.getAnswer()
+                    );
+                } catch (Exception e) {
+                    log.error("记忆提取触发失败 - customerId: {}, correlationId: {}", request.getCustomerId(), correlationId, e);
+                }
+            });
 
             long duration = System.currentTimeMillis() - startTime;
             log.info("聊天请求处理完成 - customerId: {}, correlationId: {}, 耗时: {}ms",

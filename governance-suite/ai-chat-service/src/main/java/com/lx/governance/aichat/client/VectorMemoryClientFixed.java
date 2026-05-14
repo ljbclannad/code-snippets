@@ -1,5 +1,6 @@
 package com.lx.governance.aichat.client;
 
+import com.lx.governance.aichat.dto.ExtractionRequestMessage;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.MemoryRequestMessage;
 import com.lx.governance.aichat.dto.MemoryResponseMessage;
@@ -29,6 +30,7 @@ public class VectorMemoryClientFixed {
 
     private static final String REQUEST_QUEUE = "vector.memory.request";
     private static final String REPLY_QUEUE = "ai.chat.vector.memory.reply";
+    private static final String EXTRACTION_QUEUE = "memory.extraction.queue";
     private static final long TIMEOUT_MS = 5000;
 
     private final Map<String, CompletableFuture<MemoryResponseMessage>> pendingRequests = new ConcurrentHashMap<>();
@@ -91,5 +93,29 @@ public class VectorMemoryClientFixed {
         } else {
             log.warn("No pending request found for correlationId: {}", correlationId);
         }
+    }
+
+    /**
+     * 触发记忆提取（异步，不等待响应）
+     */
+    public void triggerMemoryExtraction(String groupId, String customerId, String userMessage, String aiResponse) {
+        String correlationId = Trace.getOrCreate();
+
+        log.info("Triggering memory extraction: groupId={}, customerId={}, correlationId={}",
+                groupId, customerId, correlationId);
+
+        ExtractionRequestMessage request = new ExtractionRequestMessage();
+        request.setGroupId(groupId);
+        request.setCustomerId(customerId);
+        request.setUserMessage(userMessage);
+        request.setAiResponse(aiResponse);
+        request.setCorrelationId(correlationId);
+        request.setTimestamp(System.currentTimeMillis());
+
+        // 异步发送，不等待响应
+        rabbitTemplate.convertAndSend(EXTRACTION_QUEUE, request);
+
+        log.info("Memory extraction request sent: groupId={}, customerId={}, correlationId={}",
+                groupId, customerId, correlationId);
     }
 }

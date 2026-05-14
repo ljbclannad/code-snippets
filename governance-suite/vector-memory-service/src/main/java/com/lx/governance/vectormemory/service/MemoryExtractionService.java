@@ -26,7 +26,7 @@ import java.util.List;
 @RequiredArgsConstructor
 public class MemoryExtractionService {
 
-    private final DeepSeekService deepSeekService;
+    private final DeepSeekDirectService deepSeekDirectService;
     private final VectorStoreService vectorStoreService;
     private final MemoryRetrievalService memoryRetrievalService;
     private final AiGroupMemoryMapper memoryMapper;
@@ -47,7 +47,7 @@ public class MemoryExtractionService {
 
         try {
             // Step 1: 调用 DeepSeek 提取记忆
-            MemoryExtractionResult result = deepSeekService.extractMemories(userMessage, aiResponse);
+            MemoryExtractionResult result = deepSeekDirectService.extractMemories(userMessage, aiResponse);
 
             if (result == null || result.getMemories() == null || result.getMemories().isEmpty()) {
                 log.info("未提取到任何记忆 - groupId: {}, customerId: {}", groupId, customerId);
