@@ -2,3 +2,15 @@
 .env
 logs/
 *.pid
+
+# Backup files
+*.backup
+*.bak
+
+# Superpowers plans (local only)
+docs/superpowers/plans/
+
+# Local scripts
+start-all-services.sh
+stop-all-services.sh
+test-create-order.sh
