@@ -90,7 +90,7 @@ public class DeepSeekClient {
         List<Message> messages = new ArrayList<>();
 
         // System message with context
-        String systemPrompt = buildSystemPrompt(userProfile, memories, request.getMessage());
+        String systemPrompt = buildSystemPrompt(request, userProfile, memories);
         messages.add(Message.builder()
                 .role("system")
                 .content(systemPrompt)
@@ -113,9 +113,14 @@ public class DeepSeekClient {
     /**
      * Build system prompt with user profile and memories
      */
-    private String buildSystemPrompt(UserProfileDTO userProfile, List<MemoryItemDTO> memories, String userMessage) {
-        // 使用上下文预算管理器构建系统提示词
-        return contextBudgetManager.buildBudgetedSystemPrompt(userProfile, memories, userMessage);
+    private String buildSystemPrompt(ChatRequest request, UserProfileDTO userProfile, List<MemoryItemDTO> memories) {
+        // 使用上下文预算管理器构建系统提示词（包含对话历史）
+        return contextBudgetManager.buildBudgetedSystemPrompt(
+                userProfile,
+                memories,
+                request.getCustomerId(),
+                request.getConversationId(),
+                request.getMessage());
     }
 
     /**

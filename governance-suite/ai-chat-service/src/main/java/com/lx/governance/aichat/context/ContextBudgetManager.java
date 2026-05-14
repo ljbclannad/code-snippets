@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import com.lx.governance.aichat.config.ContextBudgetProperties;
+import com.lx.governance.aichat.dto.ConversationMessage;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.UserProfileDTO;
 
@@ -26,6 +27,9 @@ public class ContextBudgetManager {
     @Autowired
     private ContextBudgetProperties properties;
 
+    @Autowired
+    private ConversationHistoryManager conversationHistoryManager;
+
     // Token 使用跟踪
     private int lastCoreProfileTokens = 0;
     private int lastMemoriesTokens = 0;
@@ -34,11 +38,13 @@ public class ContextBudgetManager {
     private int lastTotalTokens = 0;
 
     /**
-     * 构建受预算约束的系统提示词
+     * 构建受预算约束的系统提示词（增强版，包含对话历史）
      */
     public String buildBudgetedSystemPrompt(
-            UserProfileDTO userProfile,
+            UserProfileDTO profile,
             List<MemoryItemDTO> memories,
+            String customerId,
+            String conversationId,
             String userQuestion) {
 
         long startTime = System.currentTimeMillis();
@@ -54,7 +60,7 @@ public class ContextBudgetManager {
         int usedTokens = 0;
 
         // 1. 核心画像（优先级最高，必须包含）
-        String coreProfile = extractCoreProfile(userProfile);
+        String coreProfile = extractCoreProfile(profile);
         int coreTokens = estimateTokens(coreProfile);
         int coreProfileBudget = properties.getCoreProfileBudget();
 
@@ -88,11 +94,23 @@ public class ContextBudgetManager {
             log.debug("相关记忆 tokens: {}/{}", memoryTokens, relevantMemoriesBudget);
         }
 
-        // 3. 扩展画像（优先级低，根据问题类型动态选择）
+        // 3. 对话历史（优先级中，最近的对话上下文）
+        String conversationHistory = buildConversationHistory(
+                customerId, conversationId, Math.min(properties.getConversationHistoryBudget(), remainingBudget));
+        if (!conversationHistory.isEmpty()) {
+            int conversationTokens = estimateTokens(conversationHistory);
+            prompt.append("## 对话历史\n").append(conversationHistory).append("\n");
+            usedTokens += conversationTokens;
+            remainingBudget -= conversationTokens;
+            lastConversationTokens = conversationTokens;
+            log.debug("对话历史 tokens: {}/{}", conversationTokens, properties.getConversationHistoryBudget());
+        }
+
+        // 4. 扩展画像（优先级低，根据问题类型动态选择）
         int extendedProfileBudget = properties.getExtendedProfileBudget();
         if (remainingBudget > 0) {
             String extendedProfile = extractExtendedProfile(
-                    userProfile,
+                    profile,
                     userQuestion,
                     Math.min(extendedProfileBudget, remainingBudget));
             if (!extendedProfile.isEmpty()) {
@@ -114,6 +132,35 @@ public class ContextBudgetManager {
                 usedTokens, contextBudget, remainingBudget, duration);
 
         return prompt.toString();
+    }
+
+    /**
+     * 构建对话历史文本
+     */
+    private String buildConversationHistory(String customerId, String conversationId, int budget) {
+        try {
+            // 获取最近的对话历史
+            int maxRounds = properties.getConversation().getMaxRounds();
+            List<ConversationMessage> history = conversationHistoryManager.getRecentHistory(
+                    customerId, conversationId, maxRounds);
+
+            if (history.isEmpty()) {
+                log.debug("无对话历史");
+                return "";
+            }
+
+            // 格式化对话历史（受预算约束）
+            String formatted = conversationHistoryManager.formatHistory(history, budget);
+
+            log.debug("对话历史构建完成 - 轮数: {}, tokens: {}",
+                    history.size() / 2, estimateTokens(formatted));
+
+            return formatted;
+
+        } catch (Exception e) {
+            log.error("构建对话历史失败", e);
+            return "";
+        }
     }
 
     /**

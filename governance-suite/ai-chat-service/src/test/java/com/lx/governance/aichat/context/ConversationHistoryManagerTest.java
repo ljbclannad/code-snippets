@@ -2,6 +2,7 @@ package com.lx.governance.aichat.context;
 
 import com.lx.governance.aichat.config.ContextBudgetProperties;
 import com.lx.governance.aichat.dto.ConversationMessage;
+import com.lx.governance.aichat.mapper.AiChatHistoryMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -10,6 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 /**
  * ConversationHistoryManager 测试类
@@ -18,6 +20,7 @@ class ConversationHistoryManagerTest {
 
     private ConversationHistoryManager manager;
     private ContextBudgetProperties properties;
+    private AiChatHistoryMapper chatHistoryMapper;
 
     @BeforeEach
     void setUp() {
@@ -27,11 +30,14 @@ class ConversationHistoryManagerTest {
         memoryConfig.setMidTermDays(30);
         properties.setMemory(memoryConfig);
 
-        manager = new ConversationHistoryManager(properties);
+        // Mock AiChatHistoryMapper
+        chatHistoryMapper = mock(AiChatHistoryMapper.class);
+
+        manager = new ConversationHistoryManager(properties, chatHistoryMapper);
     }
 
     @Test
-    void testFormatMessages() {
+    void testFormatHistory() {
         List<ConversationMessage> messages = new ArrayList<>();
         messages.add(ConversationMessage.builder()
                 .role(ConversationMessage.Role.USER)
@@ -44,10 +50,10 @@ class ConversationHistoryManagerTest {
                 .timestamp(LocalDateTime.now())
                 .build());
 
-        String formatted = manager.formatMessages(messages);
+        String formatted = manager.formatHistory(messages, 1000);
 
-        assertTrue(formatted.contains("user: Hello"));
-        assertTrue(formatted.contains("assistant: Hi there"));
+        assertTrue(formatted.contains("用户: Hello"));
+        assertTrue(formatted.contains("助手: Hi there"));
     }
 
     @Test

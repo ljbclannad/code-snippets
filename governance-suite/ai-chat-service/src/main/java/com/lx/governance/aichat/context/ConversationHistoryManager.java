@@ -1,7 +1,10 @@
 package com.lx.governance.aichat.context;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.lx.governance.aichat.config.ContextBudgetProperties;
 import com.lx.governance.aichat.dto.ConversationMessage;
+import com.lx.governance.aichat.entity.AiChatHistory;
+import com.lx.governance.aichat.mapper.AiChatHistoryMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -20,6 +23,98 @@ import java.util.List;
 public class ConversationHistoryManager {
 
     private final ContextBudgetProperties properties;
+    private final AiChatHistoryMapper chatHistoryMapper;
+
+    /**
+     * 获取最近的对话历史
+     *
+     * @param customerId 客户ID
+     * @param conversationId 对话ID
+     * @param maxRounds 最多保留轮数
+     * @return 对话历史列表
+     */
+    public List<ConversationMessage> getRecentHistory(String customerId, String conversationId, int maxRounds) {
+        try {
+            // 查询最近的对话记录
+            LambdaQueryWrapper<AiChatHistory> queryWrapper = new LambdaQueryWrapper<>();
+            queryWrapper.eq(AiChatHistory::getCustomerId, customerId)
+                    .eq(AiChatHistory::getConversationId, conversationId)
+                    .eq(AiChatHistory::getIsDeleted, 0)
+                    .orderByDesc(AiChatHistory::getCreateTime)
+                    .last("LIMIT " + (maxRounds * 2)); // 每轮包含用户消息和AI回复
+
+            List<AiChatHistory> historyList = chatHistoryMapper.selectList(queryWrapper);
+
+            if (historyList.isEmpty()) {
+                log.debug("无对话历史 - customerId: {}, conversationId: {}", customerId, conversationId);
+                return new ArrayList<>();
+            }
+
+            // 转换为 ConversationMessage 列表（按时间正序）
+            List<ConversationMessage> messages = new ArrayList<>();
+            for (int i = historyList.size() - 1; i >= 0; i--) {
+                AiChatHistory history = historyList.get(i);
+
+                // 添加用户消息
+                messages.add(ConversationMessage.builder()
+                        .role(ConversationMessage.Role.USER)
+                        .content(history.getUserMessage())
+                        .timestamp(history.getCreateTime())
+                        .build());
+
+                // 添加AI回复
+                messages.add(ConversationMessage.builder()
+                        .role(ConversationMessage.Role.ASSISTANT)
+                        .content(history.getAiResponse())
+                        .timestamp(history.getCreateTime())
+                        .build());
+            }
+
+            log.debug("获取对话历史 - customerId: {}, conversationId: {}, 轮数: {}",
+                    customerId, conversationId, messages.size() / 2);
+
+            return messages;
+
+        } catch (Exception e) {
+            log.error("获取对话历史失败 - customerId: {}, conversationId: {}", customerId, conversationId, e);
+            return new ArrayList<>();
+        }
+    }
+
+    /**
+     * 格式化对话历史（受预算约束）
+     *
+     * @param history 对话历史列表
+     * @param budget 可用的 token 预算
+     * @return 格式化后的对话历史文本
+     */
+    public String formatHistory(List<ConversationMessage> history, int budget) {
+        if (history == null || history.isEmpty()) {
+            return "";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        int usedTokens = 0;
+
+        // 从最新的消息开始添加（保证最近的对话不被截断）
+        for (int i = history.size() - 1; i >= 0; i--) {
+            ConversationMessage message = history.get(i);
+            String line = message.getRole().getValue() + ": " + message.getContent() + "\n";
+            int tokens = estimateTokens(line);
+
+            if (usedTokens + tokens <= budget) {
+                // 插入到开头，保持时间顺序
+                sb.insert(0, line);
+                usedTokens += tokens;
+            } else {
+                // 预算用完，停止添加
+                log.debug("对话历史预算用完，已添加 {} 条消息", history.size() - i - 1);
+                break;
+            }
+        }
+
+        return sb.toString();
+    }
 
     /**
      * 根据预算智能选择对话历史
