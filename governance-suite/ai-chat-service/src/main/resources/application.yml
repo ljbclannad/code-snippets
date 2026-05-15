@@ -32,14 +32,6 @@ dify:
     key: ${DIFY_API_KEY:your-dify-api-key}
     timeout: 30000
 
-# DeepSeek API Configuration (待废弃 - 迁移到 Spring AI 后将移除)
-deepseek:
-  api:
-    base-url: ${DEEPSEEK_API_BASE_URL:https://api.deepseek.com}
-    key: ${DEEPSEEK_API_KEY}
-    timeout: 60000
-  model: ${DEEPSEEK_MODEL:deepseek-chat}
-
 # Service Timeout Configuration
 service:
   timeout:
