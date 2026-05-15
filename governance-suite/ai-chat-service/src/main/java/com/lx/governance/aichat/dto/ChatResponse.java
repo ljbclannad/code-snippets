@@ -5,6 +5,9 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.time.LocalDateTime;
+import java.util.List;
+
 /**
  * Chat response DTO
  */
@@ -19,6 +22,7 @@ public class ChatResponse {
     private String conversationId;
     private String errorMessage;
     private Long timestamp;
+    private List<SimilarConversation> recommendations;
 
     /**
      * Create a success response
@@ -33,6 +37,22 @@ public class ChatResponse {
     }
 
     /**
+     * Create a success response with recommendations
+     */
+    public static ChatResponse successWithRecommendations(
+            String message,
+            String conversationId,
+            List<SimilarConversation> recommendations) {
+        return ChatResponse.builder()
+                .success(true)
+                .message(message)
+                .conversationId(conversationId)
+                .recommendations(recommendations)
+                .timestamp(System.currentTimeMillis())
+                .build();
+    }
+
+    /**
      * Create an error response
      */
     public static ChatResponse error(String errorMessage) {
@@ -41,5 +61,20 @@ public class ChatResponse {
                 .errorMessage(errorMessage)
                 .timestamp(System.currentTimeMillis())
                 .build();
+    }
+
+    /**
+     * 相似对话推荐
+     */
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class SimilarConversation {
+        private String id;
+        private String userMessage;
+        private String aiResponse;
+        private LocalDateTime createTime;
+        private Double score;
     }
 }
