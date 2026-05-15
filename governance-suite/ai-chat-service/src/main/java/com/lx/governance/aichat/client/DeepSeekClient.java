@@ -35,7 +35,7 @@ public class DeepSeekClient {
     private final TokenMonitor tokenMonitor;
     private final ContextBudgetProperties properties;
 
-    @Value("${deepseek.model:deepseek-chat}")
+    @Value("${spring.ai.openai.chat.options.model:deepseek-chat}")
     private String model;
 
     /**
