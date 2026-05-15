@@ -14,10 +14,10 @@ spring:
     port: 5672
     username: guest
     password: guest
-  # Spring AI Configuration
+  # Spring AI Configuration (使用 OpenAI 兼容客户端连接 DeepSeek)
   ai:
     openai:
-      api-key: ${DEEPSEEK_API_KEY:your-deepseek-api-key}
+      api-key: ${DEEPSEEK_API_KEY}
       base-url: https://api.deepseek.com/v1
       chat:
         options:
@@ -32,11 +32,11 @@ dify:
     key: ${DIFY_API_KEY:your-dify-api-key}
     timeout: 30000
 
-# DeepSeek API Configuration (当前使用)
+# DeepSeek API Configuration (待废弃 - 迁移到 Spring AI 后将移除)
 deepseek:
   api:
     base-url: ${DEEPSEEK_API_BASE_URL:https://api.deepseek.com}
-    key: ${DEEPSEEK_API_KEY:your-deepseek-api-key}
+    key: ${DEEPSEEK_API_KEY}
     timeout: 60000
   model: ${DEEPSEEK_MODEL:deepseek-chat}
 
