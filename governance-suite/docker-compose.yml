@@ -141,6 +141,37 @@ services:
             timeout: 10s
             retries: 3
 
+    elasticsearch:
+        image: elasticsearch:8.11.0
+        container_name: gov-elasticsearch
+        environment:
+            - discovery.type=single-node
+            - xpack.security.enabled=false
+            - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+            - TZ=Asia/Shanghai
+        ports:
+            - "9200:9200"
+            - "9300:9300"
+        volumes:
+            - gov_es_data:/usr/share/elasticsearch/data
+        healthcheck:
+            test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+
+    kibana:
+        image: kibana:8.11.0
+        container_name: gov-kibana
+        environment:
+            - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+            - TZ=Asia/Shanghai
+        ports:
+            - "5601:5601"
+        depends_on:
+            elasticsearch:
+                condition: service_healthy
+
 volumes:
     gov_mysql_data:
     gov_redis_data:
@@ -148,3 +179,4 @@ volumes:
     gov_etcd_data:
     gov_minio_data:
     gov_milvus_data:
+    gov_es_data:
