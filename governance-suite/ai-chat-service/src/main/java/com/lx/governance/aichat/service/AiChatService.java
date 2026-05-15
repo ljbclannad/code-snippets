@@ -2,6 +2,7 @@ package com.lx.governance.aichat.service;
 
 import com.lx.governance.aichat.client.*;
 import com.lx.governance.aichat.config.RabbitMQConfig;
+import com.lx.governance.aichat.document.ChatHistoryDocument;
 import com.lx.governance.aichat.dto.ChatHistorySyncMessage;
 import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.ChatResponse;
@@ -20,6 +21,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
 
 @Service
 @Slf4j
@@ -31,9 +33,16 @@ public class AiChatService {
     private final DeepSeekClient deepSeekClient;
     private final AiChatHistoryMapper chatHistoryMapper;
     private final RabbitTemplate rabbitTemplate;
+    private final ChatHistorySearchService searchService;
 
     @Value("${ai-chat.chat-history.sync-enabled:true}")
     private boolean syncEnabled;
+
+    @Value("${ai-chat.chat-history.auto-recommend-enabled:true}")
+    private boolean autoRecommendEnabled;
+
+    @Value("${ai-chat.chat-history.recommend-count:3}")
+    private int recommendCount;
 
     public ChatResponse handleChatRequest(ChatRequest request) {
         String correlationId = UUID.randomUUID().toString();
@@ -92,6 +101,26 @@ public class AiChatService {
             long duration = System.currentTimeMillis() - startTime;
             log.info("聊天请求处理完成 - customerId: {}, correlationId: {}, 耗时: {}ms",
                     request.getCustomerId(), correlationId, duration);
+
+            // 5. 获取相似对话推荐
+            if (autoRecommendEnabled) {
+                try {
+                    List<ChatResponse.SimilarConversation> recommendations =
+                            getRecommendations(request.getCustomerId(), request.getMessage());
+
+                    if (!recommendations.isEmpty()) {
+                        log.debug("获取到 {} 条相似对话推荐", recommendations.size());
+                        return ChatResponse.successWithRecommendations(
+                                difyResponse.getAnswer(),
+                                difyResponse.getConversationId(),
+                                recommendations);
+                    }
+                } catch (Exception e) {
+                    log.error("获取推荐失败 - customerId: {}, correlationId: {}",
+                            request.getCustomerId(), correlationId, e);
+                    // 推荐失败不影响主流程，继续返回正常响应
+                }
+            }
 
             return ChatResponse.success(difyResponse.getAnswer(), difyResponse.getConversationId());
 
@@ -164,6 +193,30 @@ public class AiChatService {
         } catch (Exception e) {
             log.error("发送对话历史同步消息失败 - id: {}", history.getId(), e);
             // 不影响主流程，只记录错误
+        }
+    }
+
+    /**
+     * 获取相似对话推荐
+     */
+    private List<ChatResponse.SimilarConversation> getRecommendations(String customerId, String message) {
+        try {
+            List<ChatHistoryDocument> similarDocs = searchService.findSimilarConversations(
+                    customerId, message, recommendCount);
+
+            return similarDocs.stream()
+                    .map(doc -> ChatResponse.SimilarConversation.builder()
+                            .id(doc.getId())
+                            .userMessage(doc.getUserMessage())
+                            .aiResponse(doc.getAiResponse())
+                            .createTime(doc.getCreateTime())
+                            .score(null) // ES 查询可以返回相关性评分，这里暂时为 null
+                            .build())
+                    .collect(Collectors.toList());
+
+        } catch (Exception e) {
+            log.error("获取相似对话推荐失败 - customerId: {}", customerId, e);
+            return List.of();
         }
     }
 
