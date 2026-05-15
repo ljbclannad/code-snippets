@@ -1,6 +1,8 @@
 package com.lx.governance.aichat.service;
 
 import com.lx.governance.aichat.client.*;
+import com.lx.governance.aichat.config.RabbitMQConfig;
+import com.lx.governance.aichat.dto.ChatHistorySyncMessage;
 import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.ChatResponse;
 import com.lx.governance.aichat.dto.DifyResponse;
@@ -10,6 +12,8 @@ import com.lx.governance.aichat.entity.AiChatHistory;
 import com.lx.governance.aichat.mapper.AiChatHistoryMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -26,6 +30,10 @@ public class AiChatService {
     private final MemoryService memoryService;
     private final DeepSeekClient deepSeekClient;
     private final AiChatHistoryMapper chatHistoryMapper;
+    private final RabbitTemplate rabbitTemplate;
+
+    @Value("${ai-chat.chat-history.sync-enabled:true}")
+    private boolean syncEnabled;
 
     public ChatResponse handleChatRequest(ChatRequest request) {
         String correlationId = UUID.randomUUID().toString();
@@ -106,15 +114,55 @@ public class AiChatService {
             history.setConversationId(response.getConversationId());
             history.setUserMessage(request.getMessage());
             history.setAiResponse(response.getAnswer());
+            // TODO: 从 response 中提取 token 使用信息
+            history.setPromptTokens(null);
+            history.setCompletionTokens(null);
+            history.setTotalTokens(null);
             history.setCreateTime(LocalDateTime.now());
             history.setIsDeleted(0);
 
             chatHistoryMapper.insert(history);
 
-            log.debug("对话历史已保存 - conversationId: {}", response.getConversationId());
+            log.debug("对话历史已保存 - conversationId: {}, id: {}", response.getConversationId(), history.getId());
+
+            // 异步同步到 ES
+            if (syncEnabled) {
+                syncToElasticsearch(history);
+            }
 
         } catch (Exception e) {
             log.error("保存对话历史失败 - conversationId: {}", request.getConversationId(), e);
+            // 不影响主流程，只记录错误
+        }
+    }
+
+    /**
+     * 异步同步对话历史到 Elasticsearch
+     */
+    private void syncToElasticsearch(AiChatHistory history) {
+        try {
+            ChatHistorySyncMessage message = ChatHistorySyncMessage.builder()
+                    .id(history.getId())
+                    .customerId(history.getCustomerId())
+                    .conversationId(history.getConversationId())
+                    .userMessage(history.getUserMessage())
+                    .aiResponse(history.getAiResponse())
+                    .promptTokens(history.getPromptTokens())
+                    .completionTokens(history.getCompletionTokens())
+                    .totalTokens(history.getTotalTokens())
+                    .createTime(history.getCreateTime())
+                    .build();
+
+            rabbitTemplate.convertAndSend(
+                    RabbitMQConfig.CHAT_HISTORY_SYNC_EXCHANGE,
+                    RabbitMQConfig.CHAT_HISTORY_SYNC_ROUTING_KEY,
+                    message
+            );
+
+            log.debug("对话历史同步消息已发送 - id: {}", history.getId());
+
+        } catch (Exception e) {
+            log.error("发送对话历史同步消息失败 - id: {}", history.getId(), e);
             // 不影响主流程，只记录错误
         }
     }
