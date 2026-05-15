@@ -23,6 +23,11 @@ public class RabbitMQConfig {
     public static final String VECTOR_MEMORY_EXCHANGE = "vector.memory.exchange";
     public static final String MEMORY_EXTRACTION_EXCHANGE = "memory.extraction.exchange";
 
+    // 对话历史同步队列
+    public static final String CHAT_HISTORY_SYNC_QUEUE = "chat.history.sync.queue";
+    public static final String CHAT_HISTORY_SYNC_EXCHANGE = "chat.history.sync.exchange";
+    public static final String CHAT_HISTORY_SYNC_ROUTING_KEY = "chat.history.sync";
+
     /**
      * User profile exchange for publishing user profile updates.
      */
@@ -97,5 +102,32 @@ public class RabbitMQConfig {
     @Bean
     public Queue vectorMemoryReplyQueue() {
         return new Queue("ai.chat.vector.memory.reply", true);
+    }
+
+    /**
+     * 对话历史同步队列
+     */
+    @Bean
+    public Queue chatHistorySyncQueue() {
+        return new Queue(CHAT_HISTORY_SYNC_QUEUE, true);
+    }
+
+    /**
+     * 对话历史同步交换机
+     */
+    @Bean
+    public DirectExchange chatHistorySyncExchange() {
+        return new DirectExchange(CHAT_HISTORY_SYNC_EXCHANGE, true, false);
+    }
+
+    /**
+     * 对话历史同步绑定
+     */
+    @Bean
+    public org.springframework.amqp.core.Binding chatHistorySyncBinding() {
+        return org.springframework.amqp.core.BindingBuilder
+                .bind(chatHistorySyncQueue())
+                .to(chatHistorySyncExchange())
+                .with(CHAT_HISTORY_SYNC_ROUTING_KEY);
     }
 }
