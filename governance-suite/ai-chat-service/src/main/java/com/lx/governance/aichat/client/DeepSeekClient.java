@@ -1,6 +1,5 @@
 package com.lx.governance.aichat.client;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.lx.governance.aichat.config.ContextBudgetProperties;
 import com.lx.governance.aichat.context.ContextBudgetManager;
 import com.lx.governance.aichat.dto.ChatRequest;
@@ -9,17 +8,15 @@ import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.UserProfileDTO;
 import com.lx.governance.aichat.monitor.TokenMonitor;
 import com.lx.governance.aichat.monitor.TokenUsageMetrics;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestClient;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -31,7 +28,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class DeepSeekClient {
 
-    private final RestClient deepSeekRestClient;
+    private final ChatModel chatModel;
     private final ContextBudgetManager contextBudgetManager;
     private final TokenMonitor tokenMonitor;
     private final ContextBudgetProperties properties;
@@ -54,26 +51,39 @@ public class DeepSeekClient {
             log.info("Calling DeepSeek API for customer: {}, conversationId: {}",
                     request.getCustomerId(), request.getConversationId());
 
-            DeepSeekRequest deepSeekRequest = buildDeepSeekRequest(request, userProfile, memories);
+            // Build system prompt with context
+            String systemPrompt = buildSystemPrompt(request, userProfile, memories);
+            String userMessage = request.getMessage();
 
-            DeepSeekResponse response = deepSeekRestClient.post()
-                    .uri("/chat/completions")
-                    .body(deepSeekRequest)
-                    .retrieve()
-                    .body(DeepSeekResponse.class);
+            // Construct Prompt with Spring AI
+            Prompt prompt = new Prompt(
+                    systemPrompt + "\n\nUser: " + userMessage,
+                    OpenAiChatOptions.builder()
+                            .withModel(model)
+                            .withTemperature(0.7)
+                            .withMaxTokens(2000)
+                            .build()
+            );
+
+            // Call ChatModel
+            ChatResponse response = chatModel.call(prompt);
+            String content = response.getResult().getOutput().getContent();
+
+            // Extract token usage from ChatResponse
+            var usage = response.getMetadata().getUsage();
 
             long duration = System.currentTimeMillis() - startTime;
             log.info("DeepSeek API call completed in {}ms, tokens: prompt={}, completion={}, total={}",
                     duration,
-                    response.getUsage().getPromptTokens(),
-                    response.getUsage().getCompletionTokens(),
-                    response.getUsage().getTotalTokens());
+                    usage.getPromptTokens(),
+                    usage.getGenerationTokens(),
+                    usage.getTotalTokens());
 
-            // 记录 Token 使用情况
-            recordTokenUsage(response, duration);
+            // Record token usage with monitoring logic
+            recordTokenUsage(usage, duration);
 
             // Convert to DifyResponse format
-            return convertToDifyResponse(response, request.getConversationId());
+            return convertToDifyResponse(content, usage, request.getConversationId());
 
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - startTime;
@@ -83,32 +93,6 @@ public class DeepSeekClient {
         }
     }
 
-    /**
-     * Build DeepSeek API request with user profile and memories
-     */
-    private DeepSeekRequest buildDeepSeekRequest(ChatRequest request, UserProfileDTO userProfile, List<MemoryItemDTO> memories) {
-        List<Message> messages = new ArrayList<>();
-
-        // System message with context
-        String systemPrompt = buildSystemPrompt(request, userProfile, memories);
-        messages.add(Message.builder()
-                .role("system")
-                .content(systemPrompt)
-                .build());
-
-        // User message
-        messages.add(Message.builder()
-                .role("user")
-                .content(request.getMessage())
-                .build());
-
-        return DeepSeekRequest.builder()
-                .model(model)
-                .messages(messages)
-                .temperature(0.7)
-                .maxTokens(2000)
-                .build();
-    }
 
     /**
      * Build system prompt with user profile and memories
@@ -126,8 +110,8 @@ public class DeepSeekClient {
     /**
      * 记录 Token 使用情况
      */
-    private void recordTokenUsage(DeepSeekResponse response, long duration) {
-        if (response.getUsage() == null) {
+    private void recordTokenUsage(org.springframework.ai.chat.metadata.Usage usage, long duration) {
+        if (usage == null) {
             return;
         }
 
@@ -140,9 +124,9 @@ public class DeepSeekClient {
                 .extendedProfileTokens(contextBudgetManager.getLastExtendedProfileTokens())
                 .systemPromptTokens(contextBudgetManager.getLastTotalTokens())
                 // API 返回的 token 使用情况
-                .promptTokens(response.getUsage().getPromptTokens())
-                .completionTokens(response.getUsage().getCompletionTokens())
-                .totalTokens(response.getUsage().getTotalTokens())
+                .promptTokens(usage.getPromptTokens().intValue())
+                .completionTokens(usage.getGenerationTokens().intValue())
+                .totalTokens(usage.getTotalTokens().intValue())
                 // 性能指标
                 .contextBuildTime(duration)
                 .apiResponseTime(duration)
@@ -150,15 +134,15 @@ public class DeepSeekClient {
 
         // 检查是否超预算
         int totalBudget = properties.getTotalBudget();
-        metrics.setOverBudget(response.getUsage().getPromptTokens() > totalBudget);
+        metrics.setOverBudget(usage.getPromptTokens().intValue() > totalBudget);
 
         // 检查是否需要告警
         if (properties.getAlert().isEnabled()) {
             int promptThreshold = properties.getAlert().getPromptTokensThreshold();
             int totalThreshold = properties.getAlert().getTotalTokensThreshold();
             metrics.setShouldAlert(
-                    response.getUsage().getPromptTokens() > promptThreshold ||
-                    response.getUsage().getTotalTokens() > totalThreshold
+                    usage.getPromptTokens().intValue() > promptThreshold ||
+                    usage.getTotalTokens().intValue() > totalThreshold
             );
         }
 
@@ -167,15 +151,12 @@ public class DeepSeekClient {
     }
 
     /**
-     * Convert DeepSeek response to Dify response format
+     * Convert Spring AI response to Dify response format
      */
-    private DifyResponse convertToDifyResponse(DeepSeekResponse deepSeekResponse, String conversationId) {
+    private DifyResponse convertToDifyResponse(String content, org.springframework.ai.chat.metadata.Usage usage, String conversationId) {
         DifyResponse difyResponse = new DifyResponse();
 
-        if (deepSeekResponse.getChoices() != null && !deepSeekResponse.getChoices().isEmpty()) {
-            String answer = deepSeekResponse.getChoices().get(0).getMessage().getContent();
-            difyResponse.setAnswer(answer);
-        }
+        difyResponse.setAnswer(content);
 
         // Use existing conversationId or generate new one
         difyResponse.setConversationId(conversationId != null ? conversationId : "conv-" + UUID.randomUUID().toString());
@@ -183,71 +164,16 @@ public class DeepSeekClient {
 
         // Set metadata
         DifyResponse.Metadata metadata = new DifyResponse.Metadata();
-        if (deepSeekResponse.getUsage() != null) {
+        if (usage != null) {
             metadata.setUsage(String.format("prompt_tokens=%d, completion_tokens=%d, total_tokens=%d",
-                    deepSeekResponse.getUsage().getPromptTokens(),
-                    deepSeekResponse.getUsage().getCompletionTokens(),
-                    deepSeekResponse.getUsage().getTotalTokens()));
+                    usage.getPromptTokens().intValue(),
+                    usage.getGenerationTokens().intValue(),
+                    usage.getTotalTokens().intValue()));
         }
         difyResponse.setMetadata(metadata);
 
         return difyResponse;
     }
 
-    // ==================== DeepSeek API DTOs ====================
-
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    static class DeepSeekRequest {
-        private String model;
-        private List<Message> messages;
-        private Double temperature;
-        @JsonProperty("max_tokens")
-        private Integer maxTokens;
-    }
-
-    @Data
-    @Builder
-    @NoArgsConstructor
-    @AllArgsConstructor
-    static class Message {
-        private String role;
-        private String content;
-    }
-
-    @Data
-    @NoArgsConstructor
-    @AllArgsConstructor
-    static class DeepSeekResponse {
-        private String id;
-        private String object;
-        private Long created;
-        private String model;
-        private List<Choice> choices;
-        private Usage usage;
-    }
-
-    @Data
-    @NoArgsConstructor
-    @AllArgsConstructor
-    static class Choice {
-        private Integer index;
-        private Message message;
-        @JsonProperty("finish_reason")
-        private String finishReason;
-    }
-
-    @Data
-    @NoArgsConstructor
-    @AllArgsConstructor
-    static class Usage {
-        @JsonProperty("prompt_tokens")
-        private Integer promptTokens;
-        @JsonProperty("completion_tokens")
-        private Integer completionTokens;
-        @JsonProperty("total_tokens")
-        private Integer totalTokens;
-    }
+    // ==================== No longer needed - using Spring AI ====================
 }
