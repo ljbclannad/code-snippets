@@ -22,15 +22,6 @@ public class RestClientConfig {
     @Value("${dify.api.timeout:30000}")
     private int difyTimeout;
 
-    @Value("${deepseek.api.base-url:https://api.deepseek.com}")
-    private String deepSeekBaseUrl;
-
-    @Value("${deepseek.api.key}")
-    private String deepSeekApiKey;
-
-    @Value("${deepseek.api.timeout:60000}")
-    private int deepSeekTimeout;
-
     /**
      * Create RestClient bean for Dify API calls
      */
@@ -41,19 +32,6 @@ public class RestClientConfig {
                 .defaultHeader("Authorization", "Bearer " + difyApiKey)
                 .defaultHeader("Content-Type", "application/json")
                 .requestFactory(clientHttpRequestFactory(difyTimeout))
-                .build();
-    }
-
-    /**
-     * Create RestClient bean for DeepSeek API calls
-     */
-    @Bean
-    public RestClient deepSeekRestClient() {
-        return RestClient.builder()
-                .baseUrl(deepSeekBaseUrl)
-                .defaultHeader("Authorization", "Bearer " + deepSeekApiKey)
-                .defaultHeader("Content-Type", "application/json")
-                .requestFactory(clientHttpRequestFactory(deepSeekTimeout))
                 .build();
     }
 

@@ -76,6 +76,10 @@ public class DeepSeekClient {
 
             // Extract token usage from ChatResponse
             var usage = response.getMetadata().getUsage();
+            if (usage == null) {
+                log.error("No usage metadata returned from DeepSeek API");
+                throw new RuntimeException("Missing token usage metadata from API response");
+            }
 
             long duration = System.currentTimeMillis() - startTime;
             log.info("DeepSeek API call completed in {}ms, tokens: prompt={}, completion={}, total={}",
