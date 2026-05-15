@@ -14,6 +14,17 @@ spring:
     port: 5672
     username: guest
     password: guest
+    listener:
+      simple:
+        retry:
+          enabled: true
+          initial-interval: 3000
+          max-attempts: 3
+          multiplier: 2
+  elasticsearch:
+    uris: http://localhost:9200
+    connection-timeout: 5s
+    socket-timeout: 30s
   # Spring AI Configuration (使用 OpenAI 兼容客户端连接 DeepSeek)
   ai:
     openai:
@@ -45,6 +56,9 @@ management:
     web:
       exposure:
         include: health,info,metrics
+  health:
+    elasticsearch:
+      enabled: true
   endpoint:
     health:
       show-details: always
@@ -87,3 +101,11 @@ ai:
       enabled: true                 # 是否启用告警
       prompt-tokens-threshold: 6000  # Prompt tokens 告警阈值
       total-tokens-threshold: 28000  # Total tokens 告警阈值
+
+# 对话历史同步配置
+chat:
+  history:
+    sync:
+      queue: chat.history.sync.queue
+      exchange: chat.history.sync.exchange
+      routing-key: chat.history.sync
