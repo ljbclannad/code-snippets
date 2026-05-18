@@ -44,7 +44,7 @@ class DeepSeekIntentAnalyzerTest {
 
         DifyResponse difyResponse = new DifyResponse();
         difyResponse.setAnswer(mockResponse);
-        when(deepSeekClient.chat(any(ChatRequest.class), isNull(), isNull())).thenReturn(difyResponse);
+        when(deepSeekClient.chat(any(ChatRequest.class), isNull(), isNull(), any())).thenReturn(difyResponse);
 
         // When
         SessionContext result = intentAnalyzer.analyzeIntent(message, Collections.emptyList());
@@ -57,7 +57,7 @@ class DeepSeekIntentAnalyzerTest {
         assertEquals(1, result.getMentionedEntities().size());
         assertEquals("血糖", result.getMentionedEntities().get(0));
 
-        verify(deepSeekClient, times(1)).chat(any(ChatRequest.class), isNull(), isNull());
+        verify(deepSeekClient, times(1)).chat(any(ChatRequest.class), isNull(), isNull(), any());
     }
 
     @Test
@@ -81,7 +81,7 @@ class DeepSeekIntentAnalyzerTest {
 
         DifyResponse difyResponse = new DifyResponse();
         difyResponse.setAnswer(mockResponse);
-        when(deepSeekClient.chat(any(ChatRequest.class), isNull(), isNull())).thenReturn(difyResponse);
+        when(deepSeekClient.chat(any(ChatRequest.class), isNull(), isNull(), any())).thenReturn(difyResponse);
 
         // When
         SessionContext result = intentAnalyzer.analyzeIntent(message, Arrays.asList(history));
@@ -91,14 +91,14 @@ class DeepSeekIntentAnalyzerTest {
         assertEquals("血糖控制方法", result.getCurrentTopic());
         assertEquals("complex", result.getComplexity());
 
-        verify(deepSeekClient, times(1)).chat(any(ChatRequest.class), isNull(), isNull());
+        verify(deepSeekClient, times(1)).chat(any(ChatRequest.class), isNull(), isNull(), any());
     }
 
     @Test
     void testAnalyzeIntent_Fallback() {
         // Given
         String message = "测试消息";
-        when(deepSeekClient.chat(any(ChatRequest.class), isNull(), isNull()))
+        when(deepSeekClient.chat(any(ChatRequest.class), isNull(), isNull(), any()))
             .thenThrow(new RuntimeException("API错误"));
 
         // When
