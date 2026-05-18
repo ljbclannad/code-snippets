@@ -76,17 +76,45 @@ public class SessionContextService {
 
     // 其他方法将在下一个任务实现
     private SessionContext getFromRedis(String key) {
-        // TODO: Task 4实现
-        return null;
+        try {
+            String json = redisTemplate.opsForValue().get(key);
+            if (json != null) {
+                log.debug("从Redis获取会话上下文: key={}", key);
+                return objectMapper.readValue(json, SessionContext.class);
+            }
+            return null;
+        } catch (Exception e) {
+            log.error("从Redis读取上下文失败: key={}", key, e);
+            return null;
+        }
     }
 
     private void saveToRedis(String key, SessionContext context) {
-        // TODO: Task 4实现
+        try {
+            String json = objectMapper.writeValueAsString(context);
+            redisTemplate.opsForValue().set(key, json, CONTEXT_TTL_MINUTES, TimeUnit.MINUTES);
+            log.debug("保存会话上下文到Redis: key={}", key);
+        } catch (Exception e) {
+            log.error("保存上下文到Redis失败: key={}", key, e);
+        }
     }
 
     private SessionContext createDefaultContext(String conversationId, String customerId, String groupId) {
-        // TODO: Task 4实现
-        return null;
+        return SessionContext.builder()
+            .conversationId(conversationId)
+            .customerId(customerId)
+            .groupId(groupId)
+            .currentTopic("健康咨询")
+            .conversationPhase("consulting")
+            .mentionedEntities(new ArrayList<>())
+            .extractedData(new HashMap<>())
+            .userIntent("一般咨询")
+            .pendingQuestions(new ArrayList<>())
+            .complexity("simple")
+            .recentSummaries(new ArrayList<>())
+            .sessionStartTime(System.currentTimeMillis())
+            .messageCount(1)
+            .build();
     }
 
     private SessionContext getContextFallback(String conversationId,
@@ -96,5 +124,78 @@ public class SessionContextService {
                                              Throwable t) {
         log.warn("会话上下文服务降级: conversationId={}", conversationId);
         return createDefaultContext(conversationId, customerId, groupId);
+    }
+
+    /**
+     * 更新会话上下文
+     */
+    public void updateContext(String conversationId, String userMessage, String aiResponse) {
+        String key = CONTEXT_KEY_PREFIX + conversationId;
+
+        try {
+            SessionContext context = getFromRedis(key);
+            if (context == null) {
+                log.warn("上下文不存在，跳过更新: conversationId={}", conversationId);
+                return;
+            }
+
+            // 1. 增加消息计数
+            context.setMessageCount(context.getMessageCount() + 1);
+
+            // 2. 添加消息摘要到滑动窗口
+            String summary = truncateMessage(userMessage, MAX_SUMMARY_LENGTH);
+            MessageSummary messageSummary = MessageSummary.builder()
+                .userMessage(summary)
+                .timestamp(System.currentTimeMillis())
+                .build();
+
+            List<MessageSummary> summaries = context.getRecentSummaries();
+            summaries.add(messageSummary);
+
+            // 3. 维护滑动窗口大小
+            int windowSize = "complex".equals(context.getComplexity())
+                ? COMPLEX_WINDOW_SIZE
+                : SIMPLE_WINDOW_SIZE;
+
+            if (summaries.size() > windowSize) {
+                summaries.remove(0);
+            }
+
+            // 4. 调用DeepSeek更新意图分析
+            SessionContext updatedContext = intentAnalyzer.analyzeIntent(userMessage, summaries);
+            if (updatedContext != null) {
+                context.setCurrentTopic(updatedContext.getCurrentTopic());
+                context.setConversationPhase(updatedContext.getConversationPhase());
+                context.setMentionedEntities(updatedContext.getMentionedEntities());
+                context.setExtractedData(updatedContext.getExtractedData());
+                context.setUserIntent(updatedContext.getUserIntent());
+                context.setPendingQuestions(updatedContext.getPendingQuestions());
+                context.setComplexity(updatedContext.getComplexity());
+            }
+
+            // 5. 更新时间戳
+            context.setLastUpdateTime(System.currentTimeMillis());
+
+            // 6. 保存到Redis并刷新TTL
+            saveToRedis(key, context);
+
+            log.debug("更新会话上下文成功: conversationId={}", conversationId);
+
+        } catch (Exception e) {
+            log.error("更新会话上下文失败: conversationId={}", conversationId, e);
+        }
+    }
+
+    /**
+     * 截断消息到指定长度
+     */
+    private String truncateMessage(String message, int maxLength) {
+        if (message == null) {
+            return "";
+        }
+        if (message.length() <= maxLength) {
+            return message;
+        }
+        return message.substring(0, maxLength) + "...";
     }
 }
