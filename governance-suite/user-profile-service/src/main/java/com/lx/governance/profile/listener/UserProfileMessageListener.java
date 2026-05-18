@@ -2,7 +2,7 @@ package com.lx.governance.profile.listener;
 
 import com.lx.governance.common.trace.Trace;
 import com.lx.governance.profile.dto.*;
-import com.lx.governance.profile.service.UserProfileService;
+import com.lx.governance.profile.service.RedisProfileService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.Message;
@@ -15,7 +15,7 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class UserProfileMessageListener {
 
-    private final UserProfileService userProfileService;
+    private final RedisProfileService redisProfileService;
     private final RabbitTemplate rabbitTemplate;
 
     @RabbitListener(queues = "user.profile.request")
@@ -33,7 +33,7 @@ public class UserProfileMessageListener {
         response.setTimestamp(System.currentTimeMillis());
 
         try {
-            UserProfileDTO profile = userProfileService.buildUserProfile(customerId);
+            UserProfileDTO profile = redisProfileService.getProfile(customerId);
 
             if (profile == null) {
                 response.setSuccess(false);
