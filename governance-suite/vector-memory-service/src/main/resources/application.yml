@@ -49,10 +49,10 @@ spring:
           host: localhost
           port: 19530
         database-name: default
-        collection-name: user_memory_vectors
-        embedding-dimension: 1536
+        collection-name: user_memory_vectors_v3  # v3: 1024-dim (text-embedding-v3)
+        embedding-dimension: 1024
         index-type: IVF_FLAT
-        metric-type: COSINE
+        metric-type: COSINE  # COSINE preferred over L2 for text embeddings (measures angular similarity)
         nlist: 1024
 
     # 通义千问 Embedding 配置
@@ -60,7 +60,7 @@ spring:
       api-key: ${DASHSCOPE_API_KEY:your-dashscope-api-key}
       embedding:
         options:
-          model: text-embedding-v2
+          model: text-embedding-v3
 
     # DeepSeek 配置 (OpenAI 兼容)
     openai:
