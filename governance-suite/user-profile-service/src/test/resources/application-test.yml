@@ -1,0 +1,28 @@
+spring:
+  redis:
+    host: localhost
+    port: 36379
+    password:
+    database: 1  # Use separate database for tests
+    lettuce:
+      pool:
+        max-active: 10
+        max-idle: 5
+        min-idle: 2
+        max-wait: 2000ms
+    timeout: 5000ms
+
+  datasource:
+    url: jdbc:mysql://localhost:3306/governance?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: root
+    password: root
+    driver-class-name: com.mysql.cj.jdbc.Driver
+
+  cloud:
+    nacos:
+      discovery:
+        enabled: false
+
+logging:
+  level:
+    com.lx.governance.profile: DEBUG
