@@ -46,6 +46,9 @@ public class RedisProfileService {
             if (profile != null) {
                 // 3. 回写Redis
                 saveToRedis(key, profile);
+            } else {
+                // 缓存空结果，防止缓存穿透（5分钟TTL）
+                redisTemplate.opsForValue().set(key + ":null", "1", 5, TimeUnit.MINUTES);
             }
 
             return profile;
@@ -90,6 +93,6 @@ public class RedisProfileService {
 
     private UserProfileDTO deserializeProfile(Map<Object, Object> cached) {
         // TODO: 将在Task 5实现
-        return null;
+        throw new UnsupportedOperationException("deserializeProfile will be implemented in Task 5");
     }
 }
