@@ -17,6 +17,7 @@ public class RedisProfileService {
 
     private static final String PROFILE_KEY_PREFIX = "ai:profile:";
     private static final long PROFILE_TTL_HOURS = 24;
+    private static final String NULL_MARKER_SUFFIX = ":null";
 
     @Autowired
     private RedisTemplate<String, Object> redisTemplate;
@@ -39,6 +40,12 @@ public class RedisProfileService {
                 return deserializeProfile(cached);
             }
 
+            // 检查是否已缓存空结果
+            if (Boolean.TRUE.equals(redisTemplate.hasKey(key + NULL_MARKER_SUFFIX))) {
+                log.debug("命中空结果缓存: customerId={}", customerId);
+                return null;
+            }
+
             // 2. Redis未命中，从MySQL构建
             log.info("Redis未命中，从MySQL构建画像: customerId={}", customerId);
             UserProfileDTO profile = userProfileService.buildUserProfile(customerId);
@@ -48,7 +55,7 @@ public class RedisProfileService {
                 saveToRedis(key, profile);
             } else {
                 // 缓存空结果，防止缓存穿透（5分钟TTL）
-                redisTemplate.opsForValue().set(key + ":null", "1", 5, TimeUnit.MINUTES);
+                redisTemplate.opsForValue().set(key + NULL_MARKER_SUFFIX, "1", 5, TimeUnit.MINUTES);
             }
 
             return profile;
@@ -71,8 +78,9 @@ public class RedisProfileService {
             UserProfileDTO profile = userProfileService.buildUserProfile(customerId);
 
             if (profile != null) {
-                // 2. 删除旧缓存
+                // 2. 删除旧缓存（包括空标记）
                 redisTemplate.delete(key);
+                redisTemplate.delete(key + NULL_MARKER_SUFFIX);
 
                 // 3. 写入新缓存
                 saveToRedis(key, profile);
