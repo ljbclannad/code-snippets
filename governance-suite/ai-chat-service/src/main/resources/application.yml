@@ -109,3 +109,23 @@ chat:
       queue: chat.history.sync.queue
       exchange: chat.history.sync.exchange
       routing-key: chat.history.sync
+
+# Resilience4j 配置
+resilience4j:
+  circuitbreaker:
+    instances:
+      sessionContext:
+        failure-rate-threshold: 50
+        slow-call-rate-threshold: 50
+        slow-call-duration-threshold: 5s
+        wait-duration-in-open-state: 60s
+        permitted-number-of-calls-in-half-open-state: 3
+        sliding-window-size: 10
+        minimum-number-of-calls: 5
+
+  retry:
+    instances:
+      sessionContext:
+        max-attempts: 3
+        wait-duration: 500ms
+        exponential-backoff-multiplier: 2
