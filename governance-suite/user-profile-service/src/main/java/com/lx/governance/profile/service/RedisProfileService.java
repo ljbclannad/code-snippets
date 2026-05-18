@@ -1,6 +1,6 @@
 package com.lx.governance.profile.service;
 
-import com.alibaba.fastjson.JSON;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lx.governance.profile.dto.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -18,6 +18,8 @@ public class RedisProfileService {
     private static final String PROFILE_KEY_PREFIX = "ai:profile:";
     private static final long PROFILE_TTL_HOURS = 24;
     private static final String NULL_MARKER_SUFFIX = ":null";
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Autowired
     private RedisTemplate<String, Object> redisTemplate;
@@ -98,63 +100,68 @@ public class RedisProfileService {
      * 将UserProfileDTO序列化到Redis Hash
      */
     private void saveToRedis(String key, UserProfileDTO profile) {
-        Map<String, Object> hash = new HashMap<>();
+        try {
+            Map<String, Object> hash = new HashMap<>();
 
-        // 基本信息
-        if (profile.getBasicInfo() != null) {
-            BasicInfoDTO basic = profile.getBasicInfo();
-            if (basic.getCustomerId() != null) hash.put("basic:customerId", basic.getCustomerId());
-            if (basic.getName() != null) hash.put("basic:name", basic.getName());
-            if (basic.getAge() != null) hash.put("basic:age", basic.getAge());
-            if (basic.getGender() != null) hash.put("basic:gender", basic.getGender());
-            if (basic.getPhone() != null) hash.put("basic:phone", basic.getPhone());
-            if (basic.getEmail() != null) hash.put("basic:email", basic.getEmail());
+            // 基本信息
+            if (profile.getBasicInfo() != null) {
+                BasicInfoDTO basic = profile.getBasicInfo();
+                if (basic.getCustomerId() != null) hash.put("basic:customerId", basic.getCustomerId());
+                if (basic.getName() != null) hash.put("basic:name", basic.getName());
+                if (basic.getAge() != null) hash.put("basic:age", basic.getAge());
+                if (basic.getGender() != null) hash.put("basic:gender", basic.getGender());
+                if (basic.getPhone() != null) hash.put("basic:phone", basic.getPhone());
+                if (basic.getEmail() != null) hash.put("basic:email", basic.getEmail());
+            }
+
+            // 健康档案
+            if (profile.getHealthProfile() != null) {
+                HealthProfileDTO health = profile.getHealthProfile();
+                if (health.getBmi() != null) hash.put("health:bmi", health.getBmi());
+                if (health.getBloodPressure() != null) hash.put("health:bloodPressure", health.getBloodPressure());
+                if (health.getBloodSugar() != null) hash.put("health:bloodSugar", health.getBloodSugar());
+                if (health.getLatestAssessmentDate() != null) {
+                    hash.put("health:latestAssessmentDate", health.getLatestAssessmentDate().toString());
+                }
+                if (health.getHealthGoals() != null) {
+                    hash.put("health:healthGoals", objectMapper.writeValueAsString(health.getHealthGoals()));
+                }
+            }
+
+            // 行为偏好
+            if (profile.getBehaviorPreferences() != null) {
+                BehaviorPreferencesDTO behavior = profile.getBehaviorPreferences();
+                if (behavior.getDietPreference() != null) {
+                    hash.put("behavior:dietPreference", behavior.getDietPreference());
+                }
+                if (behavior.getExerciseFrequency() != null) {
+                    hash.put("behavior:exerciseFrequency", behavior.getExerciseFrequency());
+                }
+                if (behavior.getCheckInStreak() != null) {
+                    hash.put("behavior:checkInStreak", behavior.getCheckInStreak());
+                }
+            }
+
+            // 全局记忆
+            if (profile.getGlobalMemories() != null && !profile.getGlobalMemories().isEmpty()) {
+                hash.put("memories", objectMapper.writeValueAsString(profile.getGlobalMemories()));
+            }
+
+            // 元数据
+            hash.put("meta:cachedAt", System.currentTimeMillis());
+            hash.put("meta:version", "v1");
+
+            // 批量写入Redis
+            redisTemplate.opsForHash().putAll(key, hash);
+
+            // 设置TTL
+            redisTemplate.expire(key, PROFILE_TTL_HOURS, TimeUnit.HOURS);
+
+            log.debug("保存画像到Redis: key={}, fields={}", key, hash.size());
+        } catch (Exception e) {
+            log.error("保存画像到Redis失败: key={}", key, e);
+            throw new RuntimeException("Redis序列化失败", e);
         }
-
-        // 健康档案
-        if (profile.getHealthProfile() != null) {
-            HealthProfileDTO health = profile.getHealthProfile();
-            if (health.getBmi() != null) hash.put("health:bmi", health.getBmi());
-            if (health.getBloodPressure() != null) hash.put("health:bloodPressure", health.getBloodPressure());
-            if (health.getBloodSugar() != null) hash.put("health:bloodSugar", health.getBloodSugar());
-            if (health.getLatestAssessmentDate() != null) {
-                hash.put("health:latestAssessmentDate", health.getLatestAssessmentDate().toString());
-            }
-            if (health.getHealthGoals() != null) {
-                hash.put("health:healthGoals", JSON.toJSONString(health.getHealthGoals()));
-            }
-        }
-
-        // 行为偏好
-        if (profile.getBehaviorPreferences() != null) {
-            BehaviorPreferencesDTO behavior = profile.getBehaviorPreferences();
-            if (behavior.getDietPreference() != null) {
-                hash.put("behavior:dietPreference", behavior.getDietPreference());
-            }
-            if (behavior.getExerciseFrequency() != null) {
-                hash.put("behavior:exerciseFrequency", behavior.getExerciseFrequency());
-            }
-            if (behavior.getCheckInStreak() != null) {
-                hash.put("behavior:checkInStreak", behavior.getCheckInStreak());
-            }
-        }
-
-        // 全局记忆
-        if (profile.getGlobalMemories() != null && !profile.getGlobalMemories().isEmpty()) {
-            hash.put("memories", JSON.toJSONString(profile.getGlobalMemories()));
-        }
-
-        // 元数据
-        hash.put("meta:cachedAt", System.currentTimeMillis());
-        hash.put("meta:version", "v1");
-
-        // 批量写入Redis
-        redisTemplate.opsForHash().putAll(key, hash);
-
-        // 设置TTL
-        redisTemplate.expire(key, PROFILE_TTL_HOURS, TimeUnit.HOURS);
-
-        log.debug("保存画像到Redis: key={}, fields={}", key, hash.size());
     }
 
     /**
@@ -165,48 +172,95 @@ public class RedisProfileService {
             return null;
         }
 
-        UserProfileDTO profile = new UserProfileDTO();
+        try {
+            UserProfileDTO profile = new UserProfileDTO();
 
-        // 基本信息
-        BasicInfoDTO basic = new BasicInfoDTO();
-        basic.setCustomerId((String) cached.get("basic:customerId"));
-        basic.setName((String) cached.get("basic:name"));
-        basic.setAge((Integer) cached.get("basic:age"));
-        basic.setGender((String) cached.get("basic:gender"));
-        basic.setPhone((String) cached.get("basic:phone"));
-        basic.setEmail((String) cached.get("basic:email"));
-        profile.setBasicInfo(basic);
+            // 基本信息
+            BasicInfoDTO basic = new BasicInfoDTO();
+            basic.setCustomerId(getString(cached, "basic:customerId"));
+            basic.setName(getString(cached, "basic:name"));
+            basic.setAge(getInteger(cached, "basic:age"));
+            basic.setGender(getString(cached, "basic:gender"));
+            basic.setPhone(getString(cached, "basic:phone"));
+            basic.setEmail(getString(cached, "basic:email"));
+            profile.setBasicInfo(basic);
 
-        // 健康档案
-        HealthProfileDTO health = new HealthProfileDTO();
-        health.setBmi((Double) cached.get("health:bmi"));
-        health.setBloodPressure((String) cached.get("health:bloodPressure"));
-        health.setBloodSugar((Double) cached.get("health:bloodSugar"));
+            // 健康档案
+            HealthProfileDTO health = new HealthProfileDTO();
+            health.setBmi(getDouble(cached, "health:bmi"));
+            health.setBloodPressure(getString(cached, "health:bloodPressure"));
+            health.setBloodSugar(getDouble(cached, "health:bloodSugar"));
 
-        String assessmentDateStr = (String) cached.get("health:latestAssessmentDate");
-        if (assessmentDateStr != null) {
-            health.setLatestAssessmentDate(java.time.LocalDate.parse(assessmentDateStr));
+            String assessmentDateStr = getString(cached, "health:latestAssessmentDate");
+            if (assessmentDateStr != null) {
+                health.setLatestAssessmentDate(java.time.LocalDate.parse(assessmentDateStr));
+            }
+
+            String healthGoalsJson = getString(cached, "health:healthGoals");
+            if (healthGoalsJson != null) {
+                health.setHealthGoals(objectMapper.readValue(healthGoalsJson,
+                    objectMapper.getTypeFactory().constructCollectionType(List.class, String.class)));
+            }
+            profile.setHealthProfile(health);
+
+            // 行为偏好
+            BehaviorPreferencesDTO behavior = new BehaviorPreferencesDTO();
+            behavior.setDietPreference(getString(cached, "behavior:dietPreference"));
+            behavior.setExerciseFrequency(getString(cached, "behavior:exerciseFrequency"));
+            behavior.setCheckInStreak(getInteger(cached, "behavior:checkInStreak"));
+            profile.setBehaviorPreferences(behavior);
+
+            // 全局记忆
+            String memoriesJson = getString(cached, "memories");
+            if (memoriesJson != null) {
+                profile.setGlobalMemories(objectMapper.readValue(memoriesJson,
+                    objectMapper.getTypeFactory().constructCollectionType(List.class, GlobalMemoryDTO.class)));
+            }
+
+            return profile;
+        } catch (Exception e) {
+            log.error("反序列化画像失败", e);
+            throw new RuntimeException("Redis反序列化失败", e);
         }
+    }
 
-        String healthGoalsJson = (String) cached.get("health:healthGoals");
-        if (healthGoalsJson != null) {
-            health.setHealthGoals(JSON.parseArray(healthGoalsJson, String.class));
+    /**
+     * 安全地从Map中获取Integer值
+     */
+    private Integer getInteger(Map<Object, Object> map, String key) {
+        Object value = map.get(key);
+        if (value == null) return null;
+        if (value instanceof Integer) return (Integer) value;
+        if (value instanceof Number) return ((Number) value).intValue();
+        try {
+            return Integer.parseInt(value.toString());
+        } catch (NumberFormatException e) {
+            log.warn("无法转换为Integer: key={}, value={}", key, value);
+            return null;
         }
-        profile.setHealthProfile(health);
+    }
 
-        // 行为偏好
-        BehaviorPreferencesDTO behavior = new BehaviorPreferencesDTO();
-        behavior.setDietPreference((String) cached.get("behavior:dietPreference"));
-        behavior.setExerciseFrequency((String) cached.get("behavior:exerciseFrequency"));
-        behavior.setCheckInStreak((Integer) cached.get("behavior:checkInStreak"));
-        profile.setBehaviorPreferences(behavior);
-
-        // 全局记忆
-        String memoriesJson = (String) cached.get("memories");
-        if (memoriesJson != null) {
-            profile.setGlobalMemories(JSON.parseArray(memoriesJson, GlobalMemoryDTO.class));
+    /**
+     * 安全地从Map中获取Double值
+     */
+    private Double getDouble(Map<Object, Object> map, String key) {
+        Object value = map.get(key);
+        if (value == null) return null;
+        if (value instanceof Double) return (Double) value;
+        if (value instanceof Number) return ((Number) value).doubleValue();
+        try {
+            return Double.parseDouble(value.toString());
+        } catch (NumberFormatException e) {
+            log.warn("无法转换为Double: key={}, value={}", key, value);
+            return null;
         }
+    }
 
-        return profile;
+    /**
+     * 安全地从Map中获取String值
+     */
+    private String getString(Map<Object, Object> map, String key) {
+        Object value = map.get(key);
+        return value != null ? value.toString() : null;
     }
 }
