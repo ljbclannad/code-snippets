@@ -12,6 +12,7 @@ import com.lx.governance.aichat.dto.SessionContext;
 import com.lx.governance.aichat.dto.UserProfileDTO;
 import com.lx.governance.aichat.entity.AiChatHistory;
 import com.lx.governance.aichat.mapper.AiChatHistoryMapper;
+import com.lx.governance.aichat.metrics.AiChatMetrics;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
@@ -36,6 +37,7 @@ public class AiChatService {
     private final RabbitTemplate rabbitTemplate;
     private final ChatHistorySearchService searchService;
     private final SessionContextService sessionContextService;
+    private final AiChatMetrics metrics;
 
     @Value("${ai-chat.chat-history.sync-enabled:true}")
     private boolean syncEnabled;
@@ -47,111 +49,125 @@ public class AiChatService {
     private int recommendCount;
 
     public ChatResponse handleChatRequest(ChatRequest request) {
-        String correlationId = UUID.randomUUID().toString();
-        long startTime = System.currentTimeMillis();
+        // 记录请求
+        metrics.recordChatRequest();
 
-        log.info("开始处理聊天请求 - customerId: {}, groupId: {}, conversationId: {}, message: {}, correlationId: {}",
-                request.getCustomerId(),
-                request.getGroupId(),
-                request.getConversationId(),
-                truncate(request.getMessage(), 50),
-                correlationId);
+        // 包装整个响应时间
+        return metrics.recordChatResponse(() -> {
+            String correlationId = UUID.randomUUID().toString();
+            long startTime = System.currentTimeMillis();
 
-        try {
-            // 1. 获取或创建会话上下文
-            String sessionId = request.getConversationId() != null ?
-                    request.getConversationId() : UUID.randomUUID().toString();
-
-            SessionContext sessionContext = sessionContextService.getOrCreateContext(
-                    sessionId,
+            log.info("开始处理聊天请求 - customerId: {}, groupId: {}, conversationId: {}, message: {}, correlationId: {}",
                     request.getCustomerId(),
                     request.getGroupId(),
-                    request.getMessage());
-
-            log.info("会话上下文已准备 - sessionId: {}, intent: {}, phase: {}, correlationId: {}",
-                    sessionId,
-                    sessionContext.getUserIntent(),
-                    sessionContext.getConversationPhase(),
+                    request.getConversationId(),
+                    truncate(request.getMessage(), 50),
                     correlationId);
 
-            // 2. 并行获取用户画像和记忆
-            CompletableFuture<UserProfileDTO> profileFuture =
-                userProfileClient.requestUserProfile(request.getCustomerId());
+            try {
+                // 1. 获取或创建会话上下文（带监控）
+                String sessionId = request.getConversationId() != null ?
+                        request.getConversationId() : UUID.randomUUID().toString();
 
-            CompletableFuture<List<MemoryItemDTO>> memoriesFuture =
-                memoryService.retrieveMemories(
-                    request.getGroupId(),
-                    request.getCustomerId(),
-                    request.getMessage()
+                SessionContext sessionContext = metrics.recordContextAnalysis(() ->
+                    sessionContextService.getOrCreateContext(
+                        sessionId,
+                        request.getCustomerId(),
+                        request.getGroupId(),
+                        request.getMessage())
                 );
 
-            // 等待两个结果
-            CompletableFuture.allOf(profileFuture, memoriesFuture).join();
+                log.info("会话上下文已准备 - sessionId: {}, intent: {}, phase: {}, correlationId: {}",
+                        sessionId,
+                        sessionContext.getUserIntent(),
+                        sessionContext.getConversationPhase(),
+                        correlationId);
 
-            // 获取结果
-            UserProfileDTO profile = profileFuture.get();
-            List<MemoryItemDTO> memories = memoriesFuture.get();
+                // 2. 并行获取用户画像和记忆（带监控）
+                CompletableFuture<UserProfileDTO> profileFuture = CompletableFuture.supplyAsync(() ->
+                    metrics.recordProfileFetch(() ->
+                        userProfileClient.requestUserProfile(request.getCustomerId()).join()
+                    )
+                );
 
-            log.info("上下文获取完成 - customerId: {}, 记忆数: {}, correlationId: {}",
-                    request.getCustomerId(), memories.size(), correlationId);
+                CompletableFuture<List<MemoryItemDTO>> memoriesFuture = CompletableFuture.supplyAsync(() ->
+                    metrics.recordMemoryRetrieval(() ->
+                        memoryService.retrieveMemories(
+                            request.getGroupId(),
+                            request.getCustomerId(),
+                            request.getMessage()
+                        ).join()
+                    )
+                );
 
-            // 3. 调用 DeepSeek API（传入会话上下文，内部使用 ContextBudgetManager 构建系统提示词）
-            DifyResponse difyResponse = deepSeekClient.chat(request, profile, sessionContext, memories);
+                // 等待两个结果
+                CompletableFuture.allOf(profileFuture, memoriesFuture).join();
 
-            // 4. 更新会话上下文
-            sessionContextService.updateContext(sessionId, request.getMessage(), difyResponse.getAnswer());
-            log.debug("会话上下文已更新 - sessionId: {}, correlationId: {}", sessionId, correlationId);
+                // 获取结果
+                UserProfileDTO profile = profileFuture.get();
+                List<MemoryItemDTO> memories = memoriesFuture.get();
 
-            // 5. 保存对话历史
-            saveConversationHistory(request, difyResponse);
+                log.info("上下文获取完成 - customerId: {}, 记忆数: {}, correlationId: {}",
+                        request.getCustomerId(), memories.size(), correlationId);
 
-            // 6. 异步触发记忆提取
-            CompletableFuture.runAsync(() -> {
-                try {
-                    memoryService.extractMemory(
-                        request.getGroupId(),
-                        request.getCustomerId(),
-                        request.getMessage(),
-                        difyResponse.getAnswer()
-                    );
-                } catch (Exception e) {
-                    log.error("记忆提取触发失败 - customerId: {}, correlationId: {}",
-                            request.getCustomerId(), correlationId, e);
-                }
-            });
+                // 3. 调用 DeepSeek API（传入会话上下文，内部使用 ContextBudgetManager 构建系统提示词）
+                DifyResponse difyResponse = deepSeekClient.chat(request, profile, sessionContext, memories);
 
-            long duration = System.currentTimeMillis() - startTime;
-            log.info("聊天请求处理完成 - customerId: {}, correlationId: {}, 耗时: {}ms",
-                    request.getCustomerId(), correlationId, duration);
+                // 4. 更新会话上下文
+                sessionContextService.updateContext(sessionId, request.getMessage(), difyResponse.getAnswer());
+                log.debug("会话上下文已更新 - sessionId: {}, correlationId: {}", sessionId, correlationId);
 
-            // 5. 获取相似对话推荐
-            if (autoRecommendEnabled) {
-                try {
-                    List<ChatResponse.SimilarConversation> recommendations =
-                            getRecommendations(request.getCustomerId(), request.getMessage());
+                // 5. 保存对话历史
+                saveConversationHistory(request, difyResponse);
 
-                    if (!recommendations.isEmpty()) {
-                        log.debug("获取到 {} 条相似对话推荐", recommendations.size());
-                        return ChatResponse.successWithRecommendations(
-                                difyResponse.getAnswer(),
-                                difyResponse.getConversationId(),
-                                recommendations);
+                // 6. 异步触发记忆提取
+                CompletableFuture.runAsync(() -> {
+                    try {
+                        memoryService.extractMemory(
+                            request.getGroupId(),
+                            request.getCustomerId(),
+                            request.getMessage(),
+                            difyResponse.getAnswer()
+                        );
+                    } catch (Exception e) {
+                        log.error("记忆提取触发失败 - customerId: {}, correlationId: {}",
+                                request.getCustomerId(), correlationId, e);
                     }
-                } catch (Exception e) {
-                    log.error("获取推荐失败 - customerId: {}, correlationId: {}",
-                            request.getCustomerId(), correlationId, e);
-                    // 推荐失败不影响主流程，继续返回正常响应
+                });
+
+                long duration = System.currentTimeMillis() - startTime;
+                log.info("聊天请求处理完成 - customerId: {}, correlationId: {}, 耗时: {}ms",
+                        request.getCustomerId(), correlationId, duration);
+
+                // 7. 获取相似对话推荐
+                if (autoRecommendEnabled) {
+                    try {
+                        List<ChatResponse.SimilarConversation> recommendations =
+                                getRecommendations(request.getCustomerId(), request.getMessage());
+
+                        if (!recommendations.isEmpty()) {
+                            log.debug("获取到 {} 条相似对话推荐", recommendations.size());
+                            return ChatResponse.successWithRecommendations(
+                                    difyResponse.getAnswer(),
+                                    difyResponse.getConversationId(),
+                                    recommendations);
+                        }
+                    } catch (Exception e) {
+                        log.error("获取推荐失败 - customerId: {}, correlationId: {}",
+                                request.getCustomerId(), correlationId, e);
+                        // 推荐失败不影响主流程，继续返回正常响应
+                    }
                 }
+
+                return ChatResponse.success(difyResponse.getAnswer(), difyResponse.getConversationId());
+
+            } catch (Exception e) {
+                long duration = System.currentTimeMillis() - startTime;
+                log.error("聊天请求处理失败 - customerId: {}, correlationId: {}, 耗时: {}ms",
+                        request.getCustomerId(), correlationId, duration, e);
+                return ChatResponse.error("聊天请求处理失败: " + e.getMessage());
             }
-
-            return ChatResponse.success(difyResponse.getAnswer(), difyResponse.getConversationId());
-
-        } catch (Exception e) {
-            long duration = System.currentTimeMillis() - startTime;
-            log.error("聊天请求处理失败 - customerId: {}, correlationId: {}, 耗时: {}ms",
-                    request.getCustomerId(), correlationId, duration, e);
-            return ChatResponse.error("聊天请求处理失败: " + e.getMessage());
-        }
+        });
     }
 
     /**
