@@ -108,8 +108,10 @@ public class DeepSeekClient {
      */
     private String buildSystemPrompt(ChatRequest request, UserProfileDTO userProfile, List<MemoryItemDTO> memories) {
         // 使用上下文预算管理器构建系统提示词（包含对话历史）
+        // TODO: 传入SessionContext参数，当前暂时传null
         return contextBudgetManager.buildBudgetedSystemPrompt(
                 userProfile,
+                null, // SessionContext - 待Task 7集成
                 memories,
                 request.getCustomerId(),
                 request.getConversationId(),

@@ -9,6 +9,7 @@ import org.springframework.stereotype.Component;
 import com.lx.governance.aichat.config.ContextBudgetProperties;
 import com.lx.governance.aichat.dto.ConversationMessage;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
+import com.lx.governance.aichat.dto.SessionContext;
 import com.lx.governance.aichat.dto.UserProfileDTO;
 
 import lombok.extern.slf4j.Slf4j;
@@ -32,16 +33,18 @@ public class ContextBudgetManager {
 
     // Token 使用跟踪
     private int lastCoreProfileTokens = 0;
+    private int lastSessionContextTokens = 0;
     private int lastMemoriesTokens = 0;
     private int lastConversationTokens = 0;
     private int lastExtendedProfileTokens = 0;
     private int lastTotalTokens = 0;
 
     /**
-     * 构建受预算约束的系统提示词（增强版，包含对话历史）
+     * 构建受预算约束的系统提示词（增强版，包含会话上下文和对话历史）
      */
     public String buildBudgetedSystemPrompt(
             UserProfileDTO profile,
+            SessionContext sessionContext,
             List<MemoryItemDTO> memories,
             String customerId,
             String conversationId,
@@ -80,7 +83,31 @@ public class ContextBudgetManager {
             log.warn("核心画像超预算，已压缩: {} -> {}", coreTokens, coreProfileBudget);
         }
 
-        // 2. 相关记忆（优先级高，根据相似度排序）
+        // 2. 会话上下文（新增，优先级高）
+        if (sessionContext != null) {
+            int sessionContextBudget = properties.getConversationHistoryBudget(); // 复用对话历史预算
+            String sessionContextText = formatSessionContext(sessionContext);
+            int sessionContextTokens = estimateTokens(sessionContextText);
+
+            if (sessionContextTokens <= sessionContextBudget && sessionContextTokens <= remainingBudget) {
+                prompt.append("## 会话上下文\n").append(sessionContextText).append("\n");
+                usedTokens += sessionContextTokens;
+                remainingBudget -= sessionContextTokens;
+                lastSessionContextTokens = sessionContextTokens;
+                log.debug("会话上下文 tokens: {}/{}", sessionContextTokens, sessionContextBudget);
+            } else if (remainingBudget > 0) {
+                // 压缩会话上下文
+                sessionContextText = compressText(sessionContextText, Math.min(sessionContextBudget, remainingBudget));
+                int compressedTokens = estimateTokens(sessionContextText);
+                prompt.append("## 会话上下文\n").append(sessionContextText).append("\n");
+                usedTokens += compressedTokens;
+                remainingBudget -= compressedTokens;
+                lastSessionContextTokens = compressedTokens;
+                log.debug("会话上下文已压缩 tokens: {}/{}", compressedTokens, sessionContextBudget);
+            }
+        }
+
+        // 3. 相关记忆（优先级高，根据相似度排序）
         int relevantMemoriesBudget = properties.getRelevantMemoriesBudget();
         String relevantMemories = selectRelevantMemories(
                 memories,
@@ -94,7 +121,7 @@ public class ContextBudgetManager {
             log.debug("相关记忆 tokens: {}/{}", memoryTokens, relevantMemoriesBudget);
         }
 
-        // 3. 对话历史（优先级中，最近的对话上下文）
+        // 4. 对话历史（优先级中，最近的对话上下文）
         String conversationHistory = buildConversationHistory(
                 customerId, conversationId, Math.min(properties.getConversationHistoryBudget(), remainingBudget));
         if (!conversationHistory.isEmpty()) {
@@ -106,7 +133,7 @@ public class ContextBudgetManager {
             log.debug("对话历史 tokens: {}/{}", conversationTokens, properties.getConversationHistoryBudget());
         }
 
-        // 4. 扩展画像（优先级低，根据问题类型动态选择）
+        // 5. 扩展画像（优先级低，根据问题类型动态选择）
         int extendedProfileBudget = properties.getExtendedProfileBudget();
         if (remainingBudget > 0) {
             String extendedProfile = extractExtendedProfile(
@@ -161,6 +188,44 @@ public class ContextBudgetManager {
             log.error("构建对话历史失败", e);
             return "";
         }
+    }
+
+    /**
+     * 格式化会话上下文
+     */
+    private String formatSessionContext(SessionContext context) {
+        if (context == null) {
+            return "";
+        }
+
+        StringBuilder sb = new StringBuilder();
+
+        if (context.getCurrentTopic() != null) {
+            sb.append("当前话题：").append(context.getCurrentTopic()).append("\n");
+        }
+
+        if (context.getConversationPhase() != null) {
+            sb.append("对话阶段：").append(context.getConversationPhase()).append("\n");
+        }
+
+        if (context.getUserIntent() != null) {
+            sb.append("用户意图：").append(context.getUserIntent()).append("\n");
+        }
+
+        if (context.getRecentSummaries() != null && !context.getRecentSummaries().isEmpty()) {
+            sb.append("最近对话：\n");
+            for (var summary : context.getRecentSummaries()) {
+                if (summary.getUserMessage() != null) {
+                    sb.append("  - ").append(summary.getUserMessage()).append("\n");
+                }
+            }
+        }
+
+        if (context.getMentionedEntities() != null && !context.getMentionedEntities().isEmpty()) {
+            sb.append("提及实体：").append(String.join("、", context.getMentionedEntities())).append("\n");
+        }
+
+        return sb.toString();
     }
 
     /**
@@ -447,6 +512,7 @@ public class ContextBudgetManager {
      */
     private void resetTokenCounters() {
         lastCoreProfileTokens = 0;
+        lastSessionContextTokens = 0;
         lastMemoriesTokens = 0;
         lastConversationTokens = 0;
         lastExtendedProfileTokens = 0;
@@ -458,6 +524,10 @@ public class ContextBudgetManager {
      */
     public int getLastCoreProfileTokens() {
         return lastCoreProfileTokens;
+    }
+
+    public int getLastSessionContextTokens() {
+        return lastSessionContextTokens;
     }
 
     public int getLastMemoriesTokens() {
