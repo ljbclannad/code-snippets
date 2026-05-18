@@ -20,10 +20,25 @@ import java.util.stream.Collectors;
 @Service
 public class EmbeddingService {
 
+    private static final String EMBEDDING_MODEL = "text-embedding-v3";
+    private static final int EMBEDDING_DIMENSION = 1024;
+
     private final EmbeddingModel embeddingModel;
 
     public EmbeddingService(@Qualifier("dashscopeEmbeddingModel") EmbeddingModel embeddingModel) {
         this.embeddingModel = embeddingModel;
+    }
+
+    /**
+     * 验证向量维度
+     */
+    private void validateDimension(float[] embedding) {
+        if (embedding.length != EMBEDDING_DIMENSION) {
+            throw new IllegalStateException(
+                String.format("向量维度不匹配: expected=%d, actual=%d",
+                    EMBEDDING_DIMENSION, embedding.length)
+            );
+        }
     }
 
     /**
@@ -42,7 +57,7 @@ public class EmbeddingService {
         }
 
         try {
-            log.debug("Generating embedding for text, length: {}", text.length());
+            log.debug("Generating embedding for text using model: {}, length: {}", EMBEDDING_MODEL, text.length());
 
             // 调用 Spring AI EmbeddingModel
             EmbeddingResponse response = embeddingModel.embedForResponse(List.of(text));
@@ -54,9 +69,11 @@ public class EmbeddingService {
             // 提取向量
             float[] vector = response.getResults().get(0).getOutput();
 
+            validateDimension(vector);
+
             long duration = System.currentTimeMillis() - startTime;
-            log.info("Generated embedding successfully - text_length: {}, vector_dimension: {}, duration_ms: {}",
-                    text.length(), vector.length, duration);
+            log.info("Generated embedding successfully - model: {}, text_length: {}, vector_dimension: {}, duration_ms: {}",
+                    EMBEDDING_MODEL, text.length(), vector.length, duration);
 
             return vector;
 
@@ -89,7 +106,7 @@ public class EmbeddingService {
         }
 
         try {
-            log.debug("Generating embeddings for {} texts", texts.size());
+            log.debug("Generating embeddings for {} texts using model: {}", texts.size(), EMBEDDING_MODEL);
 
             // 调用 Spring AI EmbeddingModel
             EmbeddingResponse response = embeddingModel.embedForResponse(texts);
@@ -103,9 +120,19 @@ public class EmbeddingService {
                     .map(result -> result.getOutput())
                     .collect(Collectors.toList());
 
+            // 验证所有维度
+            for (int i = 0; i < vectors.size(); i++) {
+                try {
+                    validateDimension(vectors.get(i));
+                } catch (IllegalStateException e) {
+                    throw new IllegalStateException(
+                        String.format("批量嵌入验证失败，索引 %d: %s", i, e.getMessage()), e);
+                }
+            }
+
             long duration = System.currentTimeMillis() - startTime;
-            log.info("Generated embeddings successfully - text_count: {}, duration_ms: {}",
-                    texts.size(), duration);
+            log.info("Generated embeddings successfully - model: {}, text_count: {}, duration_ms: {}",
+                    EMBEDDING_MODEL, texts.size(), duration);
 
             return vectors;
 

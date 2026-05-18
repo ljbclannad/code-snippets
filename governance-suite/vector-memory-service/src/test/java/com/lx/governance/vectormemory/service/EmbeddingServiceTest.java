@@ -35,8 +35,8 @@ class EmbeddingServiceTest {
         // 验证：embedding 不为 null
         assertNotNull(embedding, "Embedding should not be null");
 
-        // 验证：维度为 1536 (DashScope text-embedding-v3 model)
-        assertEquals(1536, embedding.length, "Embedding dimension should be 1536");
+        // 验证：维度为 1024 (DashScope text-embedding-v3 model)
+        assertEquals(1024, embedding.length, "Embedding dimension should be 1024");
 
         // 打印前 5 个向量值
         log.info("Generated embedding for text: '{}'", text);
