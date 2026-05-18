@@ -71,4 +71,21 @@ public interface AiGroupMemoryMapper {
      * @param id 记忆ID
      */
     void deleteById(@Param("id") Long id);
+
+    /**
+     * 基于游标的分页查询待迁移的记忆（embedding_id 为 NULL）
+     *
+     * @param lastProcessedId 上次处理的最大ID（首次传入0）
+     * @param limit 每页数量
+     * @return 记忆列表
+     */
+    List<AiGroupMemoryEntity> selectPendingMigration(@Param("lastProcessedId") long lastProcessedId,
+                                                      @Param("limit") int limit);
+
+    /**
+     * 统计待迁移的记忆总数（embedding_id 为 NULL）
+     *
+     * @return 记忆总数
+     */
+    int countPendingMigration();
 }

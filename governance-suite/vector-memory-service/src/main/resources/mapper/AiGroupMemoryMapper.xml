@@ -96,4 +96,24 @@
         WHERE id = #{id}
     </update>
 
+    <!-- 基于游标的分页查询待迁移的记忆 -->
+    <select id="selectPendingMigration" resultMap="BaseResultMap">
+        SELECT
+        <include refid="Base_Column_List"/>
+        FROM b_ai_group_memory
+        WHERE embedding_id IS NULL
+          AND is_deleted = 0
+          AND id > #{lastProcessedId}
+        ORDER BY id ASC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 统计待迁移的记忆总数 -->
+    <select id="countPendingMigration" resultType="int">
+        SELECT COUNT(*)
+        FROM b_ai_group_memory
+        WHERE embedding_id IS NULL
+          AND is_deleted = 0
+    </select>
+
 </mapper>
