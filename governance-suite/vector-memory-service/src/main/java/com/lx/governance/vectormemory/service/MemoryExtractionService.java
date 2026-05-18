@@ -26,10 +26,13 @@ import java.util.List;
 @RequiredArgsConstructor
 public class MemoryExtractionService {
 
+    private static final int LOG_CONTENT_MAX_LENGTH = 50;
+
     private final DeepSeekDirectService deepSeekDirectService;
     private final VectorStoreService vectorStoreService;
     private final MemoryRetrievalService memoryRetrievalService;
     private final AiGroupMemoryMapper memoryMapper;
+    private final RedisMemoryIndexService redisMemoryIndexService;
 
     /**
      * 异步提取并保存记忆
@@ -72,21 +75,35 @@ public class MemoryExtractionService {
             int duplicateCount = 0;
 
             for (ExtractedMemory extracted : filteredMemories) {
-                // 检查是否存在相似记忆
+                // Step 3.1: Redis快速去重检查
+                if (redisMemoryIndexService != null) {
+                    try {
+                        if (redisMemoryIndexService.isDuplicate(groupId, extracted.getContent())) {
+                            log.info("记忆已存在（Redis去重）: {}", truncate(extracted.getContent(), LOG_CONTENT_MAX_LENGTH));
+                            duplicateCount++;
+                            continue;
+                        }
+                    } catch (Exception e) {
+                        log.warn("Redis去重检查失败（isDuplicate操作异常），继续Milvus去重 - groupId: {}, 错误: {}",
+                                groupId, e.getMessage());
+                    }
+                }
+
+                // Step 3.2: Milvus相似度去重（现有逻辑）
                 boolean hasSimilar = memoryRetrievalService.hasSimilarMemory(groupId, customerId, extracted.getContent());
 
                 if (hasSimilar) {
-                    log.debug("跳过重复记忆: {}", truncate(extracted.getContent(), 50));
+                    log.debug("跳过重复记忆（Milvus去重）: {}", truncate(extracted.getContent(), LOG_CONTENT_MAX_LENGTH));
                     duplicateCount++;
                     continue;
                 }
 
-                // 保存记忆
+                // Step 3.3: 保存记忆
                 try {
                     saveMemory(groupId, customerId, extracted, userMessage, aiResponse);
                     savedCount++;
                 } catch (Exception e) {
-                    log.error("保存记忆失败: {}, 错误: {}", truncate(extracted.getContent(), 50), e.getMessage(), e);
+                    log.error("保存记忆失败: {}, 错误: {}", truncate(extracted.getContent(), LOG_CONTENT_MAX_LENGTH), e.getMessage(), e);
                 }
             }
 
@@ -114,7 +131,7 @@ public class MemoryExtractionService {
     public void saveMemory(String groupId, String customerId, ExtractedMemory extracted,
                            String userMessage, String aiResponse) {
         log.debug("保存记忆 - groupId: {}, customerId: {}, category: {}, content: {}",
-                groupId, customerId, extracted.getCategory(), truncate(extracted.getContent(), 50));
+                groupId, customerId, extracted.getCategory(), truncate(extracted.getContent(), LOG_CONTENT_MAX_LENGTH));
 
         // Step 1: 构建 AiGroupMemoryEntity
         AiGroupMemoryEntity entity = new AiGroupMemoryEntity();
@@ -147,6 +164,26 @@ public class MemoryExtractionService {
                     entity.getId(), e.getMessage(), e);
             // TODO: 记录到补偿队列，后续重试
             throw new RuntimeException("Milvus 写入失败: " + e.getMessage(), e);
+        }
+
+        // Step 5: 更新Redis索引（失败不影响主流程）
+        // 注意：仅在 Milvus 写入成功后更新 Redis 索引
+        // 这样可以保证 Redis 索引的数据在 Milvus 中一定存在，避免索引指向不存在的向量
+        // 权衡：如果进程在此处崩溃，Redis 索引会缺失，但不会有脏数据（Redis 有 TTL 会自动过期）
+        if (redisMemoryIndexService != null) {
+            try {
+                redisMemoryIndexService.addToHashIndex(groupId, extracted.getContent());
+                redisMemoryIndexService.cacheRecentMemory(
+                    groupId,
+                    entity.getId(),
+                    extracted.getContent(),
+                    System.currentTimeMillis()
+                );
+                log.debug("Redis索引更新成功 - id: {}", entity.getId());
+            } catch (Exception e) {
+                log.warn("Redis索引更新失败（addToHashIndex/cacheRecentMemory操作异常，不影响主流程） - id: {}, 错误: {}",
+                        entity.getId(), e.getMessage());
+            }
         }
 
         log.info("记忆保存成功 - id: {}, embeddingId: {}, category: {}, confidence: {}",

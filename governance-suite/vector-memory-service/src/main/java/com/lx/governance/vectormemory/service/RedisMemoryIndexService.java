@@ -23,13 +23,21 @@ public class RedisMemoryIndexService {
     private static final int MAX_RECENT_MEMORIES = 20;
     private static final String MEMORY_FORMAT_SEPARATOR = ":";
 
-    @Autowired
+    @Autowired(required = false)
     private RedisTemplate<String, Object> redisTemplate;
+
+    @org.springframework.beans.factory.annotation.Value("${memory.redis.dedup.enabled:true}")
+    private boolean dedupEnabled;
 
     /**
      * 检查记忆是否重复
      */
     public boolean isDuplicate(String groupId, String content) {
+        if (!dedupEnabled || redisTemplate == null) {
+            log.debug("Redis去重已禁用或RedisTemplate不可用");
+            return false;
+        }
+
         String hashKey = HASH_KEY_PREFIX + groupId;
         String contentHash = md5(content);
 
@@ -46,6 +54,11 @@ public class RedisMemoryIndexService {
      * 添加记忆到去重索引
      */
     public void addToHashIndex(String groupId, String content) {
+        if (!dedupEnabled || redisTemplate == null) {
+            log.debug("Redis去重已禁用或RedisTemplate不可用，跳过索引更新");
+            return;
+        }
+
         String hashKey = HASH_KEY_PREFIX + groupId;
         String contentHash = md5(content);
 
@@ -66,6 +79,11 @@ public class RedisMemoryIndexService {
      * 缓存最近记忆
      */
     public void cacheRecentMemory(String groupId, Long memoryId, String content, double score) {
+        if (!dedupEnabled || redisTemplate == null) {
+            log.debug("Redis去重已禁用或RedisTemplate不可用，跳过缓存最近记忆");
+            return;
+        }
+
         String recentKey = RECENT_KEY_PREFIX + groupId;
 
         try {
@@ -96,6 +114,11 @@ public class RedisMemoryIndexService {
      * 获取最近记忆
      */
     public List<String> getRecentMemories(String groupId, int limit) {
+        if (redisTemplate == null) {
+            log.debug("RedisTemplate不可用，返回空列表");
+            return List.of();
+        }
+
         String recentKey = RECENT_KEY_PREFIX + groupId;
 
         try {
