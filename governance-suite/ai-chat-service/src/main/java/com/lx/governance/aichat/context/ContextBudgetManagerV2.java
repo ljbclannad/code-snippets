@@ -68,19 +68,177 @@ public class ContextBudgetManagerV2 {
         return profileTokens + contextTokens + memoryTokens + messageTokens;
     }
 
-    // 估算方法将在下一个任务实现
     private int estimateProfileTokens(UserProfileDTO profile) {
-        // TODO: Task 4实现
-        return 0;
+        if (profile == null) {
+            return 0;
+        }
+
+        StringBuilder profileText = new StringBuilder();
+
+        // 基本信息
+        if (profile.getBasicInfo() != null) {
+            profileText.append("基本信息:").append(profile.getBasicInfo().toString());
+        }
+
+        // 健康档案
+        if (profile.getHealthProfile() != null) {
+            profileText.append(",健康档案:").append(profile.getHealthProfile().toString());
+        }
+
+        return compressor.estimateTokens(profileText.toString());
     }
 
     private int estimateContextTokens(SessionContext sessionContext) {
-        // TODO: Task 4实现
-        return 0;
+        if (sessionContext == null) {
+            return 0;
+        }
+
+        StringBuilder contextText = new StringBuilder();
+
+        contextText.append("话题:").append(sessionContext.getCurrentTopic())
+            .append(",阶段:").append(sessionContext.getConversationPhase())
+            .append(",意图:").append(sessionContext.getUserIntent());
+
+        // 最近消息摘要
+        if (sessionContext.getRecentSummaries() != null) {
+            for (var summary : sessionContext.getRecentSummaries()) {
+                contextText.append(",").append(summary.getUserMessage());
+            }
+        }
+
+        return compressor.estimateTokens(contextText.toString());
     }
 
     private int estimateMemoriesTokens(List<String> memories) {
-        // TODO: Task 4实现
-        return 0;
+        if (memories == null || memories.isEmpty()) {
+            return 0;
+        }
+
+        return memories.stream()
+            .mapToInt(compressor::estimateTokens)
+            .sum();
+    }
+
+    /**
+     * 压缩内容以适应预算
+     */
+    public CompressedContent compressContent(
+            UserProfileDTO profile,
+            SessionContext sessionContext,
+            List<String> memories,
+            BudgetAllocation allocation) {
+
+        if (!allocation.isNeedsCompression()) {
+            return CompressedContent.builder()
+                .coreProfile(buildCoreProfile(profile))
+                .sessionContext(buildSessionContext(sessionContext))
+                .memories(memories)
+                .build();
+        }
+
+        log.info("内容超出预算，开始压缩: actual={}, budget={}",
+            allocation.getActualUsage(), allocation.getTotalBudget());
+
+        // 1. 核心画像（必需层，不压缩）
+        String coreProfile = buildCoreProfile(profile);
+
+        // 2. 会话上下文（必需层，轻度压缩）
+        String compressedContext = compressor.smartSummarize(
+            buildSessionContext(sessionContext),
+            allocation.getSessionContextBudget()
+        );
+
+        // 3. 相关记忆（重要层，按需压缩）
+        List<String> compressedMemories = compressor.compressListToTokens(
+            memories,
+            allocation.getMemoryBudget()
+        );
+
+        // 4. 扩展画像（可选层，可能被丢弃）
+        String extendedProfile = "";
+        int usedTokens = compressor.estimateTokens(coreProfile) +
+                         compressor.estimateTokens(compressedContext) +
+                         estimateMemoriesTokens(compressedMemories);
+
+        if (usedTokens + allocation.getUserMessageReserve() < allocation.getTotalBudget()) {
+            int remaining = allocation.getTotalBudget() - usedTokens - allocation.getUserMessageReserve();
+            extendedProfile = buildExtendedProfile(profile, remaining);
+        }
+
+        return CompressedContent.builder()
+            .coreProfile(coreProfile)
+            .sessionContext(compressedContext)
+            .memories(compressedMemories)
+            .extendedProfile(extendedProfile)
+            .build();
+    }
+
+    /**
+     * 构建核心画像文本
+     */
+    private String buildCoreProfile(UserProfileDTO profile) {
+        if (profile == null || profile.getBasicInfo() == null) {
+            return "";
+        }
+
+        return String.format("用户基本信息：%s", profile.getBasicInfo().toString());
+    }
+
+    /**
+     * 构建会话上下文文本
+     */
+    private String buildSessionContext(SessionContext context) {
+        if (context == null) {
+            return "";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("当前话题：").append(context.getCurrentTopic()).append("\n");
+        sb.append("对话阶段：").append(context.getConversationPhase()).append("\n");
+        sb.append("用户意图：").append(context.getUserIntent()).append("\n");
+
+        if (context.getRecentSummaries() != null && !context.getRecentSummaries().isEmpty()) {
+            sb.append("最近对话：\n");
+            for (var summary : context.getRecentSummaries()) {
+                sb.append("- ").append(summary.getUserMessage()).append("\n");
+            }
+        }
+
+        return sb.toString();
+    }
+
+    /**
+     * 构建扩展画像文本
+     */
+    private String buildExtendedProfile(UserProfileDTO profile, int maxTokens) {
+        if (profile == null) {
+            return "";
+        }
+
+        StringBuilder sb = new StringBuilder();
+
+        // 健康档案
+        if (profile.getHealthProfile() != null) {
+            sb.append("健康档案：").append(profile.getHealthProfile().toString()).append("\n");
+        }
+
+        // 行为偏好
+        if (profile.getBehaviorPreferences() != null) {
+            sb.append("行为偏好：").append(profile.getBehaviorPreferences().toString()).append("\n");
+        }
+
+        return compressor.compressToTokens(sb.toString(), maxTokens);
+    }
+
+    /**
+     * 压缩后的内容
+     */
+    @lombok.Data
+    @lombok.Builder
+    public static class CompressedContent {
+        private String coreProfile;
+        private String sessionContext;
+        private List<String> memories;
+        private String extendedProfile;
     }
 }
