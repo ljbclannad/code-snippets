@@ -4,22 +4,17 @@ server:
 spring:
   application:
     name: user-profile-service
-  
+
   cloud:
     nacos:
       discovery:
+        enabled: false
         server-addr: localhost:8848
-  
-  rabbitmq:
-    host: localhost
-    port: 5672
-    username: guest
-    password: guest
-  
+
   redis:
-    host: ${REDIS_HOST:localhost}
-    port: ${REDIS_PORT:36379}
-    password: ${REDIS_PASSWORD:}
+    host: localhost
+    port: 36379
+    password:
     database: 0
     lettuce:
       pool:
