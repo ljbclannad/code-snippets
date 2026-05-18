@@ -95,8 +95,8 @@ public class AiChatService {
             log.info("上下文获取完成 - customerId: {}, 记忆数: {}, correlationId: {}",
                     request.getCustomerId(), memories.size(), correlationId);
 
-            // 3. 调用 DeepSeek API（内部使用 ContextBudgetManager 构建系统提示词）
-            DifyResponse difyResponse = deepSeekClient.chat(request, profile, memories);
+            // 3. 调用 DeepSeek API（传入会话上下文，内部使用 ContextBudgetManager 构建系统提示词）
+            DifyResponse difyResponse = deepSeekClient.chat(request, profile, sessionContext, memories);
 
             // 4. 更新会话上下文
             sessionContextService.updateContext(sessionId, request.getMessage(), difyResponse.getAnswer());

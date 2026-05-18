@@ -5,6 +5,7 @@ import com.lx.governance.aichat.context.ContextBudgetManager;
 import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.DifyResponse;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
+import com.lx.governance.aichat.dto.SessionContext;
 import com.lx.governance.aichat.dto.UserProfileDTO;
 import com.lx.governance.aichat.monitor.TokenMonitor;
 import com.lx.governance.aichat.monitor.TokenUsageMetrics;
@@ -41,12 +42,13 @@ public class DeepSeekClient {
     /**
      * Send chat request to DeepSeek API
      *
-     * @param request     chat request
-     * @param userProfile user profile (nullable)
-     * @param memories    memory items (nullable)
+     * @param request        chat request
+     * @param userProfile    user profile (nullable)
+     * @param sessionContext session context (nullable)
+     * @param memories       memory items (nullable)
      * @return DifyResponse (compatible format)
      */
-    public DifyResponse chat(ChatRequest request, UserProfileDTO userProfile, List<MemoryItemDTO> memories) {
+    public DifyResponse chat(ChatRequest request, UserProfileDTO userProfile, SessionContext sessionContext, List<MemoryItemDTO> memories) {
         long startTime = System.currentTimeMillis();
 
         try {
@@ -54,7 +56,7 @@ public class DeepSeekClient {
                     request.getCustomerId(), request.getConversationId());
 
             // Build system prompt with context
-            String systemPrompt = buildSystemPrompt(request, userProfile, memories);
+            String systemPrompt = buildSystemPrompt(request, userProfile, sessionContext, memories);
             String userMessage = request.getMessage();
 
             // Construct Prompt with Spring AI (using SystemMessage and UserMessage)
@@ -106,12 +108,11 @@ public class DeepSeekClient {
     /**
      * Build system prompt with user profile and memories
      */
-    private String buildSystemPrompt(ChatRequest request, UserProfileDTO userProfile, List<MemoryItemDTO> memories) {
-        // 使用上下文预算管理器构建系统提示词（包含对话历史）
-        // TODO: 传入SessionContext参数，当前暂时传null
+    private String buildSystemPrompt(ChatRequest request, UserProfileDTO userProfile, SessionContext sessionContext, List<MemoryItemDTO> memories) {
+        // 使用上下文预算管理器构建系统提示词（包含会话上下文和对话历史）
         return contextBudgetManager.buildBudgetedSystemPrompt(
                 userProfile,
-                null, // SessionContext - 待Task 7集成
+                sessionContext,
                 memories,
                 request.getCustomerId(),
                 request.getConversationId(),

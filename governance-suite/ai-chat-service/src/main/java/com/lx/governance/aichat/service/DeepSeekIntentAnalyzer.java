@@ -40,7 +40,7 @@ public class DeepSeekIntentAnalyzer {
             chatRequest.setCustomerId("system");
             chatRequest.setConversationId("intent-analysis-" + System.currentTimeMillis());
 
-            DifyResponse response = deepSeekClient.chat(chatRequest, null, null);
+            DifyResponse response = deepSeekClient.chat(chatRequest, null, null, null);
 
             return parseAnalysisResult(response.getAnswer());
 
