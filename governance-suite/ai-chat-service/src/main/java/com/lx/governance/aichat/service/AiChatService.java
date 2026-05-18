@@ -8,6 +8,7 @@ import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.ChatResponse;
 import com.lx.governance.aichat.dto.DifyResponse;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
+import com.lx.governance.aichat.dto.SessionContext;
 import com.lx.governance.aichat.dto.UserProfileDTO;
 import com.lx.governance.aichat.entity.AiChatHistory;
 import com.lx.governance.aichat.mapper.AiChatHistoryMapper;
@@ -34,6 +35,7 @@ public class AiChatService {
     private final AiChatHistoryMapper chatHistoryMapper;
     private final RabbitTemplate rabbitTemplate;
     private final ChatHistorySearchService searchService;
+    private final SessionContextService sessionContextService;
 
     @Value("${ai-chat.chat-history.sync-enabled:true}")
     private boolean syncEnabled;
@@ -56,7 +58,23 @@ public class AiChatService {
                 correlationId);
 
         try {
-            // 1. 并行获取用户画像和记忆
+            // 1. 获取或创建会话上下文
+            String sessionId = request.getConversationId() != null ?
+                    request.getConversationId() : UUID.randomUUID().toString();
+
+            SessionContext sessionContext = sessionContextService.getOrCreateContext(
+                    sessionId,
+                    request.getCustomerId(),
+                    request.getGroupId(),
+                    request.getMessage());
+
+            log.info("会话上下文已准备 - sessionId: {}, intent: {}, phase: {}, correlationId: {}",
+                    sessionId,
+                    sessionContext.getUserIntent(),
+                    sessionContext.getConversationPhase(),
+                    correlationId);
+
+            // 2. 并行获取用户画像和记忆
             CompletableFuture<UserProfileDTO> profileFuture =
                 userProfileClient.requestUserProfile(request.getCustomerId());
 
@@ -77,13 +95,17 @@ public class AiChatService {
             log.info("上下文获取完成 - customerId: {}, 记忆数: {}, correlationId: {}",
                     request.getCustomerId(), memories.size(), correlationId);
 
-            // 2. 调用 DeepSeek API（内部使用 ContextBudgetManager 构建系统提示词）
+            // 3. 调用 DeepSeek API（内部使用 ContextBudgetManager 构建系统提示词）
             DifyResponse difyResponse = deepSeekClient.chat(request, profile, memories);
 
-            // 3. 保存对话历史
+            // 4. 更新会话上下文
+            sessionContextService.updateContext(sessionId, request.getMessage(), difyResponse.getAnswer());
+            log.debug("会话上下文已更新 - sessionId: {}, correlationId: {}", sessionId, correlationId);
+
+            // 5. 保存对话历史
             saveConversationHistory(request, difyResponse);
 
-            // 4. 异步触发记忆提取
+            // 6. 异步触发记忆提取
             CompletableFuture.runAsync(() -> {
                 try {
                     memoryService.extractMemory(
