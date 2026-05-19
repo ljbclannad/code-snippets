@@ -3,7 +3,10 @@ package com.health.agent.model;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 
@@ -11,14 +14,17 @@ import java.time.LocalDateTime;
  * Agent会话实体
  */
 @Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
 @TableName("agent_session")
 public class AgentSession {
 
     /**
      * 会话ID
      */
-    @TableId(type = IdType.ASSIGN_ID)
-    private String id;
+    @TableId(type = IdType.AUTO)
+    private Long id;
 
     /**
      * 患者ID

@@ -17,5 +17,10 @@ public enum TaskStatus {
     /**
      * 已拒绝
      */
-    REJECTED
+    REJECTED,
+
+    /**
+     * 已过期
+     */
+    EXPIRED
 }

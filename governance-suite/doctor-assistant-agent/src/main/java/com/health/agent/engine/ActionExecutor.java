@@ -3,6 +3,7 @@ package com.health.agent.engine;
 import com.alibaba.fastjson2.JSON;
 import com.health.agent.exception.AgentException;
 import com.health.agent.model.*;
+import com.health.agent.service.PendingTaskService;
 import com.health.agent.tool.Tool;
 import com.health.agent.tool.ToolRegistry;
 import lombok.extern.slf4j.Slf4j;
@@ -22,6 +23,9 @@ public class ActionExecutor {
 
     @Autowired
     private ToolRegistry toolRegistry;
+
+    @Autowired
+    private PendingTaskService pendingTaskService;
 
     /**
      * 执行 Agent 决定的行动
@@ -90,8 +94,9 @@ public class ActionExecutor {
             .expireAt(LocalDateTime.now().plusHours(24))
             .build();
 
-        // TODO: 保存到数据库
-        log.info("创建待确认任务: tool={}, customerId={}", tool.getName(), customerId);
+        pendingTaskService.save(task);
+
+        log.info("创建待确认任务: taskId={}, tool={}, customerId={}", task.getId(), tool.getName(), customerId);
 
         return ActionResult.pendingApproval(task);
     }

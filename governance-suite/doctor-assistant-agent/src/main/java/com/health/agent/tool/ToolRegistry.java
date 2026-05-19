@@ -1,11 +1,18 @@
 package com.health.agent.tool;
 
 import com.alibaba.fastjson2.JSON;
+import com.health.agent.service.PatientService;
+import com.health.agent.model.PatientProfile;
+import com.health.agent.model.WeightRecord;
+import com.health.agent.model.ChatMessage;
+import com.health.agent.model.PrescriptionRecord;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import jakarta.annotation.PostConstruct;
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * 工具注册中心
@@ -15,6 +22,9 @@ import java.util.*;
 public class ToolRegistry {
 
     private final Map<String, Tool> tools = new HashMap<>();
+
+    @Autowired
+    private PatientService patientService;
 
     @PostConstruct
     public void registerTools() {
@@ -188,17 +198,22 @@ public class ToolRegistry {
         String customerId = (String) input.get("customerId");
         log.info("查询患者档案: {}", customerId);
 
-        // TODO: 从数据库查询
+        PatientProfile profile = patientService.getProfile(customerId);
+        if (profile == null) {
+            return Map.of("error", "患者档案不存在");
+        }
+
         return Map.of(
-            "customerId", customerId,
-            "name", "张三",
-            "age", 35,
-            "gender", "女",
-            "height", 165.0,
-            "currentWeight", 62.0,
-            "targetWeight", 55.0,
-            "chronicDiseases", List.of("高血压"),
-            "bmi", 22.8
+            "customerId", profile.getCustomerId(),
+            "name", profile.getName(),
+            "age", profile.getAge(),
+            "gender", profile.getGender(),
+            "height", profile.getHeight(),
+            "currentWeight", profile.getCurrentWeight(),
+            "targetWeight", profile.getTargetWeight(),
+            "chronicDiseases", profile.getChronicDiseases() != null ?
+                Arrays.asList(profile.getChronicDiseases().split(",")) : List.of(),
+            "bmi", profile.getBmi()
         );
     }
 
@@ -207,12 +222,15 @@ public class ToolRegistry {
         Integer days = (Integer) input.getOrDefault("days", 30);
         log.info("查询体重历史: customerId={}, days={}", customerId, days);
 
-        // TODO: 从数据库查询
-        return List.of(
-            Map.of("date", "2024-01-01", "weight", 65.0),
-            Map.of("date", "2024-01-15", "weight", 63.5),
-            Map.of("date", "2024-02-01", "weight", 62.0)
-        );
+        List<WeightRecord> records = patientService.getWeightHistory(customerId, days);
+
+        return records.stream()
+            .map(record -> Map.of(
+                "date", record.getRecordDate().toString(),
+                "weight", record.getWeight(),
+                "bmi", record.getBmi() != null ? record.getBmi() : 0.0
+            ))
+            .collect(Collectors.toList());
     }
 
     private Object getChatHistory(Map<String, Object> input) {
@@ -220,11 +238,15 @@ public class ToolRegistry {
         Integer limit = (Integer) input.getOrDefault("limit", 20);
         log.info("查询聊天记录: customerId={}, limit={}", customerId, limit);
 
-        // TODO: 从数据库查询
-        return List.of(
-            Map.of("date", "2024-02-01", "message", "最近有点焦虑"),
-            Map.of("date", "2024-02-02", "message", "是不是方法不对")
-        );
+        List<ChatMessage> messages = patientService.getChatHistory(customerId, limit);
+
+        return messages.stream()
+            .map(msg -> Map.of(
+                "date", msg.getCreatedAt().toLocalDate().toString(),
+                "message", msg.getMessage(),
+                "sender", msg.getSender()
+            ))
+            .collect(Collectors.toList());
     }
 
     private Object getPrescriptionHistory(Map<String, Object> input) {
@@ -232,10 +254,16 @@ public class ToolRegistry {
         Integer limit = (Integer) input.getOrDefault("limit", 10);
         log.info("查询处方历史: customerId={}, limit={}", customerId, limit);
 
-        // TODO: 从数据库查询
-        return List.of(
-            Map.of("date", "2024-01-01", "medication", "降压药", "dosage", "每日一次")
-        );
+        List<PrescriptionRecord> prescriptions = patientService.getPrescriptionHistory(customerId, limit);
+
+        return prescriptions.stream()
+            .map(p -> Map.of(
+                "date", p.getCreatedAt().toLocalDate().toString(),
+                "medication", p.getMedication(),
+                "dosage", p.getDosage() != null ? p.getDosage() : "",
+                "duration", p.getDuration() != null ? p.getDuration() : ""
+            ))
+            .collect(Collectors.toList());
     }
 
     private Object calculateBmi(Map<String, Object> input) {

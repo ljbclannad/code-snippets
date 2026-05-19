@@ -4,6 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.health.agent.client.DeepSeekClient;
 import com.health.agent.exception.AgentException;
 import com.health.agent.model.*;
+import com.health.agent.service.AgentSessionService;
 import com.health.agent.tool.ToolRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,6 +36,9 @@ public class ReActAgentEngine {
     @Autowired
     private ToolRegistry toolRegistry;
 
+    @Autowired
+    private AgentSessionService sessionService;
+
     @Value("${agent.max-steps:15}")
     private int maxSteps;
 
@@ -47,8 +51,9 @@ public class ReActAgentEngine {
     public AgentResult execute(String goal, String customerId, String doctorId) {
         log.info("Agent开始执行任务: goal={}, customerId={}", goal, customerId);
 
-        // 创建会话ID（简化版，实际应该保存到数据库）
-        String sessionId = "session_" + System.currentTimeMillis();
+        // 创建会话
+        AgentSession session = sessionService.createSession(customerId, doctorId, goal);
+        String sessionId = String.valueOf(session.getId());
 
         List<Step> history = new ArrayList<>();
         List<Message> messages = new ArrayList<>();
@@ -86,6 +91,7 @@ public class ReActAgentEngine {
                 // 3. 检查是否完成
                 if (thought.isFinished()) {
                     log.info("Agent任务完成");
+                    sessionService.completeSession(sessionId, history);
                     return AgentResult.success(sessionId, thought.getFinalAnswer(), history, step + 1);
                 }
 
@@ -107,6 +113,7 @@ public class ReActAgentEngine {
                 // 5. 检查是否需要人工确认
                 if (actionResult.isNeedsApproval()) {
                     log.info("行动需要医生确认，Agent暂停");
+                    sessionService.pauseSession(sessionId, history);
                     return AgentResult.pendingApproval(
                         sessionId,
                         actionResult.getTask(),
@@ -122,13 +129,18 @@ public class ReActAgentEngine {
 
                 log.info("Agent观察结果: {}", observation);
 
+                // 7. 更新会话状态
+                sessionService.updateSession(sessionId, history, step + 1);
+
             } catch (Exception e) {
                 log.error("Agent执行异常", e);
+                sessionService.failSession(sessionId, e.getMessage());
                 return AgentResult.error(sessionId, e.getMessage(), history, step + 1);
             }
         }
 
         log.warn("Agent达到最大步数限制");
+        sessionService.failSession(sessionId, "达到最大步数限制");
         return AgentResult.maxStepsReached(sessionId, history, maxSteps);
     }
 
