@@ -1,0 +1,77 @@
+spring:
+  application:
+    name: doctor-assistant-agent
+
+  # 数据源配置
+  datasource:
+    url: jdbc:mysql://localhost:3306/doctor_assistant?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: root
+    password: ${MYSQL_PASSWORD:root}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  # Redis配置
+  redis:
+    host: localhost
+    port: 6379
+    database: 0
+    timeout: 3000ms
+    lettuce:
+      pool:
+        max-active: 8
+        max-idle: 8
+        min-idle: 0
+        max-wait: -1ms
+
+# MyBatis Plus配置
+mybatis-plus:
+  mapper-locations: classpath*:/mapper/**/*.xml
+  type-aliases-package: com.health.agent.model
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+
+# Claude API配置
+claude:
+  api:
+    key: ${CLAUDE_API_KEY}
+    base-url: https://api.anthropic.com
+    model: claude-opus-4-7
+    max-tokens: 4096
+    timeout: 60000
+
+# Agent配置
+agent:
+  max-steps: 15
+  session-timeout: 3600
+  task-expire-hours: 24
+
+# 服务器配置
+server:
+  port: 8088
+  servlet:
+    context-path: /
+
+# Actuator配置
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus,metrics
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+# 日志配置
+logging:
+  level:
+    root: INFO
+    com.health.agent: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
