@@ -2,6 +2,7 @@ package com.health.agent.engine;
 
 import com.alibaba.fastjson2.JSON;
 import com.health.agent.exception.AgentException;
+import com.health.agent.metrics.ToolMetrics;
 import com.health.agent.model.*;
 import com.health.agent.service.PendingTaskService;
 import com.health.agent.tool.Tool;
@@ -27,6 +28,9 @@ public class ActionExecutor {
     @Autowired
     private PendingTaskService pendingTaskService;
 
+    @Autowired
+    private ToolMetrics toolMetrics;
+
     /**
      * 执行 Agent 决定的行动
      */
@@ -38,6 +42,11 @@ public class ActionExecutor {
         }
 
         log.info("执行工具: {}, 风险等级: {}", tool.getName(), tool.getRiskLevel());
+
+        // 记录工具调用
+        toolMetrics.recordToolCall(tool.getName(), tool.getRiskLevel());
+        toolMetrics.recordToolCallByRiskLevel(tool.getRiskLevel());
+        toolMetrics.recordToolPopularity(tool.getName());
 
         // 根据风险等级决定执行策略
         switch (tool.getRiskLevel()) {
@@ -53,6 +62,7 @@ public class ActionExecutor {
 
             case HIGH:
                 // 高风险：创建待确认任务，暂停 Agent
+                toolMetrics.recordToolNeedsApproval(tool.getName());
                 return createPendingTask(customerId, sessionId, tool, action);
 
             default:
@@ -64,11 +74,22 @@ public class ActionExecutor {
      * 直接执行工具
      */
     private ActionResult executeDirectly(Tool tool, Map<String, Object> input) {
+        long startTime = System.currentTimeMillis();
+
         try {
             Object output = tool.getExecutor().execute(input);
+
+            // 记录成功
+            long duration = System.currentTimeMillis() - startTime;
+            toolMetrics.recordToolSuccess(tool.getName(), duration);
+
             return ActionResult.success(output);
         } catch (Exception e) {
             log.error("工具执行失败: {}", tool.getName(), e);
+
+            // 记录失败
+            toolMetrics.recordToolFailure(tool.getName(), e.getClass().getSimpleName());
+
             return ActionResult.error(e.getMessage());
         }
     }

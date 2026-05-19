@@ -1,0 +1,142 @@
+package com.health.agent.metrics;
+
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+
+import java.util.concurrent.TimeUnit;
+
+/**
+ * Agent 监控指标
+ */
+@Slf4j
+@Component
+public class AgentMetrics {
+
+    private final MeterRegistry meterRegistry;
+
+    // 计数器
+    private final Counter executionTotal;
+    private final Counter executionSuccess;
+    private final Counter executionFailure;
+    private final Counter executionPendingApproval;
+    private final Counter executionMaxSteps;
+
+    // 计时器
+    private final Timer executionDuration;
+
+    public AgentMetrics(MeterRegistry meterRegistry) {
+        this.meterRegistry = meterRegistry;
+
+        // 初始化计数器
+        this.executionTotal = Counter.builder("agent.execution.total")
+            .description("Agent 总执行次数")
+            .register(meterRegistry);
+
+        this.executionSuccess = Counter.builder("agent.execution.success")
+            .description("Agent 执行成功次数")
+            .register(meterRegistry);
+
+        this.executionFailure = Counter.builder("agent.execution.failure")
+            .description("Agent 执行失败次数")
+            .register(meterRegistry);
+
+        this.executionPendingApproval = Counter.builder("agent.execution.pending_approval")
+            .description("Agent 等待审批次数")
+            .register(meterRegistry);
+
+        this.executionMaxSteps = Counter.builder("agent.execution.max_steps")
+            .description("Agent 达到最大步数次数")
+            .register(meterRegistry);
+
+        // 初始化计时器
+        this.executionDuration = Timer.builder("agent.execution.duration")
+            .description("Agent 执行耗时")
+            .register(meterRegistry);
+    }
+
+    /**
+     * 记录 Agent 执行开始
+     */
+    public void recordExecutionStart() {
+        executionTotal.increment();
+    }
+
+    /**
+     * 记录 Agent 执行成功
+     */
+    public void recordExecutionSuccess(int steps, long durationMs) {
+        executionSuccess.increment();
+        executionDuration.record(durationMs, TimeUnit.MILLISECONDS);
+
+        // 记录步数分布
+        meterRegistry.summary("agent.execution.steps")
+            .record(steps);
+
+        log.debug("Agent 执行成功: steps={}, duration={}ms", steps, durationMs);
+    }
+
+    /**
+     * 记录 Agent 执行失败
+     */
+    public void recordExecutionFailure(String errorType) {
+        executionFailure.increment();
+
+        // 按错误类型分类
+        Counter.builder("agent.execution.failure.by_type")
+            .tag("error_type", errorType)
+            .register(meterRegistry)
+            .increment();
+
+        log.debug("Agent 执行失败: errorType={}", errorType);
+    }
+
+    /**
+     * 记录 Agent 等待审批
+     */
+    public void recordPendingApproval(String toolName) {
+        executionPendingApproval.increment();
+
+        // 按工具分类
+        Counter.builder("agent.pending_approval.by_tool")
+            .tag("tool", toolName)
+            .register(meterRegistry)
+            .increment();
+
+        log.debug("Agent 等待审批: tool={}", toolName);
+    }
+
+    /**
+     * 记录 Agent 达到最大步数
+     */
+    public void recordMaxStepsReached(int maxSteps) {
+        executionMaxSteps.increment();
+
+        log.warn("Agent 达到最大步数: maxSteps={}", maxSteps);
+    }
+
+    /**
+     * 记录 Token 使用量
+     */
+    public void recordTokenUsage(int promptTokens, int completionTokens, int totalTokens) {
+        meterRegistry.counter("agent.tokens.prompt").increment(promptTokens);
+        meterRegistry.counter("agent.tokens.completion").increment(completionTokens);
+        meterRegistry.counter("agent.tokens.total").increment(totalTokens);
+
+        log.debug("Token 使用: prompt={}, completion={}, total={}",
+            promptTokens, completionTokens, totalTokens);
+    }
+
+    /**
+     * 记录会话状态
+     */
+    public void recordSessionStatus(String status) {
+        Counter.builder("agent.sessions.by_status")
+            .tag("status", status)
+            .description("按状态统计的会话数")
+            .register(meterRegistry)
+            .increment();
+    }
+}

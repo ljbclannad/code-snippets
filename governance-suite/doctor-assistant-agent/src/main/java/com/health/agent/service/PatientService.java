@@ -11,6 +11,8 @@ import com.health.agent.model.ChatMessage;
 import com.health.agent.model.PrescriptionRecord;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -38,7 +40,10 @@ public class PatientService {
     /**
      * 查询患者档案
      */
+    @Cacheable(value = "patientProfile", key = "#customerId", unless = "#result == null")
     public PatientProfile getProfile(String customerId) {
+        log.debug("从数据库查询患者档案: customerId={}", customerId);
+
         LambdaQueryWrapper<PatientProfile> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(PatientProfile::getCustomerId, customerId);
 
@@ -53,7 +58,10 @@ public class PatientService {
     /**
      * 查询体重历史记录
      */
+    @Cacheable(value = "weightRecords", key = "#customerId + '_' + #days")
     public List<WeightRecord> getWeightHistory(String customerId, int days) {
+        log.debug("从数据库查询体重记录: customerId={}, days={}", customerId, days);
+
         LocalDate startDate = LocalDate.now().minusDays(days);
 
         LambdaQueryWrapper<WeightRecord> wrapper = new LambdaQueryWrapper<>();
@@ -67,7 +75,10 @@ public class PatientService {
     /**
      * 查询聊天记录
      */
+    @Cacheable(value = "chatHistory", key = "#customerId + '_' + #limit")
     public List<ChatMessage> getChatHistory(String customerId, int limit) {
+        log.debug("从数据库查询聊天记录: customerId={}, limit={}", customerId, limit);
+
         LambdaQueryWrapper<ChatMessage> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(ChatMessage::getCustomerId, customerId)
             .orderByDesc(ChatMessage::getCreatedAt)
@@ -79,7 +90,10 @@ public class PatientService {
     /**
      * 查询处方历史
      */
+    @Cacheable(value = "prescriptionHistory", key = "#customerId + '_' + #limit")
     public List<PrescriptionRecord> getPrescriptionHistory(String customerId, int limit) {
+        log.debug("从数据库查询处方历史: customerId={}, limit={}", customerId, limit);
+
         LambdaQueryWrapper<PrescriptionRecord> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(PrescriptionRecord::getCustomerId, customerId)
             .orderByDesc(PrescriptionRecord::getCreatedAt)
@@ -91,6 +105,7 @@ public class PatientService {
     /**
      * 保存患者档案
      */
+    @CacheEvict(value = "patientProfile", key = "#profile.customerId")
     public void saveProfile(PatientProfile profile) {
         profileMapper.insert(profile);
         log.info("保存患者档案: customerId={}", profile.getCustomerId());
@@ -99,6 +114,7 @@ public class PatientService {
     /**
      * 保存体重记录
      */
+    @CacheEvict(value = "weightRecords", allEntries = true)
     public void saveWeightRecord(WeightRecord record) {
         weightMapper.insert(record);
         log.info("保存体重记录: customerId={}, weight={}", record.getCustomerId(), record.getWeight());
@@ -107,6 +123,7 @@ public class PatientService {
     /**
      * 保存聊天记录
      */
+    @CacheEvict(value = "chatHistory", allEntries = true)
     public void saveChatMessage(ChatMessage message) {
         chatMapper.insert(message);
         log.debug("保存聊天记录: customerId={}", message.getCustomerId());
@@ -115,6 +132,7 @@ public class PatientService {
     /**
      * 保存处方记录
      */
+    @CacheEvict(value = "prescriptionHistory", allEntries = true)
     public void savePrescription(PrescriptionRecord prescription) {
         prescriptionMapper.insert(prescription);
         log.info("保存处方记录: customerId={}, medication={}",

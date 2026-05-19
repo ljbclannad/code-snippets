@@ -3,6 +3,7 @@ package com.health.agent.engine;
 import com.alibaba.fastjson2.JSON;
 import com.health.agent.client.DeepSeekClient;
 import com.health.agent.exception.AgentException;
+import com.health.agent.metrics.AgentMetrics;
 import com.health.agent.model.*;
 import com.health.agent.service.AgentSessionService;
 import com.health.agent.tool.Tool;
@@ -40,6 +41,9 @@ public class ReActAgentEngine {
     @Autowired
     private AgentSessionService sessionService;
 
+    @Autowired
+    private AgentMetrics agentMetrics;
+
     @Value("${agent.max-steps:15}")
     private int maxSteps;
 
@@ -50,7 +54,11 @@ public class ReActAgentEngine {
      * 执行 Agent 任务
      */
     public AgentResult execute(String goal, String customerId, String doctorId) {
+        long startTime = System.currentTimeMillis();
         log.info("Agent开始执行任务: goal={}, customerId={}", goal, customerId);
+
+        // 记录执行开始
+        agentMetrics.recordExecutionStart();
 
         // 创建会话
         AgentSession session = sessionService.createSession(customerId, doctorId, goal);
@@ -93,6 +101,11 @@ public class ReActAgentEngine {
                 if (thought.isFinished()) {
                     log.info("Agent任务完成");
                     sessionService.completeSession(sessionId, history);
+
+                    // 记录成功
+                    long duration = System.currentTimeMillis() - startTime;
+                    agentMetrics.recordExecutionSuccess(step + 1, duration);
+
                     return AgentResult.success(sessionId, thought.getFinalAnswer(), history, step + 1);
                 }
 
@@ -115,6 +128,10 @@ public class ReActAgentEngine {
                 if (actionResult.isNeedsApproval()) {
                     log.info("行动需要医生确认，Agent暂停");
                     sessionService.pauseSession(sessionId, history, messages);
+
+                    // 记录等待审批
+                    agentMetrics.recordPendingApproval(action.getToolName());
+
                     return AgentResult.pendingApproval(
                         sessionId,
                         actionResult.getTask(),
@@ -136,12 +153,20 @@ public class ReActAgentEngine {
             } catch (Exception e) {
                 log.error("Agent执行异常", e);
                 sessionService.failSession(sessionId, e.getMessage());
+
+                // 记录失败
+                agentMetrics.recordExecutionFailure(e.getClass().getSimpleName());
+
                 return AgentResult.error(sessionId, e.getMessage(), history, step + 1);
             }
         }
 
         log.warn("Agent达到最大步数限制");
         sessionService.failSession(sessionId, "达到最大步数限制");
+
+        // 记录达到最大步数
+        agentMetrics.recordMaxStepsReached(maxSteps);
+
         return AgentResult.maxStepsReached(sessionId, history, maxSteps);
     }
 
@@ -149,6 +174,7 @@ public class ReActAgentEngine {
      * 继续执行（用于人工确认后恢复）
      */
     public AgentResult resume(String sessionId, Long approvedTaskId) {
+        long startTime = System.currentTimeMillis();
         log.info("Agent恢复执行: sessionId={}, taskId={}", sessionId, approvedTaskId);
 
         try {
@@ -236,6 +262,7 @@ public class ReActAgentEngine {
         List<Message> messages,
         int startStep
     ) {
+        long startTime = System.currentTimeMillis();
         log.info("继续ReAct循环: sessionId={}, startStep={}", sessionId, startStep);
 
         // 构建 System Prompt
@@ -266,6 +293,11 @@ public class ReActAgentEngine {
                 if (thought.isFinished()) {
                     log.info("Agent任务完成");
                     sessionService.completeSession(sessionId, history);
+
+                    // 记录成功
+                    long duration = System.currentTimeMillis() - startTime;
+                    agentMetrics.recordExecutionSuccess(step + 1, duration);
+
                     return AgentResult.success(sessionId, thought.getFinalAnswer(), history, step + 1);
                 }
 
@@ -288,6 +320,10 @@ public class ReActAgentEngine {
                 if (actionResult.isNeedsApproval()) {
                     log.info("行动需要医生确认，Agent暂停");
                     sessionService.pauseSession(sessionId, history, messages);
+
+                    // 记录等待审批
+                    agentMetrics.recordPendingApproval(action.getToolName());
+
                     return AgentResult.pendingApproval(
                         sessionId,
                         actionResult.getTask(),
@@ -309,12 +345,20 @@ public class ReActAgentEngine {
             } catch (Exception e) {
                 log.error("Agent执行异常", e);
                 sessionService.failSession(sessionId, e.getMessage());
+
+                // 记录失败
+                agentMetrics.recordExecutionFailure(e.getClass().getSimpleName());
+
                 return AgentResult.error(sessionId, e.getMessage(), history, step + 1);
             }
         }
 
         log.warn("Agent达到最大步数限制");
         sessionService.failSession(sessionId, "达到最大步数限制");
+
+        // 记录达到最大步数
+        agentMetrics.recordMaxStepsReached(maxSteps);
+
         return AgentResult.maxStepsReached(sessionId, history, maxSteps);
     }
 

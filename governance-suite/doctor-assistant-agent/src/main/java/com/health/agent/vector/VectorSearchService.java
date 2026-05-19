@@ -1,8 +1,10 @@
 package com.health.agent.vector;
 
+import com.health.agent.metrics.VectorMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -22,23 +24,43 @@ public class VectorSearchService {
     @Autowired
     private EmbeddingGenerator embeddingGenerator;
 
+    @Autowired
+    private VectorMetrics vectorMetrics;
+
     @Value("${vector.search.top-k:5}")
     private int defaultTopK;
 
     /**
      * 搜索相似病例
      */
+    @Cacheable(value = "vectorSearch", key = "#query + '_' + #topK")
     public List<CaseVector> searchSimilarCases(String query, int topK) {
+        long startTime = System.currentTimeMillis();
         log.info("搜索相似病例: query={}, topK={}", query, topK);
 
-        // 1. 生成查询向量
-        List<Float> queryVector = embeddingGenerator.generateEmbedding(query);
+        // 记录请求
+        vectorMetrics.recordSearchRequest(topK);
 
-        // 2. 向量搜索
-        List<CaseVector> results = milvusClient.search(queryVector, topK);
+        try {
+            // 1. 生成查询向量
+            List<Float> queryVector = embeddingGenerator.generateEmbedding(query);
 
-        log.info("找到相似病例: count={}", results.size());
-        return results;
+            // 2. 向量搜索
+            List<CaseVector> results = milvusClient.search(queryVector, topK);
+
+            // 3. 记录成功
+            long duration = System.currentTimeMillis() - startTime;
+            vectorMetrics.recordSearchSuccess(results.size(), duration);
+
+            log.info("找到相似病例: count={}, duration={}ms", results.size(), duration);
+            return results;
+
+        } catch (Exception e) {
+            // 记录失败
+            vectorMetrics.recordSearchFailure(e.getClass().getSimpleName());
+            log.error("向量检索失败", e);
+            return Collections.emptyList();
+        }
     }
 
     /**
@@ -52,6 +74,7 @@ public class VectorSearchService {
      * 添加病例向量
      */
     public void addCase(CaseVector caseVector) {
+        long startTime = System.currentTimeMillis();
         log.info("添加病例向量: caseId={}", caseVector.getCaseId());
 
         // 1. 生成向量
@@ -62,12 +85,17 @@ public class VectorSearchService {
 
         // 2. 插入 Milvus
         milvusClient.insert(caseVector);
+
+        // 3. 记录指标
+        long duration = System.currentTimeMillis() - startTime;
+        vectorMetrics.recordInsert(1, duration);
     }
 
     /**
      * 批量添加病例向量
      */
     public void batchAddCases(List<CaseVector> caseVectors) {
+        long startTime = System.currentTimeMillis();
         log.info("批量添加病例向量: count={}", caseVectors.size());
 
         // 1. 生成向量
@@ -80,6 +108,10 @@ public class VectorSearchService {
 
         // 2. 批量插入 Milvus
         milvusClient.batchInsert(caseVectors);
+
+        // 3. 记录指标
+        long duration = System.currentTimeMillis() - startTime;
+        vectorMetrics.recordInsert(caseVectors.size(), duration);
     }
 
     /**
