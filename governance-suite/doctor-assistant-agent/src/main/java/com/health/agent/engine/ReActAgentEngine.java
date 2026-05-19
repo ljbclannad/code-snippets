@@ -1,6 +1,7 @@
 package com.health.agent.engine;
 
 import com.alibaba.fastjson2.JSON;
+import com.health.agent.client.DeepSeekClient;
 import com.health.agent.exception.AgentException;
 import com.health.agent.model.*;
 import com.health.agent.tool.ToolRegistry;
@@ -20,6 +21,9 @@ import java.util.List;
 public class ReActAgentEngine {
 
     @Autowired
+    private DeepSeekClient deepSeekClient;
+
+    @Autowired
     private ReActPromptBuilder promptBuilder;
 
     @Autowired
@@ -33,6 +37,9 @@ public class ReActAgentEngine {
 
     @Value("${agent.max-steps:15}")
     private int maxSteps;
+
+    @Value("${agent.use-mock:false}")
+    private boolean useMock;
 
     /**
      * 执行 Agent 任务
@@ -57,9 +64,16 @@ public class ReActAgentEngine {
             log.info("Agent执行第{}步", step + 1);
 
             try {
-                // 1. 调用 Claude API 获取 Thought 和 Action
-                // TODO: 实现 Claude API 调用
-                String responseText = mockClaudeResponse(step, customerId);
+                // 1. 调用 DeepSeek API 获取 Thought 和 Action
+                String responseText;
+                if (useMock) {
+                    // Mock 模式（用于测试）
+                    responseText = mockDeepSeekResponse(step, customerId);
+                } else {
+                    // 真实调用 DeepSeek API
+                    DeepSeekClient.DeepSeekResponse response = deepSeekClient.chat(systemPrompt, messages);
+                    responseText = response.getContent();
+                }
                 log.info("Agent响应: {}", responseText);
 
                 // 2. 解析响应
@@ -144,10 +158,9 @@ public class ReActAgentEngine {
     }
 
     /**
-     * Mock Claude 响应（用于测试）
-     * TODO: 替换为真实的 Claude API 调用
+     * Mock DeepSeek 响应（用于测试）
      */
-    private String mockClaudeResponse(int step, String customerId) {
+    private String mockDeepSeekResponse(int step, String customerId) {
         switch (step) {
             case 0:
                 return """
