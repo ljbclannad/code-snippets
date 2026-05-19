@@ -5,6 +5,7 @@ import com.health.agent.client.DeepSeekClient;
 import com.health.agent.exception.AgentException;
 import com.health.agent.model.*;
 import com.health.agent.service.AgentSessionService;
+import com.health.agent.tool.Tool;
 import com.health.agent.tool.ToolRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -113,7 +114,7 @@ public class ReActAgentEngine {
                 // 5. 检查是否需要人工确认
                 if (actionResult.isNeedsApproval()) {
                     log.info("行动需要医生确认，Agent暂停");
-                    sessionService.pauseSession(sessionId, history);
+                    sessionService.pauseSession(sessionId, history, messages);
                     return AgentResult.pendingApproval(
                         sessionId,
                         actionResult.getTask(),
@@ -130,7 +131,7 @@ public class ReActAgentEngine {
                 log.info("Agent观察结果: {}", observation);
 
                 // 7. 更新会话状态
-                sessionService.updateSession(sessionId, history, step + 1);
+                sessionService.updateSession(sessionId, history, messages, step + 1);
 
             } catch (Exception e) {
                 log.error("Agent执行异常", e);
@@ -150,12 +151,171 @@ public class ReActAgentEngine {
     public AgentResult resume(String sessionId, Long approvedTaskId) {
         log.info("Agent恢复执行: sessionId={}, taskId={}", sessionId, approvedTaskId);
 
-        // TODO: 从数据库恢复 Agent 状态
-        // TODO: 获取已批准的任务
-        // TODO: 执行已批准的行动
-        // TODO: 继续 ReAct 循环
+        try {
+            // 1. 从数据库恢复会话状态
+            AgentSession session = sessionService.getById(sessionId);
+            if (session == null) {
+                throw new AgentException("会话不存在: " + sessionId);
+            }
 
-        throw new AgentException("resume 方法待实现");
+            // 2. 验证会话状态
+            if (!SessionStatus.PAUSED.name().equals(session.getStatus())) {
+                throw new AgentException("会话状态不正确，当前状态: " + session.getStatus());
+            }
+
+            // 3. 获取并验证已批准的任务
+            PendingTask task = sessionService.getPendingTask(approvedTaskId);
+            if (task == null) {
+                throw new AgentException("任务不存在: " + approvedTaskId);
+            }
+
+            if (!sessionId.equals(task.getAgentSessionId())) {
+                throw new AgentException("任务不属于该会话");
+            }
+
+            if (!TaskStatus.APPROVED.name().equals(task.getStatus())) {
+                throw new AgentException("任务未批准，当前状态: " + task.getStatus());
+            }
+
+            // 4. 恢复执行历史和消息
+            List<Step> history = JSON.parseArray(session.getHistoryJson(), Step.class);
+            List<Message> messages = JSON.parseArray(session.getMessagesJson(), Message.class);
+            int currentStep = session.getCurrentStep() != null ? session.getCurrentStep() : 0;
+
+            log.info("恢复会话状态: sessionId={}, currentStep={}, historySize={}",
+                sessionId, currentStep, history.size());
+
+            // 5. 执行已批准的行动
+            ActionDecision action = JSON.parseObject(task.getInputJson(), ActionDecision.class);
+            log.info("执行已批准的行动: tool={}, input={}",
+                action.getToolName(), JSON.toJSONString(action.getInput()));
+
+            // 直接执行工具（跳过风险检查，因为已经批准）
+            Tool tool = toolRegistry.getTool(action.getToolName());
+            if (tool == null) {
+                throw new AgentException("工具不存在: " + action.getToolName());
+            }
+            Object output = tool.getExecutor().execute(action.getInput());
+            ActionResult actionResult = ActionResult.success(JSON.toJSONString(output));
+
+            // 6. 记录 Observation
+            String observation = formatObservation(actionResult);
+            history.add(Step.observation(observation));
+            messages.add(Message.user("Observation: " + observation));
+
+            log.info("行动执行完成: {}", observation);
+
+            // 7. 恢复会话为运行状态
+            sessionService.resumeSession(sessionId);
+
+            // 8. 继续 ReAct 循环
+            return continueReActLoop(
+                sessionId,
+                session.getGoal(),
+                session.getCustomerId(),
+                history,
+                messages,
+                currentStep + 1
+            );
+
+        } catch (Exception e) {
+            log.error("Agent恢复执行异常", e);
+            sessionService.failSession(sessionId, e.getMessage());
+            return AgentResult.error(sessionId, e.getMessage(), new ArrayList<>(), 0);
+        }
+    }
+
+    /**
+     * 继续 ReAct 循环
+     */
+    private AgentResult continueReActLoop(
+        String sessionId,
+        String goal,
+        String customerId,
+        List<Step> history,
+        List<Message> messages,
+        int startStep
+    ) {
+        log.info("继续ReAct循环: sessionId={}, startStep={}", sessionId, startStep);
+
+        // 构建 System Prompt
+        String systemPrompt = promptBuilder.buildSystemPrompt(toolRegistry.getAllTools());
+
+        for (int step = startStep; step < maxSteps; step++) {
+            log.info("Agent执行第{}步", step + 1);
+
+            try {
+                // 1. 调用 DeepSeek API 获取 Thought 和 Action
+                String responseText;
+                if (useMock) {
+                    responseText = mockDeepSeekResponse(step, customerId);
+                } else {
+                    DeepSeekClient.DeepSeekResponse response = deepSeekClient.chat(systemPrompt, messages);
+                    responseText = response.getContent();
+                }
+                log.info("Agent响应: {}", responseText);
+
+                // 2. 解析响应
+                ThoughtResult thought = responseParser.parse(responseText);
+
+                // 记录 Thought
+                history.add(Step.thought(thought.getThinking()));
+                messages.add(Message.assistant(responseText));
+
+                // 3. 检查是否完成
+                if (thought.isFinished()) {
+                    log.info("Agent任务完成");
+                    sessionService.completeSession(sessionId, history);
+                    return AgentResult.success(sessionId, thought.getFinalAnswer(), history, step + 1);
+                }
+
+                // 4. 执行 Action
+                ActionDecision action = thought.getAction();
+                history.add(Step.action(action));
+
+                log.info("Agent执行行动: tool={}, input={}",
+                    action.getToolName(),
+                    JSON.toJSONString(action.getInput())
+                );
+
+                ActionResult actionResult = actionExecutor.execute(
+                    action,
+                    customerId,
+                    sessionId
+                );
+
+                // 5. 检查是否需要人工确认
+                if (actionResult.isNeedsApproval()) {
+                    log.info("行动需要医生确认，Agent暂停");
+                    sessionService.pauseSession(sessionId, history, messages);
+                    return AgentResult.pendingApproval(
+                        sessionId,
+                        actionResult.getTask(),
+                        history,
+                        step + 1
+                    );
+                }
+
+                // 6. 记录 Observation
+                String observation = formatObservation(actionResult);
+                history.add(Step.observation(observation));
+                messages.add(Message.user("Observation: " + observation));
+
+                log.info("Agent观察结果: {}", observation);
+
+                // 7. 更新会话状态
+                sessionService.updateSession(sessionId, history, messages, step + 1);
+
+            } catch (Exception e) {
+                log.error("Agent执行异常", e);
+                sessionService.failSession(sessionId, e.getMessage());
+                return AgentResult.error(sessionId, e.getMessage(), history, step + 1);
+            }
+        }
+
+        log.warn("Agent达到最大步数限制");
+        sessionService.failSession(sessionId, "达到最大步数限制");
+        return AgentResult.maxStepsReached(sessionId, history, maxSteps);
     }
 
     /**

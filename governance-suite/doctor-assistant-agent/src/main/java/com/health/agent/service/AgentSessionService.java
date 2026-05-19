@@ -3,7 +3,10 @@ package com.health.agent.service;
 import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.health.agent.mapper.AgentSessionMapper;
+import com.health.agent.mapper.PendingTaskMapper;
 import com.health.agent.model.AgentSession;
+import com.health.agent.model.Message;
+import com.health.agent.model.PendingTask;
 import com.health.agent.model.SessionStatus;
 import com.health.agent.model.Step;
 import lombok.extern.slf4j.Slf4j;
@@ -23,6 +26,9 @@ public class AgentSessionService {
     @Autowired
     private AgentSessionMapper sessionMapper;
 
+    @Autowired
+    private PendingTaskMapper taskMapper;
+
     /**
      * 创建会话
      */
@@ -33,6 +39,8 @@ public class AgentSessionService {
             .goal(goal)
             .status(SessionStatus.RUNNING.name())
             .historyJson("[]")
+            .messagesJson("[]")
+            .currentStep(0)
             .createdAt(LocalDateTime.now())
             .updatedAt(LocalDateTime.now())
             .build();
@@ -44,9 +52,9 @@ public class AgentSessionService {
     }
 
     /**
-     * 更新会话状态
+     * 更新会话状态（包含消息）
      */
-    public void updateSession(String sessionId, List<Step> history, int currentStep) {
+    public void updateSession(String sessionId, List<Step> history, List<Message> messages, int currentStep) {
         AgentSession session = getById(sessionId);
         if (session == null) {
             log.warn("会话不存在: {}", sessionId);
@@ -54,6 +62,7 @@ public class AgentSessionService {
         }
 
         session.setHistoryJson(JSON.toJSONString(history));
+        session.setMessagesJson(JSON.toJSONString(messages));
         session.setCurrentStep(currentStep);
         session.setUpdatedAt(LocalDateTime.now());
 
@@ -64,7 +73,7 @@ public class AgentSessionService {
     /**
      * 暂停会话（等待人工确认）
      */
-    public void pauseSession(String sessionId, List<Step> history) {
+    public void pauseSession(String sessionId, List<Step> history, List<Message> messages) {
         AgentSession session = getById(sessionId);
         if (session == null) {
             log.warn("会话不存在: {}", sessionId);
@@ -73,10 +82,28 @@ public class AgentSessionService {
 
         session.setStatus(SessionStatus.PAUSED.name());
         session.setHistoryJson(JSON.toJSONString(history));
+        session.setMessagesJson(JSON.toJSONString(messages));
         session.setUpdatedAt(LocalDateTime.now());
 
         sessionMapper.updateById(session);
         log.info("暂停会话: sessionId={}", sessionId);
+    }
+
+    /**
+     * 恢复会话（人工确认后）
+     */
+    public void resumeSession(String sessionId) {
+        AgentSession session = getById(sessionId);
+        if (session == null) {
+            log.warn("会话不存在: {}", sessionId);
+            return;
+        }
+
+        session.setStatus(SessionStatus.RUNNING.name());
+        session.setUpdatedAt(LocalDateTime.now());
+
+        sessionMapper.updateById(session);
+        log.info("恢复会话: sessionId={}", sessionId);
     }
 
     /**
@@ -127,6 +154,13 @@ public class AgentSessionService {
             log.error("无效的会话ID: {}", sessionId);
             return null;
         }
+    }
+
+    /**
+     * 获取待确认任务
+     */
+    public PendingTask getPendingTask(Long taskId) {
+        return taskMapper.selectById(taskId);
     }
 
     /**
