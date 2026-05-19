@@ -1,20 +1,22 @@
 package com.lx.governance.aichat.client;
 
-import com.lx.governance.aichat.dto.UserProfileDTO;
-import com.lx.governance.aichat.dto.UserProfileRequestMessage;
-import com.lx.governance.aichat.dto.UserProfileResponseMessage;
-import com.lx.governance.common.trace.Trace;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Component;
 
-import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
+import com.lx.governance.aichat.dto.UserProfileDTO;
+import com.lx.governance.aichat.dto.UserProfileRequestMessage;
+import com.lx.governance.aichat.dto.UserProfileResponseMessage;
+import com.lx.governance.common.trace.Trace;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * 用户画像客户端 - 使用固定响应队列
@@ -33,6 +35,45 @@ public class UserProfileClientFixed {
     // 存储待处理的请求
     private final Map<String, CompletableFuture<UserProfileResponseMessage>> pendingRequests = new ConcurrentHashMap<>();
 
+    /**
+     * RabbitMQ RPC 异步调用流程：
+     *
+     * <pre>
+     * 调用方线程                    RabbitMQ                    服务端线程                    监听器线程
+     *     |                           |                           |                           |
+     *     |--① 创建 Future ---------->|                           |                           |
+     *     |   存入 pendingRequests    |                           |                           |
+     *     |                           |                           |                           |
+     *     |--② 发送消息 ------------->|                           |                           |
+     *     |   (replyTo + correlationId)|                          |                           |
+     *     |                           |                           |                           |
+     *     |--③ 返回 Future ---------->|                           |                           |
+     *     |   (立即返回，无数据)        |                           |                           |
+     *     |                           |                           |                           |
+     *     |                           |--④ 路由到服务端 -------->|                           |
+     *     |                           |                           |                           |
+     *     |                           |                           |--⑤ 处理业务逻辑          |
+     *     |                           |                           |   查询用户画像            |
+     *     |                           |                           |                           |
+     *     |                           |<--⑥ 发送响应到 replyTo --|                           |
+     *     |                           |   (携带 correlationId)    |                           |
+     *     |                           |                           |                           |
+     *     |                           |--⑦ 路由到监听器 ---------------------------------->|
+     *     |                           |                           |                           |
+     *     |                           |                           |                           |--⑧ 提取 correlationId
+     *     |                           |                           |                           |   从 Map 获取 Future
+     *     |                           |                           |                           |
+     *     |                           |                           |                           |--⑨ future.complete()
+     *     |                           |                           |                           |
+     *     |<--⑩ join/get 获取结果 ----------------------------------------------------|
+     *     |   (阻塞等待直到 Future 完成)
+     *
+     * 关键点：
+     * - correlationId：匹配异步请求和响应
+     * - replyTo：指定响应队列（固定队列，所有请求共用）
+     * - CompletableFuture：实现异步等待，支持超时控制
+     * </pre>
+     */
     public CompletableFuture<UserProfileDTO> requestUserProfile(String customerId) {
         String correlationId = Trace.getOrCreate();
         long startTime = System.currentTimeMillis();

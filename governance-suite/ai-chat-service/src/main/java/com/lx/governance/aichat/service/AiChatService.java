@@ -1,6 +1,17 @@
 package com.lx.governance.aichat.service;
 
-import com.lx.governance.aichat.client.*;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
+
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import com.lx.governance.aichat.client.DeepSeekClient;
+import com.lx.governance.aichat.client.UserProfileClientFixed;
 import com.lx.governance.aichat.config.RabbitMQConfig;
 import com.lx.governance.aichat.document.ChatHistoryDocument;
 import com.lx.governance.aichat.dto.ChatHistorySyncMessage;
@@ -13,17 +24,9 @@ import com.lx.governance.aichat.dto.UserProfileDTO;
 import com.lx.governance.aichat.entity.AiChatHistory;
 import com.lx.governance.aichat.mapper.AiChatHistoryMapper;
 import com.lx.governance.aichat.metrics.AiChatMetrics;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Service;
-
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.stream.Collectors;
 
 @Service
 @Slf4j
@@ -66,16 +69,15 @@ public class AiChatService {
 
             try {
                 // 1. 获取或创建会话上下文（带监控）
-                String sessionId = request.getConversationId() != null ?
-                        request.getConversationId() : UUID.randomUUID().toString();
+                String sessionId = request.getConversationId() != null ? request.getConversationId()
+                        : UUID.randomUUID().toString();
 
-                SessionContext sessionContext = metrics.recordContextAnalysis(() ->
-                    sessionContextService.getOrCreateContext(
-                        sessionId,
-                        request.getCustomerId(),
-                        request.getGroupId(),
-                        request.getMessage())
-                );
+                SessionContext sessionContext = metrics
+                        .recordContextAnalysis(() -> sessionContextService.getOrCreateContext(
+                                sessionId,
+                                request.getCustomerId(),
+                                request.getGroupId(),
+                                request.getMessage()));
 
                 log.info("会话上下文已准备 - sessionId: {}, intent: {}, phase: {}, correlationId: {}",
                         sessionId,
@@ -83,24 +85,36 @@ public class AiChatService {
                         sessionContext.getConversationPhase(),
                         correlationId);
 
-                // 2. 并行获取用户画像和记忆（带监控）
-                CompletableFuture<UserProfileDTO> profileFuture = CompletableFuture.supplyAsync(() ->
-                    metrics.recordProfileFetch(() ->
-                        userProfileClient.requestUserProfile(request.getCustomerId()).join()
-                    )
-                );
+                // 2. 并行获取用户画像和记忆（完全异步 RPC 设计）
+                //
+                // 设计初衷：
+                // - RPC 模式：通过 RabbitMQ 发送请求并等待响应（replyTo + correlationId）
+                // - 完全异步：不创建工作线程，不阻塞工作线程，节省线程池资源
+                // - 并行执行：两个 RPC 请求同时发送，总耗时 = max(请求1, 请求2)
+                // - 高并发优化：避免工作线程池耗尽，支持数千并发请求
+                //
+                // 线程模型：
+                // 主线程 → 发送 RabbitMQ 请求 → 注册回调 → 在 allOf().join() 阻塞
+                // 监听器线程 → 接收响应 → 完成 Future → 触发回调
+                //
+                CompletableFuture<UserProfileDTO> profileFuture = userProfileClient
+                        .requestUserProfile(request.getCustomerId())
+                        .whenComplete((profile, ex) -> {
+                            if (ex == null) {
+                                metrics.recordProfileFetch(() -> profile);
+                            }
+                        });
 
-                CompletableFuture<List<MemoryItemDTO>> memoriesFuture = CompletableFuture.supplyAsync(() ->
-                    metrics.recordMemoryRetrieval(() ->
-                        memoryService.retrieveMemories(
-                            request.getGroupId(),
-                            request.getCustomerId(),
-                            request.getMessage()
-                        ).join()
-                    )
-                );
+                CompletableFuture<List<MemoryItemDTO>> memoriesFuture = memoryService.retrieveMemories(
+                        request.getGroupId(),
+                        request.getCustomerId(),
+                        request.getMessage()).whenComplete((memories, ex) -> {
+                            if (ex == null) {
+                                metrics.recordMemoryRetrieval(() -> memories);
+                            }
+                        });
 
-                // 等待两个结果
+                // 等待两个结果（不阻塞工作线程，只阻塞主线程）
                 CompletableFuture.allOf(profileFuture, memoriesFuture).join();
 
                 // 获取结果
@@ -124,11 +138,10 @@ public class AiChatService {
                 CompletableFuture.runAsync(() -> {
                     try {
                         memoryService.extractMemory(
-                            request.getGroupId(),
-                            request.getCustomerId(),
-                            request.getMessage(),
-                            difyResponse.getAnswer()
-                        );
+                                request.getGroupId(),
+                                request.getCustomerId(),
+                                request.getMessage(),
+                                difyResponse.getAnswer());
                     } catch (Exception e) {
                         log.error("记忆提取触发失败 - customerId: {}, correlationId: {}",
                                 request.getCustomerId(), correlationId, e);
@@ -142,8 +155,8 @@ public class AiChatService {
                 // 7. 获取相似对话推荐
                 if (autoRecommendEnabled) {
                     try {
-                        List<ChatResponse.SimilarConversation> recommendations =
-                                getRecommendations(request.getCustomerId(), request.getMessage());
+                        List<ChatResponse.SimilarConversation> recommendations = getRecommendations(
+                                request.getCustomerId(), request.getMessage());
 
                         if (!recommendations.isEmpty()) {
                             log.debug("获取到 {} 条相似对话推荐", recommendations.size());
@@ -223,8 +236,7 @@ public class AiChatService {
             rabbitTemplate.convertAndSend(
                     RabbitMQConfig.CHAT_HISTORY_SYNC_EXCHANGE,
                     RabbitMQConfig.CHAT_HISTORY_SYNC_ROUTING_KEY,
-                    message
-            );
+                    message);
 
             log.debug("对话历史同步消息已发送 - id: {}", history.getId());
 
