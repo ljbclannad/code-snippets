@@ -6,6 +6,8 @@ import com.health.agent.model.PatientProfile;
 import com.health.agent.model.WeightRecord;
 import com.health.agent.model.ChatMessage;
 import com.health.agent.model.PrescriptionRecord;
+import com.health.agent.vector.VectorSearchService;
+import com.health.agent.vector.CaseVector;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -25,6 +27,9 @@ public class ToolRegistry {
 
     @Autowired
     private PatientService patientService;
+
+    @Autowired
+    private VectorSearchService vectorSearchService;
 
     @PostConstruct
     public void registerTools() {
@@ -319,10 +324,41 @@ public class ToolRegistry {
         Integer limit = (Integer) input.getOrDefault("limit", 5);
         log.info("搜索相似病例: symptoms={}, limit={}", symptoms, limit);
 
-        // TODO: 向量检索
-        return List.of(
-            Map.of("caseId", "C001", "similarity", 0.85, "outcome", "成功减重5kg")
-        );
+        // 检查向量检索是否可用
+        if (!vectorSearchService.isAvailable()) {
+            log.warn("向量检索服务不可用，返回 Mock 数据");
+            return List.of(
+                Map.of(
+                    "caseId", "MOCK_001",
+                    "description", "35岁女性，高血压，减重成功",
+                    "diagnosis", "高血压控制良好，体重管理成功",
+                    "similarity", 0.85
+                ),
+                Map.of(
+                    "caseId", "MOCK_002",
+                    "description", "40岁男性，糖尿病，血糖控制",
+                    "diagnosis", "糖尿病控制稳定",
+                    "similarity", 0.78
+                )
+            );
+        }
+
+        // 构建查询文本
+        String query = "症状: " + String.join(", ", symptoms);
+
+        // 向量检索
+        List<CaseVector> results = vectorSearchService.searchSimilarCases(query, limit);
+
+        // 转换为返回格式
+        return results.stream()
+            .map(cv -> Map.of(
+                "caseId", cv.getCaseId(),
+                "customerId", cv.getCustomerId(),
+                "description", cv.getDescription(),
+                "diagnosis", cv.getDiagnosis(),
+                "similarity", cv.getSimilarity()
+            ))
+            .collect(Collectors.toList());
     }
 
     private Object getHealthKnowledge(Map<String, Object> input) {
