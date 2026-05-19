@@ -60,6 +60,9 @@ public class RedisCacheConfig {
         // 向量检索缓存：10分钟过期（相似病例检索结果）
         cacheConfigurations.put("vectorSearch", defaultConfig.entryTtl(Duration.ofMinutes(10)));
 
+        // 健康知识库缓存：2小时过期（知识内容相对稳定）
+        cacheConfigurations.put("healthKnowledge", defaultConfig.entryTtl(Duration.ofHours(2)));
+
         // Agent 会话缓存：5分钟过期
         cacheConfigurations.put("agentSession", defaultConfig.entryTtl(Duration.ofMinutes(5)));
 

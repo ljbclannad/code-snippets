@@ -2,10 +2,14 @@ package com.health.agent.tool;
 
 import com.alibaba.fastjson2.JSON;
 import com.health.agent.service.PatientService;
+import com.health.agent.service.FollowUpTaskService;
+import com.health.agent.service.HealthKnowledgeService;
 import com.health.agent.model.PatientProfile;
 import com.health.agent.model.WeightRecord;
 import com.health.agent.model.ChatMessage;
 import com.health.agent.model.PrescriptionRecord;
+import com.health.agent.model.FollowUpTask;
+import com.health.agent.model.HealthKnowledge;
 import com.health.agent.vector.VectorSearchService;
 import com.health.agent.vector.CaseVector;
 import lombok.extern.slf4j.Slf4j;
@@ -30,6 +34,12 @@ public class ToolRegistry {
 
     @Autowired
     private VectorSearchService vectorSearchService;
+
+    @Autowired
+    private FollowUpTaskService followUpTaskService;
+
+    @Autowired
+    private HealthKnowledgeService healthKnowledgeService;
 
     @PostConstruct
     public void registerTools() {
@@ -365,11 +375,30 @@ public class ToolRegistry {
         String topic = (String) input.get("topic");
         log.info("查询健康知识: topic={}", topic);
 
-        // TODO: 知识库查询
-        return Map.of(
-            "topic", topic,
-            "content", "相关健康知识内容..."
-        );
+        // 先尝试精确匹配主题
+        List<HealthKnowledge> knowledgeList = healthKnowledgeService.getByTopic(topic, 3);
+
+        // 如果没有结果，尝试全文搜索
+        if (knowledgeList.isEmpty()) {
+            knowledgeList = healthKnowledgeService.searchByKeyword(topic, 3);
+        }
+
+        if (knowledgeList.isEmpty()) {
+            return Map.of(
+                "topic", topic,
+                "found", false,
+                "message", "未找到相关健康知识，建议咨询专业医生"
+            );
+        }
+
+        return knowledgeList.stream()
+            .map(k -> Map.of(
+                "title", k.getTitle(),
+                "category", k.getCategory(),
+                "content", k.getContent(),
+                "source", k.getSource() != null ? k.getSource() : ""
+            ))
+            .collect(Collectors.toList());
     }
 
     private Object sendReminder(Map<String, Object> input) {
@@ -387,8 +416,31 @@ public class ToolRegistry {
         String dueDate = (String) input.get("dueDate");
         log.info("创建随访任务: customerId={}, task={}", customerId, taskDescription);
 
-        // TODO: 创建任务
-        return Map.of("success", true, "taskId", "T001");
+        try {
+            // 解析日期
+            java.time.LocalDate dueDateParsed = java.time.LocalDate.parse(dueDate);
+
+            // 创建任务
+            FollowUpTask task = followUpTaskService.createTask(
+                customerId,
+                taskDescription,
+                dueDateParsed,
+                "AGENT"
+            );
+
+            return Map.of(
+                "success", true,
+                "taskId", task.getTaskId(),
+                "dueDate", task.getDueDate().toString(),
+                "message", "随访任务创建成功"
+            );
+        } catch (Exception e) {
+            log.error("创建随访任务失败", e);
+            return Map.of(
+                "success", false,
+                "message", "创建任务失败: " + e.getMessage()
+            );
+        }
     }
 
     private Object sendHealthReport(Map<String, Object> input) {
