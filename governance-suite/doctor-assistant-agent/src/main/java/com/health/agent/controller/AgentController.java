@@ -6,6 +6,14 @@ import com.health.agent.model.AgentSession;
 import com.health.agent.model.PendingTask;
 import com.health.agent.service.AgentSessionService;
 import com.health.agent.service.PendingTaskService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.ExampleObject;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,6 +28,7 @@ import java.util.List;
 @Slf4j
 @RestController
 @RequestMapping("/api/agent")
+@Tag(name = "Agent 执行", description = "ReAct Agent 执行和会话管理接口")
 public class AgentController {
 
     @Autowired
@@ -31,9 +40,46 @@ public class AgentController {
     @Autowired
     private PendingTaskService taskService;
 
-    /**
-     * 执行 Agent 任务
-     */
+    @Operation(
+        summary = "执行 Agent 任务",
+        description = """
+            启动一个新的 Agent 会话，Agent 将自动分析目标并执行相应操作。
+
+            **执行流程：**
+            1. Agent 分析目标，制定执行计划
+            2. 逐步执行工具调用（查询、分析、通知等）
+            3. 遇到高风险操作（如起草处方）时暂停，等待医生确认
+            4. 返回执行结果或待确认任务
+
+            **返回状态：**
+            - SUCCESS: 任务完成
+            - PENDING_APPROVAL: 需要医生确认高风险操作
+            - ERROR: 执行失败
+            - MAX_STEPS_REACHED: 达到最大步数限制
+            """,
+        requestBody = @io.swagger.v3.oas.annotations.parameters.RequestBody(
+            content = @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = AgentExecuteRequest.class),
+                examples = @ExampleObject(
+                    name = "健康咨询示例",
+                    value = """
+                        {
+                          "goal": "患者最近体重增加明显，帮我分析一下原因并给出建议",
+                          "customerId": "1001",
+                          "doctorId": "2001"
+                        }
+                        """
+                )
+            )
+        )
+    )
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "执行成功",
+            content = @Content(schema = @Schema(implementation = AgentResult.class))),
+        @ApiResponse(responseCode = "400", description = "请求参数错误"),
+        @ApiResponse(responseCode = "500", description = "服务器内部错误")
+    })
     @PostMapping("/execute")
     public ResponseEntity<AgentResult> execute(@RequestBody AgentExecuteRequest request) {
         log.info("收到Agent执行请求: goal={}, customerId={}",
@@ -48,9 +94,42 @@ public class AgentController {
         return ResponseEntity.ok(result);
     }
 
-    /**
-     * 恢复 Agent 执行（人工确认后）
-     */
+    @Operation(
+        summary = "恢复 Agent 执行",
+        description = """
+            在医生确认高风险操作后，恢复 Agent 执行。
+
+            **使用场景：**
+            1. Agent 执行过程中遇到高风险操作（如起草处方）
+            2. 系统创建待确认任务并暂停会话
+            3. 医生审批任务（approve 或 reject）
+            4. 调用此接口恢复执行
+
+            **执行逻辑：**
+            - 如果任务已批准：执行该操作，继续 ReAct 循环
+            - 如果任务已拒绝：跳过该操作，继续其他步骤
+            """,
+        requestBody = @io.swagger.v3.oas.annotations.parameters.RequestBody(
+            content = @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = AgentResumeRequest.class),
+                examples = @ExampleObject(
+                    name = "恢复执行示例",
+                    value = """
+                        {
+                          "sessionId": "1234567890",
+                          "approvedTaskId": 101
+                        }
+                        """
+                )
+            )
+        )
+    )
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "恢复成功"),
+        @ApiResponse(responseCode = "404", description = "会话或任务不存在"),
+        @ApiResponse(responseCode = "400", description = "会话状态不正确或任务未审批")
+    })
     @PostMapping("/resume")
     public ResponseEntity<AgentResult> resume(@RequestBody AgentResumeRequest request) {
         log.info("恢复Agent执行: sessionId={}, taskId={}",
@@ -64,11 +143,19 @@ public class AgentController {
         return ResponseEntity.ok(result);
     }
 
-    /**
-     * 查询会话详情
-     */
+    @Operation(
+        summary = "查询会话详情",
+        description = "根据会话 ID 查询完整的会话信息，包括执行历史、当前状态、消息记录等"
+    )
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "查询成功"),
+        @ApiResponse(responseCode = "404", description = "会话不存在")
+    })
     @GetMapping("/sessions/{sessionId}")
-    public ResponseEntity<AgentSession> getSession(@PathVariable String sessionId) {
+    public ResponseEntity<AgentSession> getSession(
+        @Parameter(description = "会话 ID", required = true, example = "1234567890")
+        @PathVariable String sessionId
+    ) {
         log.info("查询会话: sessionId={}", sessionId);
 
         AgentSession session = sessionService.getById(sessionId);
@@ -79,12 +166,18 @@ public class AgentController {
         return ResponseEntity.ok(session);
     }
 
-    /**
-     * 查询医生的待处理会话列表
-     */
+    @Operation(
+        summary = "查询医生的会话列表",
+        description = "查询指定医生的会话列表，支持按状态过滤（如只查询暂停中的会话）"
+    )
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "查询成功")
+    })
     @GetMapping("/sessions")
     public ResponseEntity<List<AgentSession>> listSessions(
+        @Parameter(description = "医生 ID", required = true, example = "2001")
         @RequestParam String doctorId,
+        @Parameter(description = "会话状态过滤（PAUSED/RUNNING/COMPLETED）", example = "PAUSED")
         @RequestParam(required = false) String status
     ) {
         log.info("查询医生的会话列表: doctorId={}, status={}", doctorId, status);
@@ -100,12 +193,18 @@ public class AgentController {
         return ResponseEntity.ok(sessions);
     }
 
-    /**
-     * 查询患者的会话历史
-     */
+    @Operation(
+        summary = "查询患者的会话历史",
+        description = "查询指定患者的历史会话记录，按时间倒序返回"
+    )
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "查询成功")
+    })
     @GetMapping("/sessions/customer/{customerId}")
     public ResponseEntity<List<AgentSession>> listCustomerSessions(
+        @Parameter(description = "患者 ID", required = true, example = "1001")
         @PathVariable String customerId,
+        @Parameter(description = "返回记录数量限制", example = "10")
         @RequestParam(defaultValue = "10") int limit
     ) {
         log.info("查询患者的会话历史: customerId={}, limit={}", customerId, limit);
@@ -114,11 +213,19 @@ public class AgentController {
         return ResponseEntity.ok(sessions);
     }
 
-    /**
-     * 查询待确认任务详情
-     */
+    @Operation(
+        summary = "查询待确认任务详情",
+        description = "根据任务 ID 查询待确认任务的详细信息，包括工具名称、输入参数、审批状态等"
+    )
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "查询成功"),
+        @ApiResponse(responseCode = "404", description = "任务不存在")
+    })
     @GetMapping("/pending-tasks/{taskId}")
-    public ResponseEntity<PendingTask> getTask(@PathVariable Long taskId) {
+    public ResponseEntity<PendingTask> getTask(
+        @Parameter(description = "任务 ID", required = true, example = "101")
+        @PathVariable Long taskId
+    ) {
         log.info("查询待确认任务: taskId={}", taskId);
 
         PendingTask task = taskService.getById(taskId);
@@ -129,33 +236,75 @@ public class AgentController {
         return ResponseEntity.ok(task);
     }
 
-    /**
-     * 查询医生的待确认任务列表
-     */
+    @Operation(
+        summary = "查询医生的待确认任务列表",
+        description = "查询指定医生的所有待确认任务，通常用于医生工作台展示待审批事项"
+    )
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "查询成功")
+    })
     @GetMapping("/pending-tasks")
-    public ResponseEntity<List<PendingTask>> listPendingTasks(@RequestParam String doctorId) {
+    public ResponseEntity<List<PendingTask>> listPendingTasks(
+        @Parameter(description = "医生 ID", required = true, example = "2001")
+        @RequestParam String doctorId
+    ) {
         log.info("查询医生的待确认任务: doctorId={}", doctorId);
 
         List<PendingTask> tasks = taskService.listPendingByDoctor(doctorId);
         return ResponseEntity.ok(tasks);
     }
 
-    /**
-     * 查询会话的待确认任务列表
-     */
+    @Operation(
+        summary = "查询会话的待确认任务列表",
+        description = "查询指定会话的所有待确认任务，用于查看某个 Agent 执行过程中产生的所有高风险操作"
+    )
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "查询成功")
+    })
     @GetMapping("/sessions/{sessionId}/pending-tasks")
-    public ResponseEntity<List<PendingTask>> listSessionTasks(@PathVariable String sessionId) {
+    public ResponseEntity<List<PendingTask>> listSessionTasks(
+        @Parameter(description = "会话 ID", required = true, example = "1234567890")
+        @PathVariable String sessionId
+    ) {
         log.info("查询会话的待确认任务: sessionId={}", sessionId);
 
         List<PendingTask> tasks = taskService.listBySession(sessionId);
         return ResponseEntity.ok(tasks);
     }
 
-    /**
-     * 批准任务
-     */
+    @Operation(
+        summary = "批准任务",
+        description = """
+            医生批准高风险操作任务。批准后需要调用 /api/agent/resume 接口恢复 Agent 执行。
+
+            **批准流程：**
+            1. 查询待确认任务列表
+            2. 审查任务详情（工具名称、输入参数）
+            3. 调用此接口批准任务
+            4. 调用 /api/agent/resume 恢复执行
+            """,
+        requestBody = @io.swagger.v3.oas.annotations.parameters.RequestBody(
+            content = @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = TaskApprovalRequest.class),
+                examples = @ExampleObject(
+                    name = "批准示例",
+                    value = """
+                        {
+                          "reviewComment": "处方合理，批准执行"
+                        }
+                        """
+                )
+            )
+        )
+    )
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "批准成功"),
+        @ApiResponse(responseCode = "404", description = "任务不存在")
+    })
     @PostMapping("/pending-tasks/{taskId}/approve")
     public ResponseEntity<TaskApprovalResponse> approveTask(
+        @Parameter(description = "任务 ID", required = true, example = "101")
         @PathVariable Long taskId,
         @RequestBody TaskApprovalRequest request
     ) {
@@ -170,11 +319,39 @@ public class AgentController {
             .build());
     }
 
-    /**
-     * 拒绝任务
-     */
+    @Operation(
+        summary = "拒绝任务",
+        description = """
+            医生拒绝高风险操作任务。拒绝后需要调用 /api/agent/resume 接口，Agent 将跳过该操作继续执行。
+
+            **拒绝流程：**
+            1. 查询待确认任务列表
+            2. 审查任务详情
+            3. 调用此接口拒绝任务
+            4. 调用 /api/agent/resume 恢复执行（Agent 会跳过该操作）
+            """,
+        requestBody = @io.swagger.v3.oas.annotations.parameters.RequestBody(
+            content = @Content(
+                mediaType = "application/json",
+                schema = @Schema(implementation = TaskApprovalRequest.class),
+                examples = @ExampleObject(
+                    name = "拒绝示例",
+                    value = """
+                        {
+                          "reviewComment": "剂量偏大，需要重新评估"
+                        }
+                        """
+                )
+            )
+        )
+    )
+    @ApiResponses({
+        @ApiResponse(responseCode = "200", description = "拒绝成功"),
+        @ApiResponse(responseCode = "404", description = "任务不存在")
+    })
     @PostMapping("/pending-tasks/{taskId}/reject")
     public ResponseEntity<TaskApprovalResponse> rejectTask(
+        @Parameter(description = "任务 ID", required = true, example = "101")
         @PathVariable Long taskId,
         @RequestBody TaskApprovalRequest request
     ) {
@@ -195,9 +372,15 @@ public class AgentController {
      * Agent 执行请求
      */
     @Data
+    @Schema(description = "Agent 执行请求")
     public static class AgentExecuteRequest {
+        @Schema(description = "执行目标（自然语言描述）", example = "患者最近体重增加明显，帮我分析一下原因并给出建议", required = true)
         private String goal;
+
+        @Schema(description = "患者 ID", example = "1001", required = true)
         private String customerId;
+
+        @Schema(description = "医生 ID", example = "2001", required = true)
         private String doctorId;
     }
 
@@ -205,8 +388,12 @@ public class AgentController {
      * Agent 恢复请求
      */
     @Data
+    @Schema(description = "Agent 恢复执行请求")
     public static class AgentResumeRequest {
+        @Schema(description = "会话 ID", example = "1234567890", required = true)
         private String sessionId;
+
+        @Schema(description = "已批准的任务 ID", example = "101", required = true)
         private Long approvedTaskId;
     }
 
@@ -214,7 +401,9 @@ public class AgentController {
      * 任务审批请求
      */
     @Data
+    @Schema(description = "任务审批请求")
     public static class TaskApprovalRequest {
+        @Schema(description = "审批意见", example = "处方合理，批准执行")
         private String reviewComment;
     }
 
@@ -223,9 +412,15 @@ public class AgentController {
      */
     @Data
     @lombok.Builder
+    @Schema(description = "任务审批响应")
     public static class TaskApprovalResponse {
+        @Schema(description = "是否成功", example = "true")
         private boolean success;
+
+        @Schema(description = "响应消息", example = "任务已批准")
         private String message;
+
+        @Schema(description = "任务 ID", example = "101")
         private Long taskId;
     }
 }
