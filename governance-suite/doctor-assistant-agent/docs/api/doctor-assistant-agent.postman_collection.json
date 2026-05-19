@@ -1,0 +1,441 @@
+{
+  "info": {
+    "name": "医生助手 ReAct Agent API",
+    "description": "医生助手 ReAct Agent 系统完整 API 测试集合",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": "1.0.0"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8088",
+      "type": "string"
+    },
+    {
+      "key": "sessionId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "taskId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "customerId",
+      "value": "1001",
+      "type": "string"
+    },
+    {
+      "key": "doctorId",
+      "value": "2001",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Agent 执行",
+      "item": [
+        {
+          "name": "执行 Agent 任务 - 健康咨询",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "// 保存 sessionId 到环境变量",
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    if (response.executionHistory && response.executionHistory.length > 0) {",
+                  "        // 从执行历史中提取 sessionId（如果有）",
+                  "        console.log('Agent 执行成功');",
+                  "    }",
+                  "    if (response.pendingTask) {",
+                  "        pm.collectionVariables.set('taskId', response.pendingTask.id);",
+                  "        console.log('待确认任务 ID:', response.pendingTask.id);",
+                  "    }",
+                  "}",
+                  "",
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response has status field', function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('status');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"goal\": \"患者最近体重增加明显，帮我分析一下原因并给出建议\",\n  \"customerId\": \"{{customerId}}\",\n  \"doctorId\": \"{{doctorId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/agent/execute",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "agent", "execute"]
+            },
+            "description": "启动一个新的 Agent 会话，分析患者体重增加原因"
+          },
+          "response": []
+        },
+        {
+          "name": "执行 Agent 任务 - 处方建议（高风险）",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    const response = pm.response.json();",
+                  "    if (response.pendingTask) {",
+                  "        pm.collectionVariables.set('taskId', response.pendingTask.id);",
+                  "        console.log('待确认任务 ID:', response.pendingTask.id);",
+                  "    }",
+                  "}",
+                  "",
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response status is PENDING_APPROVAL', function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.status).to.eql('PENDING_APPROVAL');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"goal\": \"患者血压偏高，请起草降压药处方\",\n  \"customerId\": \"{{customerId}}\",\n  \"doctorId\": \"{{doctorId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/agent/execute",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "agent", "execute"]
+            },
+            "description": "执行高风险操作（起草处方），Agent 会暂停等待医生确认"
+          },
+          "response": []
+        },
+        {
+          "name": "恢复 Agent 执行",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"approvedTaskId\": {{taskId}}\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/agent/resume",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "agent", "resume"]
+            },
+            "description": "在医生批准任务后，恢复 Agent 执行"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "会话管理",
+      "item": [
+        {
+          "name": "查询会话详情",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response has session data', function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('goal');",
+                  "    pm.expect(jsonData).to.have.property('status');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/agent/sessions/{{sessionId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "agent", "sessions", "{{sessionId}}"]
+            },
+            "description": "根据会话 ID 查询完整的会话信息"
+          },
+          "response": []
+        },
+        {
+          "name": "查询医生的会话列表",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/agent/sessions?doctorId={{doctorId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "agent", "sessions"],
+              "query": [
+                {
+                  "key": "doctorId",
+                  "value": "{{doctorId}}"
+                }
+              ]
+            },
+            "description": "查询指定医生的所有会话"
+          },
+          "response": []
+        },
+        {
+          "name": "查询医生的暂停会话",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/agent/sessions?doctorId={{doctorId}}&status=PAUSED",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "agent", "sessions"],
+              "query": [
+                {
+                  "key": "doctorId",
+                  "value": "{{doctorId}}"
+                },
+                {
+                  "key": "status",
+                  "value": "PAUSED"
+                }
+              ]
+            },
+            "description": "查询医生的暂停中的会话（需要处理的会话）"
+          },
+          "response": []
+        },
+        {
+          "name": "查询患者的会话历史",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/agent/sessions/customer/{{customerId}}?limit=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "agent", "sessions", "customer", "{{customerId}}"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            },
+            "description": "查询指定患者的历史会话记录"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "任务管理",
+      "item": [
+        {
+          "name": "查询待确认任务详情",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/agent/pending-tasks/{{taskId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "agent", "pending-tasks", "{{taskId}}"]
+            },
+            "description": "根据任务 ID 查询待确认任务的详细信息"
+          },
+          "response": []
+        },
+        {
+          "name": "查询医生的待确认任务列表",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/agent/pending-tasks?doctorId={{doctorId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "agent", "pending-tasks"],
+              "query": [
+                {
+                  "key": "doctorId",
+                  "value": "{{doctorId}}"
+                }
+              ]
+            },
+            "description": "查询指定医生的所有待确认任务"
+          },
+          "response": []
+        },
+        {
+          "name": "查询会话的待确认任务列表",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/agent/sessions/{{sessionId}}/pending-tasks",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "agent", "sessions", "{{sessionId}}", "pending-tasks"]
+            },
+            "description": "查询指定会话的所有待确认任务"
+          },
+          "response": []
+        },
+        {
+          "name": "批准任务",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Task approved successfully', function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.success).to.be.true;",
+                  "    pm.expect(jsonData.message).to.include('批准');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reviewComment\": \"处方合理，批准执行\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/agent/pending-tasks/{{taskId}}/approve",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "agent", "pending-tasks", "{{taskId}}", "approve"]
+            },
+            "description": "医生批准高风险操作任务"
+          },
+          "response": []
+        },
+        {
+          "name": "拒绝任务",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status code is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Task rejected successfully', function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.success).to.be.true;",
+                  "    pm.expect(jsonData.message).to.include('拒绝');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reviewComment\": \"剂量偏大，需要重新评估\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/agent/pending-tasks/{{taskId}}/reject",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "agent", "pending-tasks", "{{taskId}}", "reject"]
+            },
+            "description": "医生拒绝高风险操作任务"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "健康检查",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/actuator/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["actuator", "health"]
+            },
+            "description": "检查服务健康状态"
+          },
+          "response": []
+        },
+        {
+          "name": "Prometheus Metrics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/actuator/prometheus",
+              "host": ["{{baseUrl}}"],
+              "path": ["actuator", "prometheus"]
+            },
+            "description": "获取 Prometheus 监控指标"
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
