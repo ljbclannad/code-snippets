@@ -89,7 +89,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,bulkhead
+        include: health,info,bulkhead,refresh
   endpoint:
     health:
       show-details: always

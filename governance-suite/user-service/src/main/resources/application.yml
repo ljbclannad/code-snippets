@@ -46,7 +46,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,refresh
   endpoint:
     health:
       show-details: always
@@ -60,9 +60,6 @@ app:
       enabled: true
       max-attempts: 30
       retry-interval-ms: 2000
-  auth:
-    token-secret: ${AUTH_TOKEN_SECRET:governance-suite-dev-secret}
-    token-ttl-seconds: ${AUTH_TOKEN_TTL_SECONDS:7200}
 
 id:
   snowflake:

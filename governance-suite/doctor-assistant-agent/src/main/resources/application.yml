@@ -32,7 +32,7 @@ spring:
   ai:
     openai:
       api-key: ${DEEPSEEK_API_KEY:your-deepseek-api-key}
-      base-url: https://api.deepseek.com/v1
+      base-url: https://api.deepseek.com
       chat:
         options:
           model: deepseek-chat
@@ -60,7 +60,7 @@ agent:
 
 # Milvus 向量数据库配置
 milvus:
-  enabled: false  # 默认关闭，需要时启用
+  enabled: false # 默认关闭，需要时启用
   host: localhost
   port: 19530
   collection-name: medical_cases
@@ -68,13 +68,13 @@ milvus:
 
 # Embedding 配置
 embedding:
-  use-mock: true  # 使用 Mock Embedding（测试用）
+  use-mock: true # 使用 Mock Embedding（测试用）
   # 生产环境应该使用真实的 Embedding 模型
 
 # 向量检索配置
 vector:
   search:
-    top-k: 5  # 默认返回前5个相似病例
+    top-k: 5 # 默认返回前5个相似病例
 
 # 服务器配置
 server:
@@ -110,5 +110,7 @@ logging:
   level:
     root: INFO
     com.health.agent: DEBUG
+    org.springframework.ai: DEBUG
+    org.springframework.web.client: DEBUG
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"

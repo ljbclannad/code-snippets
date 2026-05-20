@@ -33,6 +33,8 @@ public class ReActPromptBuilder {
             Action: [你决定调用的工具]
             Action Input: [工具的输入参数，JSON格式]
 
+            **重要**：每次只能输出一个 Action。如果需要多个工具，请在后续循环中逐个调用。
+
             然后你会收到：
             Observation: [工具执行的结果]
 

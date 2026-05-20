@@ -9,8 +9,6 @@ spring:
         group: DEFAULT_GROUP
         file-extension: yml
         refresh-enabled: true
-
-        # 共享配置
         shared-configs:
           - data-id: common.yml
             group: DEFAULT_GROUP

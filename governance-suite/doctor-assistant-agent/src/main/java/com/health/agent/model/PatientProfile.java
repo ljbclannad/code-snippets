@@ -20,17 +20,17 @@ import java.time.LocalDateTime;
 @TableName("patient_profile")
 public class PatientProfile {
 
-    @TableId(type = IdType.AUTO)
-    private Long id;
-
+    @TableId(type = IdType.INPUT)
     private String customerId;
+
     private String name;
     private Integer age;
     private String gender;
     private Double height;
     private Double currentWeight;
     private Double targetWeight;
-    private String chronicDiseases;
+    private String chronicDiseases;  // JSON 字符串
+    private String allergies;  // JSON 字符串
     private Double bmi;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;

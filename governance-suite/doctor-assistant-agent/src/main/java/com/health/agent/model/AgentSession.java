@@ -23,8 +23,8 @@ public class AgentSession {
     /**
      * 会话ID
      */
-    @TableId(type = IdType.AUTO)
-    private Long id;
+    @TableId(type = IdType.ASSIGN_ID)
+    private String id;
 
     /**
      * 患者ID
