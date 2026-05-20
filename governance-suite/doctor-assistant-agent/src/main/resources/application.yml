@@ -16,17 +16,18 @@ spring:
       max-lifetime: 1800000
 
   # Redis配置
-  redis:
-    host: localhost
-    port: 36379
-    database: 0
-    timeout: 3000ms
-    lettuce:
-      pool:
-        max-active: 8
-        max-idle: 8
-        min-idle: 0
-        max-wait: -1ms
+  data:
+    redis:
+      host: localhost
+      port: 36379
+      database: 0
+      timeout: 3000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 0
+          max-wait: -1ms
 
   # Spring AI 配置（DeepSeek）
   ai:

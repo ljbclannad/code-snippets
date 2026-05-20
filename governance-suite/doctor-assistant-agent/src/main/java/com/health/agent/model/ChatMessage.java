@@ -1,6 +1,7 @@
 package com.health.agent.model;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.AllArgsConstructor;
@@ -24,7 +25,12 @@ public class ChatMessage {
     private Long id;
 
     private String customerId;
+
+    @TableField("role")
     private String sender;
+
+    @TableField("content")
     private String message;
+
     private LocalDateTime createdAt;
 }

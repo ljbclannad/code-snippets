@@ -226,10 +226,21 @@ public class ToolRegistry {
             "height", profile.getHeight(),
             "currentWeight", profile.getCurrentWeight(),
             "targetWeight", profile.getTargetWeight(),
-            "chronicDiseases", profile.getChronicDiseases() != null ?
-                Arrays.asList(profile.getChronicDiseases().split(",")) : List.of(),
+            "chronicDiseases", parseStringList(profile.getChronicDiseases()),
             "bmi", profile.getBmi()
         );
+    }
+
+    private List<String> parseStringList(String json) {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+
+        try {
+            return JSON.parseArray(json, String.class);
+        } catch (Exception e) {
+            return Arrays.asList(json.split(","));
+        }
     }
 
     private Object getWeightHistory(Map<String, Object> input) {
