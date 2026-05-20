@@ -1,10 +1,5 @@
 package com.lx.governance.vectormemory.config;
 
-import io.milvus.client.MilvusServiceClient;
-import io.milvus.param.ConnectParam;
-import io.milvus.param.IndexType;
-import io.milvus.param.MetricType;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.embedding.BatchingStrategy;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.embedding.TokenCountBatchingStrategy;
@@ -15,6 +10,12 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
+
+import io.milvus.client.MilvusServiceClient;
+import io.milvus.param.ConnectParam;
+import io.milvus.param.IndexType;
+import io.milvus.param.MetricType;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Milvus VectorStore 配置类
@@ -54,8 +55,7 @@ public class MilvusVectorStoreConfig {
                         .withHost(milvusHost)
                         .withPort(milvusPort)
                         .withDatabaseName(databaseName)
-                        .build()
-        );
+                        .build());
 
         // 删除旧集合（如果存在）以确保使用新的维度配置
         try {

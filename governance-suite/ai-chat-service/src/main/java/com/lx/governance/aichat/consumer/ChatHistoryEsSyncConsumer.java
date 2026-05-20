@@ -1,13 +1,14 @@
 package com.lx.governance.aichat.consumer;
 
-import com.lx.governance.aichat.config.RabbitMQConfig;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.stereotype.Component;
+
 import com.lx.governance.aichat.document.ChatHistoryDocument;
 import com.lx.governance.aichat.dto.ChatHistorySyncMessage;
 import com.lx.governance.aichat.service.ChatHistorySearchService;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import org.springframework.stereotype.Component;
 
 /**
  * 对话历史 ES 同步消费者
@@ -44,7 +45,7 @@ public class ChatHistoryEsSyncConsumer {
 
         } catch (Exception e) {
             log.error("对话历史同步失败 - id: {}", message.getId(), e);
-            throw e;  // 触发重试
+            throw e; // 触发重试
         }
     }
 }

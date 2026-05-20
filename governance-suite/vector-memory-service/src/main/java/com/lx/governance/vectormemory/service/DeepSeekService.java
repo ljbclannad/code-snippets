@@ -1,16 +1,17 @@
 package com.lx.governance.vectormemory.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.lx.governance.vectormemory.dto.MemoryExtractionResult;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.openai.OpenAiChatOptions;
-import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.retry.annotation.Backoff;
 import org.springframework.retry.annotation.Retryable;
 import org.springframework.stereotype.Service;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.lx.governance.vectormemory.dto.MemoryExtractionResult;
+
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * DeepSeek Service
@@ -25,7 +26,7 @@ public class DeepSeekService {
     private final ObjectMapper objectMapper;
 
     public DeepSeekService(@Qualifier("openAiChatModel") ChatModel chatModel,
-                           ObjectMapper objectMapper) {
+            ObjectMapper objectMapper) {
         this.chatModel = chatModel;
         this.objectMapper = objectMapper;
     }
@@ -34,14 +35,10 @@ public class DeepSeekService {
      * 从对话中提取记忆
      *
      * @param userMessage 用户消息
-     * @param aiResponse AI 响应
+     * @param aiResponse  AI 响应
      * @return 提取的记忆结果
      */
-    @Retryable(
-            maxAttempts = 3,
-            backoff = @Backoff(delay = 2000),
-            retryFor = {Exception.class}
-    )
+    @Retryable(maxAttempts = 3, backoff = @Backoff(delay = 2000), retryFor = { Exception.class })
     public MemoryExtractionResult extractMemories(String userMessage, String aiResponse) {
         long startTime = System.currentTimeMillis();
         log.info("开始提取记忆 - 用户消息长度: {}, AI响应长度: {}",
@@ -109,7 +106,7 @@ public class DeepSeekService {
      * 构建记忆提取 Prompt
      *
      * @param userMessage 用户消息
-     * @param aiResponse AI 响应
+     * @param aiResponse  AI 响应
      * @return 提取 prompt
      */
     private String buildExtractionPrompt(String userMessage, String aiResponse) {

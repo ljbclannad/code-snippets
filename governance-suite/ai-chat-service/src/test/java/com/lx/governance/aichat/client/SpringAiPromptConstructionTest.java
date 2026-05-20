@@ -1,14 +1,16 @@
 package com.lx.governance.aichat.client;
 
-import org.junit.jupiter.api.Test;
-import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.ai.chat.messages.SystemMessage;
-import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.ai.openai.OpenAiChatOptions;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.*;
+import org.junit.jupiter.api.Test;
+import org.springframework.ai.chat.messages.SystemMessage;
+import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.openai.OpenAiChatOptions;
 
 /**
  * Spring AI Prompt 构建测试
@@ -23,45 +25,43 @@ class SpringAiPromptConstructionTest {
         String userMessage = "Hello, how are you?";
 
         Prompt prompt = new Prompt(
-            List.of(
-                new SystemMessage(systemPrompt),
-                new UserMessage(userMessage)
-            ),
-            OpenAiChatOptions.builder()
-                .withModel("deepseek-chat")
-                .withTemperature(0.7)
-                .withMaxTokens(2000)
-                .build()
-        );
+                List.of(
+                        new SystemMessage(systemPrompt),
+                        new UserMessage(userMessage)),
+                OpenAiChatOptions.builder()
+                        .withModel("deepseek-chat")
+                        .withTemperature(0.7)
+                        .withMaxTokens(2000)
+                        .build());
 
         assertNotNull(prompt, "Prompt should not be null");
         assertEquals(2, prompt.getInstructions().size(), "Should have 2 messages");
 
         // 验证消息类型
         assertTrue(prompt.getInstructions().get(0) instanceof SystemMessage,
-            "First message should be SystemMessage");
+                "First message should be SystemMessage");
         assertTrue(prompt.getInstructions().get(1) instanceof UserMessage,
-            "Second message should be UserMessage");
+                "Second message should be UserMessage");
 
         // 验证消息内容
         assertEquals(systemPrompt, prompt.getInstructions().get(0).getContent(),
-            "System message content should match");
+                "System message content should match");
         assertEquals(userMessage, prompt.getInstructions().get(1).getContent(),
-            "User message content should match");
+                "User message content should match");
     }
 
     @Test
     void testOpenAiChatOptions() {
         // 验证 OpenAiChatOptions 配置
         OpenAiChatOptions options = OpenAiChatOptions.builder()
-            .withModel("deepseek-chat")
-            .withTemperature(0.7)
-            .withMaxTokens(2000)
-            .build();
+                .withModel("deepseek-chat")
+                .withTemperature(0.7)
+                .withMaxTokens(2000)
+                .build();
 
         assertNotNull(options, "Options should not be null");
         assertEquals("deepseek-chat", options.getModel(), "Model should be deepseek-chat");
-        assertEquals(0.7, options.getTemperature(), 0.001, "Temperature should be 0.7");
+        assertEquals(0.7f, options.getTemperature(), 0.001, "Temperature should be 0.7");
         assertEquals(2000, options.getMaxTokens(), "MaxTokens should be 2000");
     }
 
@@ -69,14 +69,12 @@ class SpringAiPromptConstructionTest {
     void testPromptWithEmptyMessages() {
         // 测试边界情况：空消息
         Prompt prompt = new Prompt(
-            List.of(
-                new SystemMessage(""),
-                new UserMessage("")
-            ),
-            OpenAiChatOptions.builder()
-                .withModel("deepseek-chat")
-                .build()
-        );
+                List.of(
+                        new SystemMessage(""),
+                        new UserMessage("")),
+                OpenAiChatOptions.builder()
+                        .withModel("deepseek-chat")
+                        .build());
 
         assertNotNull(prompt);
         assertEquals(2, prompt.getInstructions().size());
@@ -89,16 +87,14 @@ class SpringAiPromptConstructionTest {
         String longUserMessage = "User: " + "B".repeat(1000);
 
         Prompt prompt = new Prompt(
-            List.of(
-                new SystemMessage(longSystemPrompt),
-                new UserMessage(longUserMessage)
-            ),
-            OpenAiChatOptions.builder()
-                .withModel("deepseek-chat")
-                .withTemperature(0.7)
-                .withMaxTokens(2000)
-                .build()
-        );
+                List.of(
+                        new SystemMessage(longSystemPrompt),
+                        new UserMessage(longUserMessage)),
+                OpenAiChatOptions.builder()
+                        .withModel("deepseek-chat")
+                        .withTemperature(0.7)
+                        .withMaxTokens(2000)
+                        .build());
 
         assertNotNull(prompt);
         assertEquals(longSystemPrompt, prompt.getInstructions().get(0).getContent());

@@ -1,19 +1,19 @@
 package com.lx.governance.aichat.client;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+
+import java.util.List;
+
 import org.junit.jupiter.api.Test;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.TestPropertySource;
-
-import java.util.List;
-
-import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Spring AI 集成测试
@@ -21,9 +21,9 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 @SpringBootTest
 @TestPropertySource(properties = {
-    "spring.ai.openai.api-key=test-key",
-    "spring.ai.openai.base-url=https://api.deepseek.com/v1",
-    "spring.ai.openai.chat.options.model=deepseek-chat"
+        "spring.ai.openai.api-key=test-key",
+        "spring.ai.openai.base-url=https://api.deepseek.com/v1",
+        "spring.ai.openai.chat.options.model=deepseek-chat"
 })
 class DeepSeekClientSpringAiIntegrationTest {
 
@@ -42,16 +42,14 @@ class DeepSeekClientSpringAiIntegrationTest {
         String userMessage = "Hello!";
 
         Prompt prompt = new Prompt(
-            List.of(
-                new SystemMessage(systemPrompt),
-                new UserMessage(userMessage)
-            ),
-            OpenAiChatOptions.builder()
-                .withModel("deepseek-chat")
-                .withTemperature(0.7)
-                .withMaxTokens(2000)
-                .build()
-        );
+                List.of(
+                        new SystemMessage(systemPrompt),
+                        new UserMessage(userMessage)),
+                OpenAiChatOptions.builder()
+                        .withModel("deepseek-chat")
+                        .withTemperature(0.7)
+                        .withMaxTokens(2000)
+                        .build());
 
         assertNotNull(prompt);
         assertEquals(2, prompt.getInstructions().size());

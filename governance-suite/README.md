@@ -1,30 +1,22 @@
 # governance-suite
 
-一个**双轨学习项目**，包含两大核心部分：
+一个**多轨学习项目**，包含三个完全独立的系统：
 
-1. **分布式系统治理** - 通过订单履约流程演示微服务治理模式
-2. **AI 记忆系统** - 企业级 AI 对话服务，具备用户画像和向量记忆能力
+1. **[分布式系统治理](#-part-1-分布式系统治理)** - 通过订单履约流程演示微服务治理模式
+2. **[AI 记忆系统](#-part-2-ai-记忆系统)** - 企业级 AI 对话服务，具备用户画像和向量记忆能力
+3. **[医生助手 Agent](#-part-3-医生助手-agent)** - 基于 ReAct 架构的自主推理 AI Agent 系统
 
-## 技术栈
+> 💡 **三个系统完全独立**：可以单独运行任一系统，也可以同时运行多个系统。
 
-| 类别 | 技术 | 版本 |
-|------|------|------|
-| **框架** | Spring Boot | 3.4.0 |
-| | Spring Cloud | 2023.0.x |
-| | Spring AI | 1.1.2 |
-| **服务治理** | Nacos | 2.x |
-| | Seata | 2.x |
-| | Sentinel | 1.8.x |
-| **数据** | MySQL | 8.0 |
-| | Redis | 7.0 |
-| | ShardingSphere | 5.x |
-| **消息** | RabbitMQ | 3.x |
-| **搜索** | Elasticsearch | 8.x |
-| **AI** | DeepSeek API | - |
+---
 
-## 项目架构
+# 📦 Part 1: 分布式系统治理
 
-### 🏗️ 分布式系统部分（6个服务）
+## 系统概述
+
+通过订单履约流程演示微服务治理模式，包含 6 个服务 + 共享基础设施。
+
+### 架构图
 
 ```
 客户端 → gateway(8080) → Nacos 注册中心
@@ -35,7 +27,8 @@
            └→ outbox-consumer(8090) → RabbitMQ → order-service
 ```
 
-**核心能力**：
+### 核心能力
+
 - **服务治理**：Nacos 注册发现、Gateway 路由、OpenFeign 调用
 - **分布式事务**：Seata AT 模式（订单-库存-支付）
 - **最终一致性**：Outbox 模式 + RabbitMQ 可靠投递
@@ -44,80 +37,42 @@
 - **数据分片**：ShardingSphere 按 user_id 分表
 - **幂等防重**：Redis SET NX + DB 唯一约束
 
-### 🤖 AI 记忆系统部分（3个服务）
+### 技术栈
 
-```
-客户端 → ai-chat-service(8085) ──┬→ user-profile-service(8086) → MySQL
-                                  ├→ vector-memory-service(8087) → 向量数据库
-                                  ├→ DeepSeek API
-                                  └→ Elasticsearch (异步同步)
-```
+| 类别 | 技术 | 版本 |
+|------|------|------|
+| **框架** | Spring Boot | 3.4.0 |
+| | Spring Cloud | 2023.0.x |
+| **服务治理** | Nacos | 2.x |
+| | Seata | 2.x |
+| | Sentinel | 1.8.x |
+| **数据** | MySQL | 8.0 |
+| | Redis | 7.0 |
+| | ShardingSphere | 5.x |
+| **消息** | RabbitMQ | 3.x |
 
-**核心能力**：
-- **对话编排**：SessionContext 管理（意图分析、对话阶段）
-- **上下文管理**：Token 预算分配与智能压缩
-- **记忆检索**：用户画像 + 向量记忆多维度检索
-- **异步同步**：RabbitMQ + Elasticsearch 对话历史
-- **可观测性**：Prometheus 监控 + 健康检查
+### 模块清单
 
-### 🔗 共享基础
-
-- **common 模块**：统一返回、TraceId、异常处理、Snowflake ID、HMAC Token
-- **基础设施**：MySQL, Redis, RabbitMQ, Nacos, Seata, Sentinel
-
-## 模块清单
-
-| 模块 | 端口 | 职责 | 所属 |
-|------|------|------|------|
-| `gateway` | 8080 | 网关路由、Token 校验、限流熔断 | 分布式 |
-| `user-service` | 8084 | 用户注册、登录、Token 签发 | 分布式 |
-| `order-service` | 8081 | 订单主流程、Seata 发起方、秒杀 | 分布式 |
-| `payment-service` | 8082 | 支付准备/确认、按 user_id 分表 | 分布式 |
-| `inventory-service` | 8083 | 库存扣减、乐观锁、幂等 | 分布式 |
-| `outbox-consumer` | 8090 | Outbox 轮询投递到 RabbitMQ | 分布式 |
-| `ai-chat-service` | 8085 | AI 对话编排、上下文管理 | AI 系统 |
-| `user-profile-service` | 8086 | 用户画像、偏好管理 | AI 系统 |
-| `vector-memory-service` | 8087 | 向量记忆存储与检索 | AI 系统 |
-| `common` | - | 公共工具（返回、TraceId、Token、ID） | 共享 |
+| 模块 | 端口 | 职责 |
+|------|------|------|
+| `gateway` | 8080 | 网关路由、Token 校验、限流熔断 |
+| `user-service` | 8084 | 用户注册、登录、Token 签发 |
+| `order-service` | 8081 | 订单主流程、Seata 发起方、秒杀 |
+| `payment-service` | 8082 | 支付准备/确认、按 user_id 分表 |
+| `inventory-service` | 8083 | 库存扣减、乐观锁、幂等 |
+| `outbox-consumer` | 8090 | Outbox 轮询投递到 RabbitMQ |
+| `common` | - | 公共工具（返回、TraceId、Token、ID） |
 
 ## 快速开始
 
-### 最小启动（仅分布式系统核心）
+### 1. 启动基础设施
 
 ```bash
-# 1. 启动基础设施
+# 启动分布式系统所需的基础设施
 docker compose up -d
-
-# 2. 编译
-mvn -T 1C clean package -DskipTests
-
-# 3. 启动核心服务（3个终端）
-mvn -q -pl gateway spring-boot:run              # 终端1: 网关
-mvn -q -pl user-service spring-boot:run         # 终端2: 用户服务
-mvn -q -pl order-service spring-boot:run        # 终端3: 订单服务
 ```
 
-### 完整启动（分布式系统 6个服务）
-
-```bash
-# 在不同终端分别启动
-mvn -q -pl gateway spring-boot:run              # 8080
-mvn -q -pl user-service spring-boot:run         # 8084
-mvn -q -pl order-service spring-boot:run        # 8081
-mvn -q -pl payment-service spring-boot:run      # 8082
-mvn -q -pl inventory-service spring-boot:run    # 8083
-mvn -q -pl outbox-consumer spring-boot:run      # 8090
-```
-
-### AI 记忆系统启动（可选）
-
-```bash
-mvn -q -pl user-profile-service spring-boot:run # 8086
-mvn -q -pl vector-memory-service spring-boot:run # 8087
-mvn -q -pl ai-chat-service spring-boot:run      # 8085
-```
-
-### 基础设施访问
+**基础设施访问**：
 
 | 服务 | 地址 | 账号 |
 |------|------|------|
@@ -129,19 +84,46 @@ mvn -q -pl ai-chat-service spring-boot:run      # 8085
 
 > **提示**：首次启动或修改数据库脚本后，执行 `docker compose down -v && docker compose up -d`
 
+### 2. 编译项目
+
+```bash
+mvn -T 1C clean package -DskipTests
+```
+
+### 3. 启动服务（选择一种方式）
+
+#### 方式 A：最小启动（3个核心服务）
+
+```bash
+# 在不同终端分别启动
+mvn -q -pl gateway spring-boot:run              # 终端1: 网关 (8080)
+mvn -q -pl user-service spring-boot:run         # 终端2: 用户服务 (8084)
+mvn -q -pl order-service spring-boot:run        # 终端3: 订单服务 (8081)
+```
+
+#### 方式 B：完整启动（6个服务）
+
+```bash
+# 在不同终端分别启动
+mvn -q -pl gateway spring-boot:run              # 8080
+mvn -q -pl user-service spring-boot:run         # 8084
+mvn -q -pl order-service spring-boot:run        # 8081
+mvn -q -pl payment-service spring-boot:run      # 8082
+mvn -q -pl inventory-service spring-boot:run    # 8083
+mvn -q -pl outbox-consumer spring-boot:run      # 8090
+```
+
 ### 停止服务
 
 ```bash
-# 停止所有服务
-lsof -ti :8080 :8081 :8082 :8083 :8084 :8085 :8086 :8087 :8090 | xargs kill
+# 停止分布式系统服务
+lsof -ti :8080 :8081 :8082 :8083 :8084 :8090 | xargs kill
 
 # 停止基础设施
 docker compose down
 ```
 
-## 快速验证
-
-### 分布式系统 - 5分钟体验
+## 快速验证（5分钟体验）
 
 ```bash
 # 1. 注册用户
@@ -178,7 +160,205 @@ curl "http://localhost:8080/api/order/order/<orderNo>" \
 - ✅ Outbox 最终一致性：支付成功事件通过 MQ 异步通知
 - ✅ 幂等防重：重复提交相同 Idempotency-Key 会被拒绝
 
-### AI 记忆系统 - 3分钟体验
+## 学习路径
+
+| 步骤 | 主题 | 实验内容 | 观察重点 |
+|------|------|----------|----------|
+| 1 | 服务注册与发现 | 启动 gateway + user-service | Nacos 控制台看到服务注册 |
+| 2 | 分布式事务 | 完整下单流程 | Seata 全局事务回滚 |
+| 3 | 最终一致性 | 支付成功回调 | Outbox 重试机制 |
+| 4 | 幂等与防重 | 重复提交订单 | 幂等 Key 生效 |
+| 5 | 秒杀削峰 | 使用 v2 接口 | Redis Lua + Stream 异步 |
+| 6 | 限流熔断 | 压测网关 | IP 限流和 Sentinel 熔断 |
+
+## 故障注入实验
+
+用于观察系统在异常情况下的行为：
+
+```bash
+# 实验1：库存扣减失败 → 观察 Seata 全局回滚
+LAB_FAIL_INVENTORY_DEDUCT=true mvn -q -pl inventory-service spring-boot:run
+
+# 实验2：支付准备失败 → 观察事务回滚
+LAB_FAIL_PAYMENT_PREPARE=true mvn -q -pl payment-service spring-boot:run
+
+# 实验3：Outbox 投递失败 → 观察重试机制
+LAB_FAIL_OUTBOX_PUBLISH=true mvn -q -pl outbox-consumer spring-boot:run
+```
+
+**实验步骤**：
+1. 启动带故障开关的服务
+2. 执行正常的业务操作
+3. 观察日志和数据库状态
+4. 关闭故障开关，观察恢复
+
+## 核心技术模式
+
+| 模式 | 实现 | 位置 |
+|------|------|------|
+| 服务治理 | Nacos 注册发现 + Gateway 路由 | gateway, common |
+| 认证授权 | HMAC-SHA256 Token（非 JWT） | common/AuthTokenService |
+| 分布式事务 | Seata AT 模式 | order-service/@GlobalTransactional |
+| 最终一致性 | Outbox 模式 + RabbitMQ | outbox-consumer |
+| 幂等防重 | Redis SET NX + DB 唯一约束 | IdempotencyService |
+| 秒杀削峰 | Redis Lua + Stream 异步落库 | order-service/v2 |
+| 限流熔断 | Sentinel + RedisRateLimiter | gateway |
+| 数据分片 | ShardingSphere-JDBC | payment, order |
+| 链路追踪 | MDC TraceId 透传 | common/TraceIdFilter |
+| ID 生成 | Snowflake 算法（CAS 无锁） | common/SnowflakeIdGenerator |
+
+## 学习价值
+
+- ✅ 为什么要有注册中心，而不是全写死地址
+- ✅ 为什么用户 ID 更适合作为分表键，而不是用户名
+- ✅ 为什么 Token 校验更适合放在网关
+- ✅ 为什么同步链路适合 Seata，异步链路适合 Outbox
+- ✅ 为什么幂等不能只靠前端按钮防重
+- ✅ 为什么秒杀要先削峰再落库
+- ✅ 为什么限流和 fallback 是保护系统，不是业务成功
+
+## 常见问题
+
+<details>
+<summary><b>Q: 服务启动失败，提示端口被占用？</b></summary>
+
+```bash
+# 查看端口占用
+lsof -i :8080
+
+# 停止占用端口的进程
+kill -9 <PID>
+```
+</details>
+
+<details>
+<summary><b>Q: Nacos 注册失败？</b></summary>
+
+1. 检查 Nacos 是否启动：`docker ps | grep nacos`
+2. 检查 Nacos 日志：`docker logs gov-nacos`
+3. 访问 Nacos 控制台：http://localhost:8848/nacos
+4. 检查服务配置：`application.yml` 中的 `spring.cloud.nacos.discovery.server-addr`
+</details>
+
+<details>
+<summary><b>Q: Seata 事务不回滚？</b></summary>
+
+1. 检查 Seata Server 是否启动：`docker ps | grep seata`
+2. 检查服务是否注册到 Seata：查看 Seata 控制台
+3. 检查 `@GlobalTransactional` 注解是否生效
+4. 查看 Seata 日志：`docker logs gov-seata`
+</details>
+
+<details>
+<summary><b>Q: Outbox 消息不投递？</b></summary>
+
+1. 检查 RabbitMQ 是否启动：`docker ps | grep rabbitmq`
+2. 查看 Outbox 表状态：
+   ```sql
+   SELECT * FROM t_outbox WHERE status != 'SENT' ORDER BY id DESC LIMIT 10;
+   ```
+3. 检查 outbox-consumer 日志
+4. 检查 RabbitMQ 控制台：http://localhost:15672
+</details>
+
+<details>
+<summary><b>Q: 数据库连接失败？</b></summary>
+
+1. 检查 MySQL 是否启动：`docker ps | grep mysql`
+2. 检查数据库是否初始化：
+   ```bash
+   mysql -uroot -proot -h127.0.0.1 -P3306 -e "SHOW DATABASES;"
+   ```
+3. 重新初始化数据库：`docker compose down -v && docker compose up -d`
+</details>
+
+---
+
+# 🤖 Part 2: AI 记忆系统
+
+## 系统概述
+
+企业级 AI 对话服务，具备用户画像和向量记忆能力，包含 3 个服务。
+
+### 架构图
+
+```
+客户端 → ai-chat-service(8085) ──┬→ user-profile-service(8086) → MySQL
+                                  ├→ vector-memory-service(8087) → 向量数据库
+                                  ├→ DeepSeek API
+                                  └→ Elasticsearch (异步同步)
+```
+
+### 核心能力
+
+- **对话编排**：SessionContext 管理（意图分析、对话阶段）
+- **上下文管理**：Token 预算分配与智能压缩
+- **记忆检索**：用户画像 + 向量记忆多维度检索
+- **异步同步**：RabbitMQ + Elasticsearch 对话历史
+- **可观测性**：Prometheus 监控 + 健康检查
+
+### 技术栈
+
+| 类别 | 技术 | 版本 |
+|------|------|------|
+| **框架** | Spring Boot | 3.4.0 |
+| | Spring AI | 1.1.2 |
+| **数据** | MySQL | 8.0 |
+| | Elasticsearch | 8.x |
+| **消息** | RabbitMQ | 3.x |
+| **AI** | DeepSeek API | - |
+
+### 模块清单
+
+| 模块 | 端口 | 职责 |
+|------|------|------|
+| `ai-chat-service` | 8085 | AI 对话编排、上下文管理 |
+| `user-profile-service` | 8086 | 用户画像、偏好管理 |
+| `vector-memory-service` | 8087 | 向量记忆存储与检索 |
+
+## 快速开始
+
+### 1. 启动基础设施
+
+```bash
+# 启动 AI 系统所需的基础设施
+docker compose up -d
+```
+
+**基础设施访问**：
+
+| 服务 | 地址 | 账号 |
+|------|------|------|
+| MySQL | localhost:3306 | root/root |
+| RabbitMQ 控制台 | http://localhost:15672 | guest/guest |
+| Elasticsearch | localhost:9200 | - |
+
+### 2. 编译项目
+
+```bash
+mvn -T 1C clean package -DskipTests
+```
+
+### 3. 启动服务
+
+```bash
+# 在不同终端分别启动
+mvn -q -pl user-profile-service spring-boot:run # 8086
+mvn -q -pl vector-memory-service spring-boot:run # 8087
+mvn -q -pl ai-chat-service spring-boot:run      # 8085
+```
+
+### 停止服务
+
+```bash
+# 停止 AI 系统服务
+lsof -ti :8085 :8086 :8087 | xargs kill
+
+# 停止基础设施
+docker compose down
+```
+
+## 快速验证（3分钟体验）
 
 ```bash
 # 1. 发起对话
@@ -208,19 +388,6 @@ curl http://localhost:8085/actuator/health
 
 ## 学习路径
 
-### 路径 1：分布式系统治理（推荐顺序）
-
-| 步骤 | 主题 | 实验内容 | 观察重点 |
-|------|------|----------|----------|
-| 1 | 服务注册与发现 | 启动 gateway + user-service | Nacos 控制台看到服务注册 |
-| 2 | 分布式事务 | 完整下单流程 | Seata 全局事务回滚 |
-| 3 | 最终一致性 | 支付成功回调 | Outbox 重试机制 |
-| 4 | 幂等与防重 | 重复提交订单 | 幂等 Key 生效 |
-| 5 | 秒杀削峰 | 使用 v2 接口 | Redis Lua + Stream 异步 |
-| 6 | 限流熔断 | 压测网关 | IP 限流和 Sentinel 熔断 |
-
-### 路径 2：AI 应用架构
-
 | 步骤 | 主题 | 实验内容 | 观察重点 |
 |------|------|----------|----------|
 | 1 | 对话编排 | 发起多轮对话 | SessionContext 状态变化 |
@@ -228,31 +395,387 @@ curl http://localhost:8085/actuator/health
 | 3 | 记忆检索 | 查询用户画像 | 多维度记忆融合 |
 | 4 | 监控与健康 | 查看 Prometheus 指标 | 响应时间、成功率 |
 
-## 故障注入实验
+## 核心技术模式
 
-用于观察系统在异常情况下的行为：
+| 模式 | 实现 | 位置 |
+|------|------|------|
+| 对话编排 | SessionContext 管理 | SessionContextService |
+| 上下文管理 | Token 预算分配与压缩 | ContextBudgetManager |
+| 记忆检索 | 用户画像 + 向量记忆 | MemoryService |
+| 异步同步 | RabbitMQ + Elasticsearch | ChatHistorySyncMessage |
+| 监控指标 | Micrometer + Prometheus | AiChatMetrics |
+| 健康检查 | Spring Actuator | AiServicesHealthIndicator |
 
-```bash
-# 实验1：库存扣减失败 → 观察 Seata 全局回滚
-LAB_FAIL_INVENTORY_DEDUCT=true mvn -q -pl inventory-service spring-boot:run
+## 学习价值
 
-# 实验2：支付准备失败 → 观察事务回滚
-LAB_FAIL_PAYMENT_PREPARE=true mvn -q -pl payment-service spring-boot:run
+- ✅ 为什么需要 SessionContext 管理对话状态
+- ✅ 为什么需要 Token 预算控制（避免超限）
+- ✅ 为什么需要多维度记忆检索（画像 + 向量）
+- ✅ 为什么对话历史要异步同步（性能 vs 一致性）
+- ✅ 为什么需要监控和健康检查（可观测性）
 
-# 实验3：Outbox 投递失败 → 观察重试机制
-LAB_FAIL_OUTBOX_PUBLISH=true mvn -q -pl outbox-consumer spring-boot:run
-```
-
-**实验步骤**：
-1. 启动带故障开关的服务
-2. 执行正常的业务操作
-3. 观察日志和数据库状态
-4. 关闭故障开关，观察恢复
-
-## 详细验证指南
+## 常见问题
 
 <details>
-<summary><b>分布式系统 - 完整验证链路</b></summary>
+<summary><b>Q: AI 服务调用失败？</b></summary>
+
+1. 检查 DeepSeek API Key 是否配置
+2. 检查网络连接是否正常
+3. 查看 ai-chat-service 日志
+4. 检查健康检查：`curl http://localhost:8085/actuator/health`
+</details>
+
+<details>
+<summary><b>Q: 向量数据库连接失败？</b></summary>
+
+1. 检查向量数据库是否启动
+2. 检查配置文件中的连接信息
+3. 查看 vector-memory-service 日志
+</details>
+
+<details>
+<summary><b>Q: Elasticsearch 同步失败？</b></summary>
+
+1. 检查 Elasticsearch 是否启动：`docker ps | grep elasticsearch`
+2. 检查 RabbitMQ 消息队列
+3. 查看 ai-chat-service 日志
+</details>
+
+---
+
+# 🔗 共享基础
+
+## common 模块
+
+统一返回、TraceId、异常处理、Snowflake ID、HMAC Token
+
+**核心组件**：
+- **`ApiResponse<T>`** — 每个端点返回 `{success, code, message, traceId, data}`
+- **`Trace` / `TraceIdFilter`** — MDC 传播的 `traceId` 注入到每个请求和响应
+- **`AuthTokenService`** — 无状态 HMAC-SHA256 Token（2部分 Base64，非 JWT），TTL 2小时
+- **`SnowflakeIdGenerator`** — 无锁 CAS，自定义纪元 2024-01-01
+- **`GlobalExceptionHandler`** — 将所有异常映射到 `ApiResponse`
+
+---
+
+# 🤖 Part 3: 医生助手 Agent
+
+## 系统概述
+
+基于 **ReAct (Reasoning + Acting)** 架构的医生助手 AI Agent 系统，实现自主推理、多步决策和智能行动执行。
+
+### 架构图
+
+```
+医生请求 → AgentController(8088)
+              ↓
+         ReActAgentEngine (核心引擎)
+              ↓
+    ┌─────────┴─────────┐
+    ↓                   ↓
+Thought (推理)      Action (行动)
+    ↓                   ↓
+Claude API         ToolRegistry (13个工具)
+    ↓                   ↓
+决策下一步          ├─ 低风险工具 (直接执行)
+    ↓               ├─ 中风险工具 (执行+记录)
+Observation         └─ 高风险工具 (需医生确认)
+    ↓                   ↓
+循环直到完成        PendingTaskService
+    ↓                   ↓
+Final Answer        医生审批 → 恢复执行
+```
+
+### 核心能力
+
+- **自主推理**：Agent 自己决定查询什么、分析什么、做什么
+- **多步决策**：根据观察结果动态调整策略，不是固定流程
+- **智能行动**：不只是查询数据，还能发送消息、创建任务、起草处方
+- **完全透明**：每一步 Thought、Action、Observation 都可见
+- **医疗安全**：高风险操作需医生确认，低风险操作直接执行
+
+### 技术栈
+
+| 类别 | 技术 | 版本 |
+|------|------|------|
+| **框架** | Spring Boot | 3.2.5 |
+| **ORM** | MyBatis Plus | 3.5.5 |
+| **数据** | MySQL | 8.0 |
+| | Redis | 7.0 |
+| **AI** | Claude API | Opus 4.7 |
+| **HTTP** | OkHttp | 4.12.0 |
+| **JSON** | Fastjson | 2.0.43 |
+| **监控** | Micrometer | - |
+
+### 模块清单
+
+| 模块 | 端口 | 职责 |
+|------|------|------|
+| `doctor-assistant-agent` | 8088 | ReAct Agent 引擎、工具系统、会话管理 |
+
+## 快速开始
+
+### 1. 数据库初始化
+
+```bash
+# 创建数据库并导入表结构
+mysql -u root -p < doctor-assistant-agent/sql/schema.sql
+```
+
+### 2. 配置文件
+
+创建 `doctor-assistant-agent/src/main/resources/application.yml`：
+
+```yaml
+server:
+  port: 8088
+
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/doctor_assistant?useUnicode=true&characterEncoding=utf8
+    username: root
+    password: root
+  redis:
+    host: localhost
+    port: 6379
+
+# Claude API 配置
+claude:
+  api:
+    key: ${CLAUDE_API_KEY}
+    base-url: https://api.anthropic.com
+    model: claude-opus-4-7
+    max-tokens: 4096
+
+# Agent 配置
+agent:
+  max-steps: 15
+  session-timeout: 3600
+  task-expire-hours: 24
+```
+
+### 3. 编译运行
+
+```bash
+# 编译
+mvn clean package -DskipTests
+
+# 运行
+mvn -q -pl doctor-assistant-agent spring-boot:run
+```
+
+### 停止服务
+
+```bash
+# 停止 Agent 服务
+lsof -ti :8088 | xargs kill
+```
+
+## 快速验证（5分钟体验）
+
+```bash
+# 1. 执行 Agent 任务
+curl -X POST http://localhost:8088/api/agent/execute \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "customerId": "C001",
+    "doctorId": "D001",
+    "goal": "分析患者健康状况，识别风险因素"
+  }'
+
+# 2. 查询会话详情
+curl http://localhost:8088/api/agent/sessions/{sessionId}
+
+# 3. 获取待确认任务
+curl http://localhost:8088/api/agent/pending-tasks?doctorId=D001
+
+# 4. 审批任务
+curl -X POST http://localhost:8088/api/agent/pending-tasks/{taskId}/approve \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "approved": true,
+    "comment": "同意执行"
+  }'
+```
+
+**观察点**：
+- ✅ ReAct 循环：Thought → Action → Observation 的完整流程
+- ✅ 工具调用：13个医疗工具的智能选择和执行
+- ✅ 风险控制：高风险操作自动暂停等待医生审批
+- ✅ 执行透明：每一步推理和行动都完整记录
+
+## ReAct 工作流程示例
+
+```
+医生："分析患者张三的健康状况"
+    ↓
+【第1步】Agent Thought: "我需要先了解患者的基本信息"
+        Agent Action: get_patient_profile
+        Action Input: {"customerId": "张三"}
+        Observation: {"age": 35, "gender": "女", "bmi": 22.5, "chronicDiseases": ["高血压"]}
+    ↓
+【第2步】Agent Thought: "患者有高血压，需要查看用药情况"
+        Agent Action: get_prescription_history
+        Action Input: {"customerId": "张三"}
+        Observation: [历史处方数据]
+    ↓
+【第3步】Agent Thought: "体重目标是减重，需要查看进展"
+        Agent Action: get_weight_history
+        Action Input: {"customerId": "张三", "days": 30}
+        Observation: [体重下降3kg，但最近反弹1kg]
+    ↓
+【第4步】Agent Thought: "反弹可能有原因，查看聊天记录"
+        Agent Action: get_chat_history
+        Action Input: {"customerId": "张三"}
+        Observation: [患者说"有点焦虑"、"是不是方法不对"]
+    ↓
+【第5步】Agent Thought: "患者有焦虑情绪，建议心理咨询"
+        Agent Action: draft_prescription
+        Action Input: {"customerId": "张三", "recommendations": [...]}
+        ⚠️ 高风险操作 → 创建待确认任务 → Agent 暂停
+    ↓
+【医生审批】医生查看详情 → 批准执行
+    ↓
+Agent 恢复执行
+    ↓
+【第6步】Agent Thought: "现在我有足够信息生成完整分析了"
+        Final Answer: [完整的患者分析报告]
+```
+
+## 工具系统（13个工具）
+
+### 低风险工具（直接执行）
+1. **get_patient_profile** - 查询患者基本信息
+2. **get_weight_history** - 查询体重历史
+3. **get_chat_history** - 查询聊天记录
+4. **get_prescription_history** - 查询历史处方
+5. **search_similar_cases** - 搜索相似病例（Milvus）
+6. **analyze_weight_trend** - 分析体重趋势并预测
+7. **analyze_sentiment** - 分析聊天情感倾向
+8. **calculate_risk_score** - 计算患者风险评分
+
+### 中风险工具（执行但记录）
+9. **send_reminder** - 给患者发送提醒消息
+10. **create_followup_task** - 创建随访任务
+11. **flag_high_risk_patient** - 标记高风险患者
+
+### 高风险工具（需医生确认）
+12. **draft_prescription** - 起草处方建议
+13. **suggest_diagnosis** - 提供诊断建议
+
+## 学习路径
+
+| 步骤 | 主题 | 实验内容 | 观察重点 |
+|------|------|----------|----------|
+| 1 | ReAct 基础 | 简单患者分析 | Thought-Action-Observation 循环 |
+| 2 | 工具调用 | 多工具组合使用 | 工具选择的智能性 |
+| 3 | 风险控制 | 触发高风险操作 | 暂停-审批-恢复流程 |
+| 4 | 多步推理 | 复杂病例分析 | 动态决策和策略调整 |
+| 5 | 会话管理 | 长时间会话 | 会话状态和超时处理 |
+
+## 核心技术模式
+
+| 模式 | 实现 | 位置 |
+|------|------|------|
+| ReAct 循环 | Thought-Action-Observation | ReActAgentEngine |
+| 工具注册 | 动态工具发现和调用 | ToolRegistry |
+| 风险分级 | 三级风险控制策略 | ToolRiskLevel |
+| 会话管理 | 暂停/恢复机制 | AgentSessionService |
+| 审批流程 | 待确认任务队列 | PendingTaskService |
+| Prompt 工程 | 结构化 Prompt 构建 | ReActPromptBuilder |
+| 响应解析 | JSON 结构化解析 | ReActResponseParser |
+| 执行日志 | 完整执行链路记录 | AgentExecutionLog |
+
+## 学习价值
+
+- ✅ 为什么需要 ReAct 架构（推理+行动的结合）
+- ✅ 为什么 Agent 比固定流程更智能（动态决策）
+- ✅ 为什么需要工具系统（扩展 AI 能力边界）
+- ✅ 为什么需要风险分级（医疗安全保障）
+- ✅ 为什么需要会话管理（支持长时间任务）
+- ✅ 为什么需要执行透明（可解释性和可审计性）
+
+## 性能指标
+
+| 指标 | 目标值 | 说明 |
+|------|--------|------|
+| 平均步数 | 5-8步 | 完成一次分析的平均步数 |
+| 总响应时间 | P95 < 15s | 包含所有 ReAct 循环 |
+| 单步延迟 | P95 < 2s | 单次 Thought+Action 的延迟 |
+| 并发能力 | 50 QPS | 单实例支持的并发 Agent 数 |
+
+## 常见问题
+
+<details>
+<summary><b>Q: Agent 执行失败或陷入循环？</b></summary>
+
+1. 检查 Claude API Key 是否配置正确
+2. 查看执行日志中的 Thought 和 Action
+3. 检查是否达到最大步数限制（默认15步）
+4. 查看工具执行是否返回有效的 Observation
+</details>
+
+<details>
+<summary><b>Q: 高风险操作没有暂停？</b></summary>
+
+1. 检查工具的风险等级配置
+2. 查看 PendingTaskService 是否正常工作
+3. 检查数据库中的 agent_pending_task 表
+4. 查看会话状态是否正确更新为 WAITING_APPROVAL
+</details>
+
+<details>
+<summary><b>Q: 工具调用失败？</b></summary>
+
+1. 检查工具是否正确注册到 ToolRegistry
+2. 查看工具的输入参数是否符合要求
+3. 检查数据库中是否有相关数据
+4. 查看工具执行器的异常日志
+</details>
+
+<details>
+<summary><b>Q: 会话超时如何处理？</b></summary>
+
+1. 默认会话超时时间为 3600 秒（1小时）
+2. 超时的会话状态会自动更新为 TIMEOUT
+3. 可以通过配置 `agent.session-timeout` 调整超时时间
+4. 超时后可以创建新会话重新执行
+</details>
+
+## 开发计划
+
+### Phase 1: 核心引擎（当前阶段）
+- [x] 项目结构搭建
+- [x] 数据模型定义
+- [x] 数据库设计
+- [ ] ReActAgentEngine 实现
+- [ ] ToolRegistry 实现
+- [ ] ActionExecutor 实现
+- [ ] Prompt 构建和解析
+
+### Phase 2: 工具扩展
+- [ ] 13个工具的完整实现
+- [ ] Claude API 客户端
+- [ ] 待确认任务流程
+- [ ] 会话管理服务
+
+### Phase 3: API 开发
+- [ ] Controller 层实现
+- [ ] Service 层实现
+- [ ] Mapper 层实现
+- [ ] 异常处理
+
+### Phase 4: 测试部署
+- [ ] 单元测试
+- [ ] 集成测试
+- [ ] Docker 部署
+- [ ] 监控告警
+
+---
+
+# 📚 详细验证指南
+
+## 分布式系统 - 完整验证链路
 
 ### 1. 用户注册与登录
 
@@ -358,10 +881,7 @@ docker start gov-rabbitmq
 # 等待下一次轮询，状态自动变为 SENT
 ```
 
-</details>
-
-<details>
-<summary><b>AI 记忆系统 - 完整验证链路</b></summary>
+## AI 记忆系统 - 完整验证链路
 
 ### 1. 发起对话
 
@@ -408,133 +928,21 @@ curl http://localhost:8085/actuator/prometheus | grep ai_chat
 curl http://localhost:8085/actuator/health
 ```
 
-</details>
+---
 
-## 核心技术模式
+# ⚠️ 重要说明
 
-### 分布式系统
-
-| 模式 | 实现 | 位置 |
-|------|------|------|
-| 服务治理 | Nacos 注册发现 + Gateway 路由 | gateway, common |
-| 认证授权 | HMAC-SHA256 Token（非 JWT） | common/AuthTokenService |
-| 分布式事务 | Seata AT 模式 | order-service/@GlobalTransactional |
-| 最终一致性 | Outbox 模式 + RabbitMQ | outbox-consumer |
-| 幂等防重 | Redis SET NX + DB 唯一约束 | IdempotencyService |
-| 秒杀削峰 | Redis Lua + Stream 异步落库 | order-service/v2 |
-| 限流熔断 | Sentinel + RedisRateLimiter | gateway |
-| 数据分片 | ShardingSphere-JDBC | payment, order |
-| 链路追踪 | MDC TraceId 透传 | common/TraceIdFilter |
-| ID 生成 | Snowflake 算法（CAS 无锁） | common/SnowflakeIdGenerator |
-
-### AI 记忆系统
-
-| 模式 | 实现 | 位置 |
-|------|------|------|
-| 对话编排 | SessionContext 管理 | SessionContextService |
-| 上下文管理 | Token 预算分配与压缩 | ContextBudgetManager |
-| 记忆检索 | 用户画像 + 向量记忆 | MemoryService |
-| 异步同步 | RabbitMQ + Elasticsearch | ChatHistorySyncMessage |
-| 监控指标 | Micrometer + Prometheus | AiChatMetrics |
-| 健康检查 | Spring Actuator | AiServicesHealthIndicator |
-
-## 常见问题
-
-<details>
-<summary><b>Q: 服务启动失败，提示端口被占用？</b></summary>
-
-```bash
-# 查看端口占用
-lsof -i :8080
-
-# 停止占用端口的进程
-kill -9 <PID>
-```
-</details>
-
-<details>
-<summary><b>Q: Nacos 注册失败？</b></summary>
-
-1. 检查 Nacos 是否启动：`docker ps | grep nacos`
-2. 检查 Nacos 日志：`docker logs gov-nacos`
-3. 访问 Nacos 控制台：http://localhost:8848/nacos
-4. 检查服务配置：`application.yml` 中的 `spring.cloud.nacos.discovery.server-addr`
-</details>
-
-<details>
-<summary><b>Q: Seata 事务不回滚？</b></summary>
-
-1. 检查 Seata Server 是否启动：`docker ps | grep seata`
-2. 检查服务是否注册到 Seata：查看 Seata 控制台
-3. 检查 `@GlobalTransactional` 注解是否生效
-4. 查看 Seata 日志：`docker logs gov-seata`
-</details>
-
-<details>
-<summary><b>Q: Outbox 消息不投递？</b></summary>
-
-1. 检查 RabbitMQ 是否启动：`docker ps | grep rabbitmq`
-2. 查看 Outbox 表状态：
-   ```sql
-   SELECT * FROM t_outbox WHERE status != 'SENT' ORDER BY id DESC LIMIT 10;
-   ```
-3. 检查 outbox-consumer 日志
-4. 检查 RabbitMQ 控制台：http://localhost:15672
-</details>
-
-<details>
-<summary><b>Q: AI 服务调用失败？</b></summary>
-
-1. 检查 DeepSeek API Key 是否配置
-2. 检查网络连接是否正常
-3. 查看 ai-chat-service 日志
-4. 检查健康检查：`curl http://localhost:8085/actuator/health`
-</details>
-
-<details>
-<summary><b>Q: 数据库连接失败？</b></summary>
-
-1. 检查 MySQL 是否启动：`docker ps | grep mysql`
-2. 检查数据库是否初始化：
-   ```bash
-   mysql -uroot -proot -h127.0.0.1 -P3306 -e "SHOW DATABASES;"
-   ```
-3. 重新初始化数据库：`docker compose down -v && docker compose up -d`
-</details>
-
-## 学习价值
-
-### 分布式系统
-
-- ✅ 为什么要有注册中心，而不是全写死地址
-- ✅ 为什么用户 ID 更适合作为分表键，而不是用户名
-- ✅ 为什么 Token 校验更适合放在网关
-- ✅ 为什么同步链路适合 Seata，异步链路适合 Outbox
-- ✅ 为什么幂等不能只靠前端按钮防重
-- ✅ 为什么秒杀要先削峰再落库
-- ✅ 为什么限流和 fallback 是保护系统，不是业务成功
-
-### AI 应用架构
-
-- ✅ 为什么需要 SessionContext 管理对话状态
-- ✅ 为什么需要 Token 预算控制（避免超限）
-- ✅ 为什么需要多维度记忆检索（画像 + 向量）
-- ✅ 为什么对话历史要异步同步（性能 vs 一致性）
-- ✅ 为什么需要监控和健康检查（可观测性）
-
-## 重要说明
-
-⚠️ **这是一个学习项目，不是生产模板**
+**这是一个学习项目，不是生产模板**
 
 - Seata + ShardingSphere 的组合在不同版本下兼容性差异较大
 - Outbox 展示的是最终一致性，不代表所有消息场景都应这样实现
 - 这些方案的价值在于理解"解决什么问题"和"付出什么成本"
 - 生产环境需要考虑更多因素：高可用、容灾、监控、安全等
 
-## 贡献与反馈
+---
+
+# 🤝 贡献与反馈
 
 欢迎提交 Issue 和 Pull Request！
-
----
 
 **⭐ 如果这个项目对你有帮助，欢迎 Star！**

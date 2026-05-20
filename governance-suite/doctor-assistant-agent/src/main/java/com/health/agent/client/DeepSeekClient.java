@@ -73,8 +73,7 @@ public class DeepSeekClient {
             Prompt prompt = new Prompt(
                 aiMessages,
                 OpenAiChatOptions.builder()
-                    .withModel(model)
-                    .withTemperature((float) temperature)
+                    .withTemperature(temperature)
                     .withMaxTokens(maxTokens)
                     .build()
             );

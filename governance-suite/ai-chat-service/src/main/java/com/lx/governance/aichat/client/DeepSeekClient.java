@@ -1,5 +1,17 @@
 package com.lx.governance.aichat.client;
 
+import java.util.List;
+import java.util.UUID;
+
+import org.springframework.ai.chat.messages.SystemMessage;
+import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
 import com.lx.governance.aichat.config.ContextBudgetProperties;
 import com.lx.governance.aichat.context.ContextBudgetManager;
 import com.lx.governance.aichat.dto.ChatRequest;
@@ -9,19 +21,9 @@ import com.lx.governance.aichat.dto.SessionContext;
 import com.lx.governance.aichat.dto.UserProfileDTO;
 import com.lx.governance.aichat.monitor.TokenMonitor;
 import com.lx.governance.aichat.monitor.TokenUsageMetrics;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.ai.chat.messages.SystemMessage;
-import org.springframework.ai.chat.messages.UserMessage;
-import org.springframework.ai.openai.OpenAiChatOptions;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
-
-import java.util.List;
-import java.util.UUID;
 
 /**
  * DeepSeek API client for AI chat integration
@@ -48,7 +50,8 @@ public class DeepSeekClient {
      * @param memories       memory items (nullable)
      * @return DifyResponse (compatible format)
      */
-    public DifyResponse chat(ChatRequest request, UserProfileDTO userProfile, SessionContext sessionContext, List<MemoryItemDTO> memories) {
+    public DifyResponse chat(ChatRequest request, UserProfileDTO userProfile, SessionContext sessionContext,
+            List<MemoryItemDTO> memories) {
         long startTime = System.currentTimeMillis();
 
         try {
@@ -63,14 +66,12 @@ public class DeepSeekClient {
             Prompt prompt = new Prompt(
                     List.of(
                             new SystemMessage(systemPrompt),
-                            new UserMessage(userMessage)
-                    ),
+                            new UserMessage(userMessage)),
                     OpenAiChatOptions.builder()
                             .withModel(model)
                             .withTemperature(0.7)
                             .withMaxTokens(2000)
-                            .build()
-            );
+                            .build());
 
             // Call ChatModel
             ChatResponse response = chatModel.call(prompt);
@@ -104,11 +105,11 @@ public class DeepSeekClient {
         }
     }
 
-
     /**
      * Build system prompt with user profile and memories
      */
-    private String buildSystemPrompt(ChatRequest request, UserProfileDTO userProfile, SessionContext sessionContext, List<MemoryItemDTO> memories) {
+    private String buildSystemPrompt(ChatRequest request, UserProfileDTO userProfile, SessionContext sessionContext,
+            List<MemoryItemDTO> memories) {
         // 使用上下文预算管理器构建系统提示词（包含会话上下文和对话历史）
         return contextBudgetManager.buildBudgetedSystemPrompt(
                 userProfile,
@@ -154,8 +155,7 @@ public class DeepSeekClient {
             int totalThreshold = properties.getAlert().getTotalTokensThreshold();
             metrics.setShouldAlert(
                     usage.getPromptTokens().intValue() > promptThreshold ||
-                    usage.getTotalTokens().intValue() > totalThreshold
-            );
+                            usage.getTotalTokens().intValue() > totalThreshold);
         }
 
         // 记录到监控系统
@@ -165,13 +165,15 @@ public class DeepSeekClient {
     /**
      * Convert Spring AI response to Dify response format
      */
-    private DifyResponse convertToDifyResponse(String content, org.springframework.ai.chat.metadata.Usage usage, String conversationId) {
+    private DifyResponse convertToDifyResponse(String content, org.springframework.ai.chat.metadata.Usage usage,
+            String conversationId) {
         DifyResponse difyResponse = new DifyResponse();
 
         difyResponse.setAnswer(content);
 
         // Use existing conversationId or generate new one
-        difyResponse.setConversationId(conversationId != null ? conversationId : "conv-" + UUID.randomUUID().toString());
+        difyResponse
+                .setConversationId(conversationId != null ? conversationId : "conv-" + UUID.randomUUID().toString());
         difyResponse.setMessageId("msg-" + UUID.randomUUID().toString());
 
         // Set metadata

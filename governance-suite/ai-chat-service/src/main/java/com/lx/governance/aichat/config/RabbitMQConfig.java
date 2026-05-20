@@ -9,8 +9,6 @@ import org.springframework.amqp.support.converter.MessageConverter;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-import java.util.UUID;
-
 /**
  * RabbitMQ configuration for AI Chat Service.
  * Configures exchanges for user profile, vector memory, and memory extraction.
@@ -67,8 +65,8 @@ public class RabbitMQConfig {
     public org.springframework.amqp.rabbit.core.RabbitTemplate rabbitTemplate(
             ConnectionFactory connectionFactory,
             MessageConverter jsonMessageConverter) {
-        org.springframework.amqp.rabbit.core.RabbitTemplate template =
-            new org.springframework.amqp.rabbit.core.RabbitTemplate(connectionFactory);
+        org.springframework.amqp.rabbit.core.RabbitTemplate template = new org.springframework.amqp.rabbit.core.RabbitTemplate(
+                connectionFactory);
         template.setMessageConverter(jsonMessageConverter);
         template.setReplyTimeout(10000);
         template.setMandatory(true);

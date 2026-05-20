@@ -1,9 +1,14 @@
 server:
-  port: 8103
+  port: 8100
 
 spring:
   application:
     name: ai-chat-service
+  datasource:
+    url: jdbc:mysql://localhost:3306/ai_memory_db?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: root
+    password: root
+    driver-class-name: com.mysql.cj.jdbc.Driver
   cloud:
     nacos:
       discovery:
@@ -21,6 +26,11 @@ spring:
           initial-interval: 3000
           max-attempts: 3
           multiplier: 2
+  data:
+    redis:
+      host: localhost
+      port: 36379
+      timeout: 3000ms
   elasticsearch:
     uris: http://localhost:9200
     connection-timeout: 5s
@@ -35,6 +45,14 @@ spring:
           model: ${DEEPSEEK_MODEL:deepseek-chat}
           temperature: 0.7
           max-tokens: 2000
+
+# MyBatis Plus Configuration
+mybatis-plus:
+  mapper-locations: classpath*:/mapper/**/*.xml
+  type-aliases-package: com.lx.governance.aichat.entity
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.slf4j.Slf4jImpl
 
 # Dify API Configuration (已注释，保留配置)
 dify:

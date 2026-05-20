@@ -5,6 +5,7 @@ services:
         image: example/mysql:8.0.30
         pull_policy: never
         container_name: gov-mysql
+        restart: unless-stopped
         environment:
             MYSQL_ROOT_PASSWORD: root
             TZ: Asia/Shanghai
@@ -22,6 +23,7 @@ services:
         image: redis:latest
         pull_policy: never
         container_name: gov-redis
+        restart: unless-stopped
         ports:
             - "36379:6379"
         volumes:
@@ -30,6 +32,7 @@ services:
     rabbitmq:
         image: rabbitmq:3.13-management
         container_name: gov-rabbitmq
+        restart: unless-stopped
         ports:
             - "5672:5672"
             - "15672:15672"
@@ -40,6 +43,7 @@ services:
         image: nacos/nacos-server:v2.5.1
         pull_policy: never
         container_name: gov-nacos
+        restart: unless-stopped
         environment:
             MODE: standalone
             PREFER_HOST_MODE: hostname
@@ -61,6 +65,7 @@ services:
     seata-server:
         image: seataio/seata-server:1.7.1
         container_name: gov-seata
+        restart: unless-stopped
         ports:
             - "8091:8091"
         environment:
@@ -73,6 +78,7 @@ services:
         image: bladex/sentinel-dashboard:1.8.6
         platform: linux/amd64
         container_name: gov-sentinel
+        restart: unless-stopped
         ports:
             - "8858:8858"
         environment:
@@ -82,6 +88,7 @@ services:
     etcd:
         image: quay.io/coreos/etcd:v3.5.5
         container_name: gov-etcd
+        restart: unless-stopped
         environment:
             - ETCD_AUTO_COMPACTION_MODE=revision
             - ETCD_AUTO_COMPACTION_RETENTION=1000
@@ -100,6 +107,7 @@ services:
     minio:
         image: minio/minio:RELEASE.2023-03-20T20-16-18Z
         container_name: gov-minio
+        restart: unless-stopped
         environment:
             MINIO_ROOT_USER: minioadmin
             MINIO_ROOT_PASSWORD: minioadmin
@@ -119,6 +127,7 @@ services:
     milvus:
         image: milvusdb/milvus:v2.3.4
         container_name: gov-milvus
+        restart: unless-stopped
         environment:
             ETCD_ENDPOINTS: etcd:2379
             MINIO_ADDRESS: minio:9000
@@ -144,6 +153,7 @@ services:
     elasticsearch:
         image: elasticsearch:8.11.0
         container_name: gov-elasticsearch
+        restart: unless-stopped
         environment:
             - discovery.type=single-node
             - xpack.security.enabled=false
@@ -163,6 +173,7 @@ services:
     kibana:
         image: kibana:8.11.0
         container_name: gov-kibana
+        restart: unless-stopped
         environment:
             - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
             - TZ=Asia/Shanghai
