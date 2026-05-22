@@ -1,5 +1,7 @@
 package com.lx.governance.payment.service;
 
+import static net.logstash.logback.argument.StructuredArguments.kv;
+
 import java.time.Duration;
 import java.util.Map;
 import java.util.UUID;
@@ -7,6 +9,8 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,6 +29,8 @@ import com.lx.governance.payment.repo.PaymentRepository;
 
 @Service
 public class PaymentAppService {
+
+    private static final Logger log = LoggerFactory.getLogger(PaymentAppService.class);
 
     private final PaymentRepository repository;
     private final StringRedisTemplate redisTemplate;
@@ -51,34 +57,67 @@ public class PaymentAppService {
 
     @SentinelResource(value = "payment_prepare", blockHandler = "blockPrepare", fallback = "fallbackPrepare")
     public PaymentDto prepare(PreparePaymentRequest req) {
-        if (failPrepare) {
-            throw new IllegalStateException("lab injected failure: payment prepare");
-        }
-        if (req.getUserId() == null) {
-            throw new IllegalArgumentException("userId is required for payment prepare");
-        }
+        log.info("Payment preparation started",
+            kv("event", "payment_prepare_start"),
+            kv("orderId", req.getOrderNo()),
+            kv("amount", req.getAmountCents())
+        );
 
-        String idemKey = "idem:pay:prepare:" + req.getUserId() + ":" + req.getOrderNo();
-        Boolean ok = redisTemplate.opsForValue().setIfAbsent(idemKey, "1", Duration.ofMinutes(10));
-        if (!Boolean.TRUE.equals(ok)) {
-            return repository.findByUserIdAndOrderNo(req.getUserId(), req.getOrderNo());
-        }
-
-        PaymentDto existing = repository.findByUserIdAndOrderNo(req.getUserId(), req.getOrderNo());
-        if (existing != null) {
-            return existing;
-        }
-
-        String payNo = "P" + payNoGenerator.nextId();
         try {
-            repository.insert(req.getUserId(), payNo, req.getOrderNo(), req.getAmountCents(), "PREPARED", idemKey);
-        } catch (DuplicateKeyException e) {
-            return repository.findByUserIdAndOrderNo(req.getUserId(), req.getOrderNo());
+            if (failPrepare) {
+                throw new IllegalStateException("lab injected failure: payment prepare");
+            }
+            if (req.getUserId() == null) {
+                throw new IllegalArgumentException("userId is required for payment prepare");
+            }
+
+            String idemKey = "idem:pay:prepare:" + req.getUserId() + ":" + req.getOrderNo();
+            Boolean ok = redisTemplate.opsForValue().setIfAbsent(idemKey, "1", Duration.ofMinutes(10));
+            if (!Boolean.TRUE.equals(ok)) {
+                return repository.findByUserIdAndOrderNo(req.getUserId(), req.getOrderNo());
+            }
+
+            PaymentDto existing = repository.findByUserIdAndOrderNo(req.getUserId(), req.getOrderNo());
+            if (existing != null) {
+                return existing;
+            }
+
+            String payNo = "P" + payNoGenerator.nextId();
+            try {
+                repository.insert(req.getUserId(), payNo, req.getOrderNo(), req.getAmountCents(), "PREPARED", idemKey);
+            } catch (DuplicateKeyException e) {
+                return repository.findByUserIdAndOrderNo(req.getUserId(), req.getOrderNo());
+            }
+            PaymentDto result = repository.findByUserIdAndOrderNo(req.getUserId(), req.getOrderNo());
+
+            log.info("Payment prepared successfully",
+                kv("event", "payment_prepared"),
+                kv("paymentId", result.getPayNo()),
+                kv("orderId", req.getOrderNo()),
+                kv("amount", req.getAmountCents()),
+                kv("status", "PREPARED")
+            );
+
+            return result;
+        } catch (Exception e) {
+            log.error("Payment preparation failed",
+                kv("event", "payment_prepare_failed"),
+                kv("orderId", req.getOrderNo()),
+                kv("error", e.getMessage()),
+                kv("status", "FAILED"),
+                e
+            );
+            throw e;
         }
-        return repository.findByUserIdAndOrderNo(req.getUserId(), req.getOrderNo());
     }
 
     public PaymentDto confirm(Long userId, String orderNo) {
+        log.info("Payment confirmation started",
+            kv("event", "payment_confirm_start"),
+            kv("orderId", orderNo),
+            kv("userId", userId)
+        );
+
         if (failConfirm) {
             throw new IllegalStateException("lab injected failure: payment confirm");
         }
@@ -96,6 +135,14 @@ public class PaymentAppService {
             repository.updateStatusByUserIdAndOrderNo(userId, orderNo, "SUCCEEDED");
         }
         p = userId == null ? repository.findByOrderNo(orderNo) : repository.findByUserIdAndOrderNo(userId, orderNo);
+
+        log.info("Payment confirmed successfully",
+            kv("event", "payment_confirmed"),
+            kv("paymentId", p.getPayNo()),
+            kv("orderId", orderNo),
+            kv("status", "CONFIRMED")
+        );
+
         // 复用 traceId，便于串联业务日志与消息发送确认日志。
         String traceId = Trace.getOrCreate();
         String eventId = UUID.randomUUID().toString();
