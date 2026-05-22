@@ -50,6 +50,9 @@ public class ReActAgentEngine {
     @Value("${agent.use-mock:false}")
     private boolean useMock;
 
+    @Value("${agent.protocol-repair-attempts:1}")
+    private int protocolRepairAttempts;
+
     /**
      * 执行 Agent 任务
      */
@@ -79,23 +82,13 @@ public class ReActAgentEngine {
 
             try {
                 // 1. 调用 DeepSeek API 获取 Thought 和 Action
-                String responseText;
-                if (useMock) {
-                    // Mock 模式（用于测试）
-                    responseText = mockDeepSeekResponse(step, customerId);
-                } else {
-                    // 真实调用 DeepSeek API
-                    DeepSeekClient.DeepSeekResponse response = deepSeekClient.chat(systemPrompt, messages);
-                    responseText = response.getContent();
-                }
-                log.info("Agent响应: {}", responseText);
-
-                // 2. 解析响应
-                ThoughtResult thought = responseParser.parse(responseText);
+                ParsedThought parsedThought = requestThoughtResult(systemPrompt, messages, step, customerId);
+                log.info("Agent响应: {}", parsedThought.responseText());
 
                 // 记录 Thought
+                ThoughtResult thought = parsedThought.thoughtResult();
                 history.add(Step.thought(thought.getThinking()));
-                messages.add(Message.assistant(responseText));
+                messages.add(Message.assistant(parsedThought.responseText()));
 
                 // 3. 检查是否完成
                 if (thought.isFinished()) {
@@ -121,6 +114,7 @@ public class ReActAgentEngine {
                 ActionResult actionResult = actionExecutor.execute(
                     action,
                     customerId,
+                    doctorId,
                     sessionId
                 );
 
@@ -216,13 +210,7 @@ public class ReActAgentEngine {
             log.info("执行已批准的行动: tool={}, input={}",
                 action.getToolName(), JSON.toJSONString(action.getInput()));
 
-            // 直接执行工具（跳过风险检查，因为已经批准）
-            Tool tool = toolRegistry.getTool(action.getToolName());
-            if (tool == null) {
-                throw new AgentException("工具不存在: " + action.getToolName());
-            }
-            Object output = tool.getExecutor().execute(action.getInput());
-            ActionResult actionResult = ActionResult.success(JSON.toJSONString(output));
+            ActionResult actionResult = actionExecutor.executeApprovedAction(action);
 
             // 6. 记录 Observation
             String observation = formatObservation(actionResult);
@@ -239,6 +227,7 @@ public class ReActAgentEngine {
                 sessionId,
                 session.getGoal(),
                 session.getCustomerId(),
+                session.getDoctorId(),
                 history,
                 messages,
                 currentStep + 1
@@ -258,6 +247,7 @@ public class ReActAgentEngine {
         String sessionId,
         String goal,
         String customerId,
+        String doctorId,
         List<Step> history,
         List<Message> messages,
         int startStep
@@ -273,21 +263,13 @@ public class ReActAgentEngine {
 
             try {
                 // 1. 调用 DeepSeek API 获取 Thought 和 Action
-                String responseText;
-                if (useMock) {
-                    responseText = mockDeepSeekResponse(step, customerId);
-                } else {
-                    DeepSeekClient.DeepSeekResponse response = deepSeekClient.chat(systemPrompt, messages);
-                    responseText = response.getContent();
-                }
-                log.info("Agent响应: {}", responseText);
-
-                // 2. 解析响应
-                ThoughtResult thought = responseParser.parse(responseText);
+                ParsedThought parsedThought = requestThoughtResult(systemPrompt, messages, step, customerId);
+                log.info("Agent响应: {}", parsedThought.responseText());
 
                 // 记录 Thought
+                ThoughtResult thought = parsedThought.thoughtResult();
                 history.add(Step.thought(thought.getThinking()));
-                messages.add(Message.assistant(responseText));
+                messages.add(Message.assistant(parsedThought.responseText()));
 
                 // 3. 检查是否完成
                 if (thought.isFinished()) {
@@ -313,6 +295,7 @@ public class ReActAgentEngine {
                 ActionResult actionResult = actionExecutor.execute(
                     action,
                     customerId,
+                    doctorId,
                     sessionId
                 );
 
@@ -373,6 +356,41 @@ public class ReActAgentEngine {
         }
     }
 
+    private ParsedThought requestThoughtResult(
+        String systemPrompt,
+        List<Message> messages,
+        int step,
+        String customerId
+    ) {
+        if (useMock) {
+            String mockResponse = mockDeepSeekResponse(step, customerId);
+            return new ParsedThought(mockResponse, responseParser.parse(mockResponse));
+        }
+
+        String responseText = deepSeekClient.chat(systemPrompt, messages).getContent();
+        try {
+            return new ParsedThought(responseText, responseParser.parse(responseText));
+        } catch (AgentException parseException) {
+            log.warn("Agent响应协议不合法，准备纠偏重试: {}", parseException.getMessage());
+            List<Message> repairMessages = new ArrayList<>(messages);
+            repairMessages.add(Message.assistant(responseText));
+            repairMessages.add(Message.user(promptBuilder.buildProtocolRepairPrompt(parseException.getMessage())));
+
+            AgentException lastException = parseException;
+            for (int attempt = 0; attempt < protocolRepairAttempts; attempt++) {
+                String repairedResponse = deepSeekClient.chat(systemPrompt, repairMessages).getContent();
+                try {
+                    return new ParsedThought(repairedResponse, responseParser.parse(repairedResponse));
+                } catch (AgentException repairException) {
+                    lastException = repairException;
+                    repairMessages.add(Message.assistant(repairedResponse));
+                    repairMessages.add(Message.user(promptBuilder.buildProtocolRepairPrompt(repairException.getMessage())));
+                }
+            }
+            throw lastException;
+        }
+    }
+
     /**
      * Mock DeepSeek 响应（用于测试）
      */
@@ -380,55 +398,58 @@ public class ReActAgentEngine {
         switch (step) {
             case 0:
                 return """
-                    Thought: 我需要先了解患者的基本信息，包括年龄、性别、目标和当前健康状况。
-                    Action: get_patient_profile
-                    Action Input: {"customerId": "%s"}
+                    {
+                      "protocolVersion": "v1",
+                      "thinking": "我需要先了解患者的基本信息，包括年龄、性别、目标和当前健康状况。",
+                      "finished": false,
+                      "action": {
+                        "toolName": "get_patient_profile",
+                        "input": {"customerId": "%s"},
+                        "reason": "先获取患者基础资料"
+                      }
+                    }
                     """.formatted(customerId);
 
             case 1:
                 return """
-                    Thought: 患者35岁女性，目标减重7kg，有高血压病史。BMI 22.8属于正常范围，但有减重目标。我需要查看体重变化趋势来评估进展。
-                    Action: get_weight_history
-                    Action Input: {"customerId": "%s", "days": 30}
+                    {
+                      "protocolVersion": "v1",
+                      "thinking": "患者35岁女性，目标减重7kg，有高血压病史。BMI 22.8属于正常范围，但有减重目标。我需要查看体重变化趋势来评估进展。",
+                      "finished": false,
+                      "action": {
+                        "toolName": "get_weight_history",
+                        "input": {"customerId": "%s", "days": 30},
+                        "reason": "查看体重趋势"
+                      }
+                    }
                     """.formatted(customerId);
 
             case 2:
                 return """
-                    Thought: 体重整体趋势良好，从65kg降到62kg，下降了3kg。但我需要了解患者最近的状态和情绪，看看是否有影响减重的因素。
-                    Action: get_chat_history
-                    Action Input: {"customerId": "%s", "limit": 10}
+                    {
+                      "protocolVersion": "v1",
+                      "thinking": "体重整体趋势良好，从65kg降到62kg，下降了3kg。但我需要了解患者最近的状态和情绪，看看是否有影响减重的因素。",
+                      "finished": false,
+                      "action": {
+                        "toolName": "get_chat_history",
+                        "input": {"customerId": "%s", "limit": 10},
+                        "reason": "查看近期聊天状态"
+                      }
+                    }
                     """.formatted(customerId);
 
             default:
                 return """
-                    Thought: 患者出现焦虑情绪，这可能影响了体重管理。结合高血压病史和减重进展，我现在有足够信息生成综合分析了。
-                    Final Answer:
-
-                    ## 患者健康分析报告
-
-                    **基本信息**：
-                    - 姓名：张三
-                    - 年龄：35岁
-                    - 性别：女
-                    - 当前体重：62kg
-                    - 目标体重：55kg
-                    - BMI：22.8（正常范围）
-
-                    **减重进展**：
-                    - 近30天体重下降3kg（65kg → 62kg）
-                    - 进展良好，平均每周减重约1kg
-                    - 距离目标还需减重7kg
-
-                    **健康风险**：
-                    - 有高血压病史，需要持续监控
-                    - 最近出现焦虑情绪，可能影响减重效果
-
-                    **建议**：
-                    1. 继续当前的减重计划，进展良好
-                    2. 关注心理健康，必要时进行心理咨询
-                    3. 定期监测血压，确保高血压控制良好
-                    4. 保持健康的生活方式，避免过度焦虑
+                    {
+                      "protocolVersion": "v1",
+                      "thinking": "患者出现焦虑情绪，这可能影响了体重管理。结合高血压病史和减重进展，我现在有足够信息生成综合分析了。",
+                      "finished": true,
+                      "finalAnswer": "患者35岁女性，当前减重进展总体良好，但近期存在焦虑情绪和短期体重反弹。建议继续当前减重计划，关注心理状态，并持续监测血压。"
+                    }
                     """;
         }
+    }
+
+    private record ParsedThought(String responseText, ThoughtResult thoughtResult) {
     }
 }

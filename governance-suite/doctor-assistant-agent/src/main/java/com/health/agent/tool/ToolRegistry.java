@@ -51,7 +51,7 @@ public class ToolRegistry {
             .description("查询患者基本信息（年龄、性别、目标、慢性病等）")
             .riskLevel(ToolRiskLevel.LOW)
             .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true)
+                "customerId", Map.of("type", "string", "required", true, "maxLength", 64)
             ))
             .executor(this::getPatientProfile)
             .build());
@@ -61,8 +61,8 @@ public class ToolRegistry {
             .description("查询患者体重历史记录")
             .riskLevel(ToolRiskLevel.LOW)
             .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true),
-                "days", Map.of("type", "integer", "default", 30)
+                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
+                "days", Map.of("type", "integer", "default", 30, "min", 1, "max", 90)
             ))
             .executor(this::getWeightHistory)
             .build());
@@ -72,8 +72,8 @@ public class ToolRegistry {
             .description("查询患者最近的聊天记录")
             .riskLevel(ToolRiskLevel.LOW)
             .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true),
-                "limit", Map.of("type", "integer", "default", 20)
+                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
+                "limit", Map.of("type", "integer", "default", 20, "min", 1, "max", 50)
             ))
             .executor(this::getChatHistory)
             .build());
@@ -83,8 +83,8 @@ public class ToolRegistry {
             .description("查询患者的处方历史")
             .riskLevel(ToolRiskLevel.LOW)
             .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true),
-                "limit", Map.of("type", "integer", "default", 10)
+                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
+                "limit", Map.of("type", "integer", "default", 10, "min", 1, "max", 30)
             ))
             .executor(this::getPrescriptionHistory)
             .build());
@@ -94,8 +94,8 @@ public class ToolRegistry {
             .description("计算BMI指数")
             .riskLevel(ToolRiskLevel.LOW)
             .inputSchema(Map.of(
-                "weight", Map.of("type", "number", "required", true),
-                "height", Map.of("type", "number", "required", true)
+                "weight", Map.of("type", "number", "required", true, "min", 1, "max", 500),
+                "height", Map.of("type", "number", "required", true, "min", 50, "max", 250)
             ))
             .executor(this::calculateBmi)
             .build());
@@ -105,7 +105,7 @@ public class ToolRegistry {
             .description("分析体重变化趋势")
             .riskLevel(ToolRiskLevel.LOW)
             .inputSchema(Map.of(
-                "weightRecords", Map.of("type", "array", "required", true)
+                "weightRecords", Map.of("type", "array", "required", true, "minItems", 1, "maxItems", 180)
             ))
             .executor(this::analyzeWeightTrend)
             .build());
@@ -115,8 +115,8 @@ public class ToolRegistry {
             .description("搜索相似病例")
             .riskLevel(ToolRiskLevel.LOW)
             .inputSchema(Map.of(
-                "symptoms", Map.of("type", "array", "required", true),
-                "limit", Map.of("type", "integer", "default", 5)
+                "symptoms", Map.of("type", "array", "required", true, "itemType", "string", "minItems", 1, "maxItems", 10),
+                "limit", Map.of("type", "integer", "default", 5, "min", 1, "max", 10)
             ))
             .executor(this::searchSimilarCases)
             .build());
@@ -126,7 +126,7 @@ public class ToolRegistry {
             .description("查询健康知识库")
             .riskLevel(ToolRiskLevel.LOW)
             .inputSchema(Map.of(
-                "topic", Map.of("type", "string", "required", true)
+                "topic", Map.of("type", "string", "required", true, "maxLength", 100)
             ))
             .executor(this::getHealthKnowledge)
             .build());
@@ -137,8 +137,8 @@ public class ToolRegistry {
             .description("给患者发送提醒消息")
             .riskLevel(ToolRiskLevel.MEDIUM)
             .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true),
-                "message", Map.of("type", "string", "required", true)
+                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
+                "message", Map.of("type", "string", "required", true, "maxLength", 500)
             ))
             .executor(this::sendReminder)
             .build());
@@ -148,9 +148,9 @@ public class ToolRegistry {
             .description("创建随访任务")
             .riskLevel(ToolRiskLevel.MEDIUM)
             .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true),
-                "taskDescription", Map.of("type", "string", "required", true),
-                "dueDate", Map.of("type", "string", "required", true)
+                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
+                "taskDescription", Map.of("type", "string", "required", true, "maxLength", 500),
+                "dueDate", Map.of("type", "string", "required", true, "maxLength", 32)
             ))
             .executor(this::createFollowUpTask)
             .build());
@@ -160,8 +160,8 @@ public class ToolRegistry {
             .description("发送健康报告给患者")
             .riskLevel(ToolRiskLevel.MEDIUM)
             .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true),
-                "reportContent", Map.of("type", "string", "required", true)
+                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
+                "reportContent", Map.of("type", "string", "required", true, "maxLength", 4000)
             ))
             .executor(this::sendHealthReport)
             .build());
@@ -172,9 +172,9 @@ public class ToolRegistry {
             .description("起草处方建议（需要医生审核确认）")
             .riskLevel(ToolRiskLevel.HIGH)
             .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true),
-                "recommendations", Map.of("type", "array", "required", true),
-                "reason", Map.of("type", "string", "required", true)
+                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
+                "recommendations", Map.of("type", "array", "required", true, "itemType", "string", "minItems", 1, "maxItems", 20),
+                "reason", Map.of("type", "string", "required", true, "maxLength", 500)
             ))
             .executor(this::draftPrescription)
             .build());
@@ -184,9 +184,9 @@ public class ToolRegistry {
             .description("提出诊断建议（需要医生审核确认）")
             .riskLevel(ToolRiskLevel.HIGH)
             .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true),
-                "diagnosis", Map.of("type", "string", "required", true),
-                "evidence", Map.of("type", "array", "required", true)
+                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
+                "diagnosis", Map.of("type", "string", "required", true, "maxLength", 500),
+                "evidence", Map.of("type", "array", "required", true, "itemType", "string", "minItems", 1, "maxItems", 20)
             ))
             .executor(this::suggestDiagnosis)
             .build());

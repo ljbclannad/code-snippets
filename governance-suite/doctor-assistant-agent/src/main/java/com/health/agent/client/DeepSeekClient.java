@@ -1,6 +1,5 @@
 package com.health.agent.client;
 
-import com.alibaba.fastjson2.JSON;
 import com.health.agent.model.Message;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
@@ -14,9 +13,17 @@ import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import jakarta.annotation.PreDestroy;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * DeepSeek API 客户端
@@ -37,6 +44,14 @@ public class DeepSeekClient {
     @Value("${agent.deepseek.max-tokens:2000}")
     private int maxTokens;
 
+    @Value("${agent.deepseek.request-timeout:5s}")
+    private Duration requestTimeout;
+
+    @Value("${agent.deepseek.max-retries:2}")
+    private int maxRetries;
+
+    private final ExecutorService requestExecutor = Executors.newCachedThreadPool(new RequestThreadFactory());
+
     public DeepSeekClient(ChatModel chatModel) {
         this.chatModel = chatModel;
     }
@@ -51,66 +66,105 @@ public class DeepSeekClient {
     public DeepSeekResponse chat(String systemPrompt, List<Message> messages) {
         long startTime = System.currentTimeMillis();
 
-        try {
-            log.info("调用 DeepSeek API, 消息数量: {}", messages.size());
+        log.info("调用 DeepSeek API, 消息数量: {}", messages.size());
+        Prompt prompt = buildPrompt(systemPrompt, messages);
 
-            // 构建 Spring AI 消息列表
-            List<org.springframework.ai.chat.messages.Message> aiMessages = new ArrayList<>();
-
-            // 添加 System Message
-            aiMessages.add(new SystemMessage(systemPrompt));
-
-            // 添加对话历史
-            for (Message msg : messages) {
-                if ("user".equals(msg.getRole())) {
-                    aiMessages.add(new UserMessage(msg.getContent()));
-                } else if ("assistant".equals(msg.getRole())) {
-                    aiMessages.add(new AssistantMessage(msg.getContent()));
+        RuntimeException lastException = null;
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                ChatResponse response = executeWithTimeout(prompt);
+                return buildResponse(response, startTime);
+            } catch (RuntimeException e) {
+                lastException = e;
+                log.warn("DeepSeek API 第{}次调用失败: {}", attempt, e.getMessage());
+                if (attempt == maxRetries) {
+                    break;
                 }
             }
+        }
+        long duration = System.currentTimeMillis() - startTime;
+        log.error("DeepSeek API 调用失败, 耗时: {}ms", duration, lastException);
+        throw lastException != null
+            ? lastException
+            : new RuntimeException("DeepSeek API 调用失败: 未知错误");
+    }
 
-            // 构建 Prompt
-            Prompt prompt = new Prompt(
-                aiMessages,
-                OpenAiChatOptions.builder()
-                    .withTemperature(temperature)
-                    .withMaxTokens(maxTokens)
-                    .build()
-            );
-
-            // 调用 ChatModel
-            ChatResponse response = chatModel.call(prompt);
-            String content = response.getResult().getOutput().getContent();
-
-            // 提取 token 使用情况
-            var usage = response.getMetadata().getUsage();
-            if (usage == null) {
-                log.warn("DeepSeek API 未返回 token 使用信息");
+    private Prompt buildPrompt(String systemPrompt, List<Message> messages) {
+        List<org.springframework.ai.chat.messages.Message> aiMessages = new ArrayList<>();
+        aiMessages.add(new SystemMessage(systemPrompt));
+        for (Message msg : messages) {
+            if ("user".equals(msg.getRole())) {
+                aiMessages.add(new UserMessage(msg.getContent()));
+            } else if ("assistant".equals(msg.getRole())) {
+                aiMessages.add(new AssistantMessage(msg.getContent()));
             }
+        }
 
-            long duration = System.currentTimeMillis() - startTime;
-            log.info("DeepSeek API 调用完成, 耗时: {}ms, tokens: prompt={}, completion={}, total={}",
-                duration,
-                usage != null ? usage.getPromptTokens() : 0,
-                usage != null ? usage.getGenerationTokens() : 0,
-                usage != null ? usage.getTotalTokens() : 0);
+        return new Prompt(
+            aiMessages,
+            OpenAiChatOptions.builder()
+                .withTemperature(temperature)
+                .withMaxTokens(maxTokens)
+                .build()
+        );
+    }
 
-            // 构建响应
-            DeepSeekResponse deepSeekResponse = new DeepSeekResponse();
-            deepSeekResponse.setContent(content);
-            if (usage != null) {
-                deepSeekResponse.setPromptTokens(usage.getPromptTokens().intValue());
-                deepSeekResponse.setCompletionTokens(usage.getGenerationTokens().intValue());
-                deepSeekResponse.setTotalTokens(usage.getTotalTokens().intValue());
+    private ChatResponse executeWithTimeout(Prompt prompt) {
+        Future<ChatResponse> future = requestExecutor.submit(() -> chatModel.call(prompt));
+        try {
+            return future.get(requestTimeout.toMillis(), TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            future.cancel(true);
+            throw new RuntimeException("DeepSeek API 调用超时: " + requestTimeout, e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("DeepSeek API 调用被中断", e);
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof RuntimeException runtimeException) {
+                throw runtimeException;
             }
-            deepSeekResponse.setDuration(duration);
+            throw new RuntimeException("DeepSeek API 调用失败: " + cause.getMessage(), cause);
+        }
+    }
 
-            return deepSeekResponse;
+    private DeepSeekResponse buildResponse(ChatResponse response, long startTime) {
+        String content = response.getResult().getOutput().getContent();
+        var metadata = response.getMetadata();
+        var usage = metadata != null ? metadata.getUsage() : null;
+        if (usage == null) {
+            log.warn("DeepSeek API 未返回 token 使用信息");
+        }
 
-        } catch (Exception e) {
-            long duration = System.currentTimeMillis() - startTime;
-            log.error("DeepSeek API 调用失败, 耗时: {}ms", duration, e);
-            throw new RuntimeException("DeepSeek API 调用失败: " + e.getMessage(), e);
+        long duration = System.currentTimeMillis() - startTime;
+        log.info("DeepSeek API 调用完成, 耗时: {}ms, tokens: prompt={}, completion={}, total={}",
+            duration,
+            usage != null ? usage.getPromptTokens() : 0,
+            usage != null ? usage.getGenerationTokens() : 0,
+            usage != null ? usage.getTotalTokens() : 0);
+
+        DeepSeekResponse deepSeekResponse = new DeepSeekResponse();
+        deepSeekResponse.setContent(content);
+        if (usage != null) {
+            deepSeekResponse.setPromptTokens(usage.getPromptTokens().intValue());
+            deepSeekResponse.setCompletionTokens(usage.getGenerationTokens().intValue());
+            deepSeekResponse.setTotalTokens(usage.getTotalTokens().intValue());
+        }
+        deepSeekResponse.setDuration(duration);
+        return deepSeekResponse;
+    }
+
+    @PreDestroy
+    void shutdownExecutor() {
+        requestExecutor.shutdownNow();
+    }
+
+    private static class RequestThreadFactory implements ThreadFactory {
+        @Override
+        public Thread newThread(Runnable runnable) {
+            Thread thread = new Thread(runnable, "deepseek-request");
+            thread.setDaemon(true);
+            return thread;
         }
     }
 

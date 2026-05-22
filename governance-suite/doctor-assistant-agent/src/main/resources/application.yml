@@ -54,10 +54,14 @@ agent:
   session-timeout: 3600
   task-expire-hours: 24
   use-mock: false
+  tool-timeout-millis: 3000
+  protocol-repair-attempts: 1
   deepseek:
     model: deepseek-chat
     temperature: 0.7
     max-tokens: 2000
+    request-timeout: 5s
+    max-retries: 2
 
 # Milvus 向量数据库配置
 milvus:

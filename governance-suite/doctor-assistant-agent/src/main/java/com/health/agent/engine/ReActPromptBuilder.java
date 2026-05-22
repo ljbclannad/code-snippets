@@ -25,24 +25,40 @@ public class ReActPromptBuilder {
         return String.format("""
             你是一位资深健康管理医生的AI助手Agent。你的任务是通过多步推理和工具调用，帮助医生分析患者情况。
 
-            ## 工作模式：ReAct (Reasoning + Acting)
+            ## 输出协议
 
-            你需要按照以下格式进行思考和行动：
+            你只能输出一个合法 JSON 对象，不能输出 Markdown、代码块说明、前后缀解释。
+            协议版本固定为 `v1`。
 
-            Thought: [你对当前情况的分析和下一步计划]
-            Action: [你决定调用的工具]
-            Action Input: [工具的输入参数，JSON格式]
+            当你还需要继续调用工具时，输出：
+            {
+              "protocolVersion": "v1",
+              "thinking": "你对当前情况的分析和下一步计划",
+              "finished": false,
+              "action": {
+                "toolName": "工具名",
+                "input": {
+                  "字段": "值"
+                },
+                "reason": "执行该工具的原因"
+              }
+            }
 
-            **重要**：每次只能输出一个 Action。如果需要多个工具，请在后续循环中逐个调用。
+            当你已经可以给出最终结论时，输出：
+            {
+              "protocolVersion": "v1",
+              "thinking": "最终分析",
+              "finished": true,
+              "finalAnswer": "给医生的完整回答"
+            }
 
-            然后你会收到：
-            Observation: [工具执行的结果]
-
-            你可以重复多次 Thought -> Action -> Observation 循环，直到你有足够信息完成任务。
-
-            当你准备好给出最终答案时，使用：
-            Thought: [最终分析]
-            Final Answer: [你的完整回答]
+            约束：
+            1. 每次只能调用一个工具
+            2. 只能使用下方列出的工具名和字段
+            3. finished=true 时禁止输出 action
+            4. finished=false 时禁止输出 finalAnswer
+            5. 不得伪造 Observation，不得跳过工具直接声称已获取事实
+            6. 涉及诊断或处方建议时，必须通过高风险工具触发审批链路
 
             ## 可用工具
 
@@ -54,32 +70,31 @@ public class ReActPromptBuilder {
             2. **有的放矢**：只调用真正需要的工具，不要盲目查询所有数据
             3. **关注异常**：重点关注风险信号（体重异常、负面情绪、长期未打卡）
             4. **医疗谨慎**：涉及诊断和处方时，必须基于充分证据
-            5. **解释推理**：在Thought中清晰说明你的推理过程
+            5. **解释推理**：thinking 中保留必要推理，但不要输出无关废话
 
-            ## 示例
+            ## 示例：调用工具
 
-            Goal: 分析患者张三的健康状况
+            {
+              "protocolVersion": "v1",
+              "thinking": "我需要先获取患者的基础资料。",
+              "finished": false,
+              "action": {
+                "toolName": "get_patient_profile",
+                "input": {
+                  "customerId": "1001"
+                },
+                "reason": "先获取患者档案"
+              }
+            }
 
-            Thought: 我需要先了解患者的基本信息，包括年龄、性别、目标和当前健康状况。
-            Action: get_patient_profile
-            Action Input: {"customerId": "张三"}
+            ## 示例：结束任务
 
-            Observation: {"age": 35, "gender": "女", "targetWeight": 55.0, "currentWeight": 62.0, "chronicDiseases": ["高血压"], "bmi": 22.5}
-
-            Thought: 患者35岁女性，目标减重7kg，有高血压病史。BMI 22.5属于正常范围，但有减重目标。我需要查看体重变化趋势来评估进展。
-            Action: get_weight_history
-            Action Input: {"customerId": "张三", "days": 30}
-
-            Observation: [体重数据显示最近30天下降了3kg，但最近3天反弹了1kg]
-
-            Thought: 体重整体趋势良好，但最近出现反弹。这可能是正常波动，也可能有其他原因。我应该查看聊天记录，了解患者最近的状态和情绪。
-            Action: get_chat_history
-            Action Input: {"customerId": "张三", "limit": 10}
-
-            Observation: [聊天记录显示患者提到"有点焦虑"、"是不是方法不对"]
-
-            Thought: 患者出现焦虑情绪，这可能影响了体重管理。结合高血压病史，我现在有足够信息生成综合分析了。
-            Final Answer: [完整的患者分析报告]
+            {
+              "protocolVersion": "v1",
+              "thinking": "已经收集到足够的患者信息。",
+              "finished": true,
+              "finalAnswer": "这里输出给医生的完整分析结果。"
+            }
 
             现在开始执行任务。
             """, formatToolDescriptions(availableTools));
@@ -94,7 +109,7 @@ public class ReActPromptBuilder {
                 ### %s
                 描述: %s
                 风险等级: %s
-                参数: %s
+                参数定义: %s
                 """,
                 tool.getName(),
                 tool.getDescription(),
@@ -112,8 +127,20 @@ public class ReActPromptBuilder {
             Goal: %s
             Patient ID: %s
 
-            请开始你的分析。记住使用 Thought -> Action -> Observation 的格式。
+            请开始分析，并严格遵守 JSON 协议。
             """, goal, customerId);
+    }
+
+    public String buildProtocolRepairPrompt(String errorMessage) {
+        return """
+            你刚才的响应不符合协议，错误是：%s
+
+            请立即重新输出，并且：
+            1. 只输出一个合法 JSON 对象
+            2. protocolVersion 必须为 "v1"
+            3. 不要输出 Markdown 代码块
+            4. 不要解释错误，不要附加多余文本
+            """.formatted(errorMessage);
     }
 
     /**
@@ -127,14 +154,15 @@ public class ReActPromptBuilder {
         for (Step step : history) {
             switch (step.getType()) {
                 case THOUGHT:
-                    currentAssistant.append("Thought: ").append(step.getContent()).append("\n");
+                    currentAssistant.append("{\"protocolVersion\":\"v1\",\"thinking\":")
+                        .append(JSON.toJSONString(step.getContent()))
+                        .append(",");
                     break;
 
                 case ACTION:
-                    currentAssistant.append("Action: ").append(step.getAction().getToolName()).append("\n");
-                    currentAssistant.append("Action Input: ").append(
-                        JSON.toJSONString(step.getAction().getInput())
-                    ).append("\n");
+                    currentAssistant.append("\"finished\":false,\"action\":")
+                        .append(JSON.toJSONString(step.getAction()))
+                        .append("}");
 
                     // Assistant 消息完成
                     messages.add(Message.assistant(currentAssistant.toString()));
