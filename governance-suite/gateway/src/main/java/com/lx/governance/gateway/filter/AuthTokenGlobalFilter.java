@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lx.governance.common.auth.AuthHeaders;
 import com.lx.governance.common.auth.AuthTokenClaims;
 import com.lx.governance.common.auth.AuthTokenService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.Ordered;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.HttpStatus;
@@ -19,8 +21,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import static net.logstash.logback.argument.StructuredArguments.kv;
+
 @Component
 public class AuthTokenGlobalFilter implements GlobalFilter, Ordered {
+    private static final Logger log = LoggerFactory.getLogger(AuthTokenGlobalFilter.class);
     private final AuthTokenService authTokenService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -45,8 +50,22 @@ public class AuthTokenGlobalFilter implements GlobalFilter, Ordered {
                         headers.set(AuthHeaders.USERNAME, claims.getUsername());
                     })
                     .build();
+
+            log.info("Request authenticated",
+                kv("event", "auth_success"),
+                kv("userId", claims.getUserId()),
+                kv("path", path),
+                kv("method", exchange.getRequest().getMethod())
+            );
+
             return chain.filter(exchange.mutate().request(mutated).build());
         } catch (Exception e) {
+            log.warn("Request authentication failed",
+                kv("event", "auth_failed"),
+                kv("path", path),
+                kv("method", exchange.getRequest().getMethod()),
+                kv("reason", "invalid_token")
+            );
             return unauthorized(exchange, e.getMessage());
         }
     }
