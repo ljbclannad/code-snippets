@@ -34,71 +34,12 @@ spring:
         acknowledge-mode: manual
         prefetch: 20
 
-  shardingsphere:
-    datasource:
-      names: master,slave1,slave2
-      master:
-        type: com.zaxxer.hikari.HikariDataSource
-        driver-class-name: com.mysql.cj.jdbc.Driver
-        jdbc-url: jdbc:mysql://${MYSQL_HOST:localhost}:3306/order_db?useSSL=false&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
-        username: ${MYSQL_USER:root}
-        password: ${MYSQL_PASS:root}
-        hikari:
-          maximum-pool-size: 20
-      slave1:
-        type: com.zaxxer.hikari.HikariDataSource
-        driver-class-name: com.mysql.cj.jdbc.Driver
-        jdbc-url: jdbc:mysql://${MYSQL_HOST:localhost}:3307/order_db?useSSL=false&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
-        username: ${MYSQL_USER:root}
-        password: ${MYSQL_PASS:root}
-        hikari:
-          maximum-pool-size: 50
-      slave2:
-        type: com.zaxxer.hikari.HikariDataSource
-        driver-class-name: com.mysql.cj.jdbc.Driver
-        jdbc-url: jdbc:mysql://${MYSQL_HOST:localhost}:3308/order_db?useSSL=false&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
-        username: ${MYSQL_USER:root}
-        password: ${MYSQL_PASS:root}
-        hikari:
-          maximum-pool-size: 50
-    rules:
-      readwrite-splitting:
-        data-sources:
-          order_ds:
-            write-data-source-name: master
-            read-data-source-names:
-              - slave1
-              - slave2
-            load-balancer-name: round_robin
-        load-balancers:
-          round_robin:
-            type: ROUND_ROBIN
-      sharding:
-        tables:
-          t_order:
-            actual-data-nodes: order_ds.t_order_${0..1}
-            table-strategy:
-              standard:
-                sharding-column: order_no
-                sharding-algorithm-name: order-inline
-          t_outbox:
-            actual-data-nodes: order_ds.t_outbox
-          t_seckill_order_guard:
-            actual-data-nodes: order_ds.t_seckill_order_guard
-        sharding-algorithms:
-          order-inline:
-            type: INLINE
-            props:
-              algorithm-expression: t_order_${Math.abs(order_no.hashCode()) % 2}
-    props:
-      sql-show: true
-
 # Seata client
 seata:
   enabled: true
   application-id: ${spring.application.name}
   tx-service-group: order_tx_group
-  enable-auto-data-source-proxy: true
+  enable-auto-data-source-proxy: false
   data-source-proxy-mode: AT
   service:
     vgroup-mapping:
