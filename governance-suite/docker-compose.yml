@@ -224,6 +224,23 @@ services:
             elasticsearch:
                 condition: service_healthy
 
+    logstash:
+        image: logstash:8.11.0
+        container_name: gov-logstash
+        restart: unless-stopped
+        environment:
+            - "LS_JAVA_OPTS=-Xms256m -Xmx256m"
+            - TZ=Asia/Shanghai
+        ports:
+            - "50000:50000"
+            - "9600:9600"
+        volumes:
+            - ./docker/logstash/config/logstash.yml:/usr/share/logstash/config/logstash.yml:ro
+            - ./docker/logstash/pipeline:/usr/share/logstash/pipeline:ro
+        depends_on:
+            elasticsearch:
+                condition: service_healthy
+
 volumes:
     gov_mysql_data:
     gov_mysql_slave1_data:
