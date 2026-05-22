@@ -17,6 +17,7 @@ import com.lx.governance.order.repo.OutboxRepository;
 import com.lx.governance.order.repo.OrderRepository;
 import com.lx.governance.order.repo.PaymentEventConsumeRepository;
 import io.seata.spring.annotation.GlobalTransactional;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
@@ -27,6 +28,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import static net.logstash.logback.argument.StructuredArguments.kv;
+
+@Slf4j
 @Service
 public class OrderAppService {
     private final OrderRepository orderRepository;
@@ -84,16 +88,24 @@ public class OrderAppService {
 
     @GlobalTransactional(name = "create-order", rollbackFor = Exception.class)
     public OrderDto create(CreateOrderRequest req, String idempotencyKey) {
-        String idemKey = "idem:order:" + (idempotencyKey == null ? "none" : idempotencyKey);
-        if (idempotencyKey != null && !idempotencyKey.isBlank()) {
-            boolean locked = idempotencyService.tryLock(idemKey, Duration.ofMinutes(5));
-            if (!locked) {
-                // 幂等：直接返回已存在订单（演示：按 idemKey 找不到就报错）
-                throw new IllegalArgumentException("Duplicate request (Idempotency-Key)");
-            }
-        }
+        log.info("Order creation started",
+                kv("event", "order_create_start"),
+                kv("userId", req.getCustomerId()),
+                kv("productId", req.getProductId()),
+                kv("quantity", req.getQuantity())
+        );
 
-        String orderNo = orderNoGenerator.nextOrderNo();
+        try {
+            String idemKey = "idem:order:" + (idempotencyKey == null ? "none" : idempotencyKey);
+            if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+                boolean locked = idempotencyService.tryLock(idemKey, Duration.ofMinutes(5));
+                if (!locked) {
+                    // 幂等：直接返回已存在订单（演示：按 idemKey 找不到就报错）
+                    throw new IllegalArgumentException("Duplicate request (Idempotency-Key)");
+                }
+            }
+
+            String orderNo = orderNoGenerator.nextOrderNo();
         orderRepository.insert(orderNo, req.getCustomerId(), req.getProductId(), req.getQuantity(), req.getAmountCents(), "CREATED");
 
         InventoryDeductRequest deductReq = new InventoryDeductRequest();
@@ -134,11 +146,44 @@ public class OrderAppService {
         // 标记用户发生了写操作，3秒内该用户的查询将读主库
         readWriteContext.markUserWrite(parseUserId(req.getCustomerId()));
 
-        return orderRepository.findByOrderNo(orderNo);
+        OrderDto result = orderRepository.findByOrderNo(orderNo);
+
+        log.info("Order created successfully",
+                kv("event", "order_created"),
+                kv("orderId", orderNo),
+                kv("userId", req.getCustomerId()),
+                kv("totalAmount", req.getAmountCents()),
+                kv("status", "SUCCESS")
+        );
+
+        return result;
+        } catch (Exception e) {
+            log.error("Order creation failed",
+                    kv("event", "order_create_failed"),
+                    kv("userId", req.getCustomerId()),
+                    kv("error", e.getMessage()),
+                    kv("status", "FAILED"),
+                    e
+            );
+            throw e;
+        }
     }
 
     public OrderDto get(String orderNo) {
-        return orderRepository.findByOrderNo(orderNo);
+        log.info("Order query started",
+                kv("event", "order_query_start"),
+                kv("orderId", orderNo)
+        );
+
+        OrderDto order = orderRepository.findByOrderNo(orderNo);
+
+        log.info("Order query completed",
+                kv("event", "order_query_completed"),
+                kv("orderId", orderNo),
+                kv("found", order != null)
+        );
+
+        return order;
     }
 
     /**
@@ -148,13 +193,29 @@ public class OrderAppService {
      * @return 订单信息
      */
     public OrderDto get(String orderNo, Long userId) {
+        log.info("Order query started",
+                kv("event", "order_query_start"),
+                kv("orderId", orderNo),
+                kv("userId", userId)
+        );
+
+        OrderDto order;
         if (userId != null && readWriteContext.shouldReadMaster(userId)) {
             // 3秒内，强制读主库
-            return ReadMasterHelper.readFromMaster(() -> orderRepository.findByOrderNo(orderNo));
+            order = ReadMasterHelper.readFromMaster(() -> orderRepository.findByOrderNo(orderNo));
         } else {
             // 正常读从库
-            return orderRepository.findByOrderNo(orderNo);
+            order = orderRepository.findByOrderNo(orderNo);
         }
+
+        log.info("Order query completed",
+                kv("event", "order_query_completed"),
+                kv("orderId", orderNo),
+                kv("userId", userId),
+                kv("found", order != null)
+        );
+
+        return order;
     }
 
     public void markPaid(String orderNo) {
