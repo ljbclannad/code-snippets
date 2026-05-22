@@ -14,10 +14,51 @@ services:
         volumes:
             - ./sql:/docker-entrypoint-initdb.d:ro
             - gov_mysql_data:/var/lib/mysql
+            - ./docker/mysql/master.cnf:/etc/mysql/conf.d/master.cnf:ro
         command:
             - "--character-set-server=utf8mb4"
             - "--collation-server=utf8mb4_unicode_ci"
             - "--default-time-zone=+08:00"
+
+    mysql-slave1:
+        image: example/mysql:8.0.30
+        pull_policy: never
+        container_name: gov-mysql-slave1
+        restart: unless-stopped
+        environment:
+            MYSQL_ROOT_PASSWORD: root
+            TZ: Asia/Shanghai
+        ports:
+            - "3307:3306"
+        volumes:
+            - gov_mysql_slave1_data:/var/lib/mysql
+            - ./docker/mysql/slave1.cnf:/etc/mysql/conf.d/slave.cnf:ro
+        command:
+            - "--character-set-server=utf8mb4"
+            - "--collation-server=utf8mb4_unicode_ci"
+            - "--default-time-zone=+08:00"
+        depends_on:
+            - mysql
+
+    mysql-slave2:
+        image: example/mysql:8.0.30
+        pull_policy: never
+        container_name: gov-mysql-slave2
+        restart: unless-stopped
+        environment:
+            MYSQL_ROOT_PASSWORD: root
+            TZ: Asia/Shanghai
+        ports:
+            - "3308:3306"
+        volumes:
+            - gov_mysql_slave2_data:/var/lib/mysql
+            - ./docker/mysql/slave2.cnf:/etc/mysql/conf.d/slave.cnf:ro
+        command:
+            - "--character-set-server=utf8mb4"
+            - "--collation-server=utf8mb4_unicode_ci"
+            - "--default-time-zone=+08:00"
+        depends_on:
+            - mysql
 
     redis:
         image: redis:latest
@@ -185,6 +226,8 @@ services:
 
 volumes:
     gov_mysql_data:
+    gov_mysql_slave1_data:
+    gov_mysql_slave2_data:
     gov_redis_data:
     gov_rabbitmq_data:
     gov_etcd_data:
