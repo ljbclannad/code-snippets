@@ -3,6 +3,8 @@ package com.lx.governance.outbox.service;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
+import static net.logstash.logback.argument.StructuredArguments.kv;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -45,6 +47,13 @@ public class OutboxPublisher {
         }
         for (OutboxRepo.Record r : batch) {
             try {
+                log.info("Outbox message publishing started",
+                    kv("event", "outbox_publish_start"),
+                    kv("messageId", r.id),
+                    kv("eventType", r.eventType),
+                    kv("eventId", r.eventId)
+                );
+
                 if (failPublish) {
                     throw new IllegalStateException("lab injected failure: outbox publish");
                 }
@@ -57,13 +66,28 @@ public class OutboxPublisher {
 
                 rabbitTemplate.send(EXCHANGE, r.eventType, msg);
                 repo.markSent(r.id);
-                log.info("Published outbox id={} eventType={} eventId={} retryCount={}",
-                        r.id, r.eventType, r.eventId, r.retryCount);
+                log.info("Outbox message published successfully",
+                    kv("event", "outbox_published"),
+                    kv("messageId", r.id),
+                    kv("eventType", r.eventType),
+                    kv("eventId", r.eventId),
+                    kv("retryCount", r.retryCount),
+                    kv("status", "SUCCESS")
+                );
             } catch (Exception e) {
                 int nextRetryCount = r.retryCount + 1;
                 repo.markFailed(r.id, nextRetryCount, maxRetries, retryDelaySeconds, trimReason(e.getMessage()));
-                log.error("Failed publishing outbox id={} eventId={} retryCount={}/{}",
-                        r.id, r.eventId, nextRetryCount, maxRetries, e);
+                log.error("Outbox message publishing failed",
+                    kv("event", "outbox_publish_failed"),
+                    kv("messageId", r.id),
+                    kv("eventType", r.eventType),
+                    kv("eventId", r.eventId),
+                    kv("retryCount", nextRetryCount),
+                    kv("maxRetries", maxRetries),
+                    kv("error", e.getMessage()),
+                    kv("status", "FAILED"),
+                    e
+                );
             }
         }
     }
