@@ -28,7 +28,7 @@ public class IdSegmentDataSourceConfig {
     public DataSource idSegmentDataSource() {
         HikariDataSource dataSource = new HikariDataSource();
         dataSource.setJdbcUrl(String.format(
-            "jdbc:mysql://%s:%s/order_db?useSSL=false&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai",
+            "jdbc:mysql://%s:%s/order_db?useSSL=false&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true",
             host, port));
         dataSource.setUsername(username);
         dataSource.setPassword(password);
