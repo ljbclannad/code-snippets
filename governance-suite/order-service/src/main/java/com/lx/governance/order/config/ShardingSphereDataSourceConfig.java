@@ -23,6 +23,19 @@ import org.springframework.context.annotation.Primary;
 
 import com.zaxxer.hikari.HikariDataSource;
 
+/**
+ * ShardingSphere 数据源配置
+ *
+ * 读写分离策略：
+ * 1. 写操作自动路由到 master (3306)
+ * 2. 读操作默认路由到 slave1/slave2 (3307/3308) 轮询负载均衡
+ * 3. 用户写操作后 3 秒内，该用户的读操作强制路由到 master（避免主从延迟导致的数据不一致）
+ *    - 实现：UserReadWriteContext 标记用户写操作，ReadMasterHelper 强制读主库
+ * 4. 事务内的所有操作自动路由到 master
+ *
+ * 分片策略：
+ * - t_order 按 order_no 哈希取模分片到 t_order_0 和 t_order_1
+ */
 @Configuration
 public class ShardingSphereDataSourceConfig {
 

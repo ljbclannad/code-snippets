@@ -10,6 +10,8 @@ import com.lx.governance.order.domain.InventoryDeductRequest;
 import com.lx.governance.order.domain.OrderDto;
 import com.lx.governance.order.domain.PaymentDto;
 import com.lx.governance.order.domain.PaymentPrepareRequest;
+import com.lx.governance.order.context.UserReadWriteContext;
+import com.lx.governance.order.helper.ReadMasterHelper;
 import com.lx.governance.order.id.OrderNoGenerator;
 import com.lx.governance.order.repo.OutboxRepository;
 import com.lx.governance.order.repo.OrderRepository;
@@ -35,6 +37,7 @@ public class OrderAppService {
     private final IdempotencyService idempotencyService;
     private final StringRedisTemplate redisTemplate;
     private final OrderNoGenerator orderNoGenerator;
+    private final UserReadWriteContext readWriteContext;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private static final String STREAM_KEY = "seckill:stream:orders";
     private static final String CREATE_V2_LUA = """
@@ -66,7 +69,8 @@ public class OrderAppService {
                            PaymentEventConsumeRepository paymentEventConsumeRepository,
                            IdempotencyService idempotencyService,
                            StringRedisTemplate redisTemplate,
-                           OrderNoGenerator orderNoGenerator) {
+                           OrderNoGenerator orderNoGenerator,
+                           UserReadWriteContext readWriteContext) {
         this.orderRepository = orderRepository;
         this.outboxRepository = outboxRepository;
         this.inventoryClient = inventoryClient;
@@ -75,6 +79,7 @@ public class OrderAppService {
         this.idempotencyService = idempotencyService;
         this.redisTemplate = redisTemplate;
         this.orderNoGenerator = orderNoGenerator;
+        this.readWriteContext = readWriteContext;
     }
 
     @GlobalTransactional(name = "create-order", rollbackFor = Exception.class)
@@ -126,11 +131,30 @@ public class OrderAppService {
         }
         outboxRepository.insert(eventId, "ORDER", orderNo, "order.created", payload);
 
+        // 标记用户发生了写操作，3秒内该用户的查询将读主库
+        readWriteContext.markUserWrite(parseUserId(req.getCustomerId()));
+
         return orderRepository.findByOrderNo(orderNo);
     }
 
     public OrderDto get(String orderNo) {
         return orderRepository.findByOrderNo(orderNo);
+    }
+
+    /**
+     * 获取订单（支持读写分离优化）
+     * @param orderNo 订单号
+     * @param userId 用户ID（用于判断是否需要读主库）
+     * @return 订单信息
+     */
+    public OrderDto get(String orderNo, Long userId) {
+        if (userId != null && readWriteContext.shouldReadMaster(userId)) {
+            // 3秒内，强制读主库
+            return ReadMasterHelper.readFromMaster(() -> orderRepository.findByOrderNo(orderNo));
+        } else {
+            // 正常读从库
+            return orderRepository.findByOrderNo(orderNo);
+        }
     }
 
     public void markPaid(String orderNo) {

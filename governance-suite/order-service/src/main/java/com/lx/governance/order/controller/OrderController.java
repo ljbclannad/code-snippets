@@ -42,8 +42,9 @@ public class OrderController {
     }
 
     @GetMapping("/order/{orderNo}")
-    public ApiResponse<OrderDto> get(@PathVariable String orderNo) {
-        return ApiResponse.ok(appService.get(orderNo), Trace.getOrCreate());
+    public ApiResponse<OrderDto> get(@PathVariable String orderNo,
+                                     @RequestHeader(value = AuthHeaders.USER_ID, required = false) Long authenticatedUserId) {
+        return ApiResponse.ok(appService.get(orderNo, authenticatedUserId), Trace.getOrCreate());
     }
 
     @PostMapping("/order/payment/callback/{orderNo}")
