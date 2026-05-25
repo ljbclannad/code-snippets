@@ -24,6 +24,7 @@ import com.lx.governance.aichat.dto.UserProfileDTO;
 import com.lx.governance.aichat.entity.AiChatHistory;
 import com.lx.governance.aichat.mapper.AiChatHistoryMapper;
 import com.lx.governance.aichat.metrics.AiChatMetrics;
+import com.lx.governance.aichat.util.MessageValidator;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -105,14 +106,28 @@ public class AiChatService {
                             }
                         });
 
-                CompletableFuture<List<MemoryItemDTO>> memoriesFuture = memoryService.retrieveMemories(
-                        request.getGroupId(),
-                        request.getCustomerId(),
-                        request.getMessage()).whenComplete((memories, ex) -> {
-                            if (ex == null) {
-                                metrics.recordMemoryRetrieval(() -> memories);
-                            }
-                        });
+                // 智能判断是否需要记忆检索（混合方案：规则 + 意图分析）
+                CompletableFuture<List<MemoryItemDTO>> memoriesFuture;
+                boolean shouldRetrieve = MessageValidator.shouldRetrieveMemories(
+                        request.getMessage(),
+                        sessionContext.getComplexity());
+
+                if (!shouldRetrieve) {
+                    log.info("跳过记忆检索 - message: {}, complexity: {}, correlationId: {}",
+                            request.getMessage(), sessionContext.getComplexity(), correlationId);
+                    memoriesFuture = CompletableFuture.completedFuture(java.util.Collections.emptyList());
+                } else {
+                    log.debug("执行记忆检索 - message: {}, complexity: {}, correlationId: {}",
+                            request.getMessage(), sessionContext.getComplexity(), correlationId);
+                    memoriesFuture = memoryService.retrieveMemories(
+                            request.getGroupId(),
+                            request.getCustomerId(),
+                            request.getMessage()).whenComplete((memories, ex) -> {
+                                if (ex == null) {
+                                    metrics.recordMemoryRetrieval(() -> memories);
+                                }
+                            });
+                }
 
                 // 等待两个结果（不阻塞工作线程，只阻塞主线程）
                 CompletableFuture.allOf(profileFuture, memoriesFuture).join();

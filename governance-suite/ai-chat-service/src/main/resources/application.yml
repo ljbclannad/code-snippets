@@ -117,6 +117,12 @@ ai:
       mid-term-days: 30             # 中期记忆天数
       enable-deduplication: true    # 启用去重
 
+      # 智能过滤配置（混合方案：规则 + 意图分析）
+      smart-filter:
+        enabled: true               # 是否启用智能过滤
+        min-message-length: 3       # 最小消息长度
+        skip-simple-complexity: true # 是否跳过 simple 复杂度的消息
+
     # 对话历史配置
     conversation:
       max-rounds: 5                 # 最多保留轮数
