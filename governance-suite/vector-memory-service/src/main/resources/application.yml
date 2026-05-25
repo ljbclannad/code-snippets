@@ -116,3 +116,16 @@ logging:
     io.milvus: INFO
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{50} - %msg%n"
+
+# 记忆检索配置
+memory:
+  retrieval:
+    # 是否启用 Rerank（语义重排序）
+    rerank:
+      enabled: true
+      # Rerank 策略: full（全量重排序）, partial（仅对 Redis 缓存记忆重排序）
+      strategy: partial
+  # Redis 去重配置
+  redis:
+    dedup:
+      enabled: true
