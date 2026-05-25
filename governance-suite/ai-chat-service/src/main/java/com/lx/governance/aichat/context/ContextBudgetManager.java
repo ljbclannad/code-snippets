@@ -31,6 +31,9 @@ public class ContextBudgetManager {
     @Autowired
     private ConversationHistoryManager conversationHistoryManager;
 
+    @Autowired
+    private DynamicBudgetStrategy dynamicBudgetStrategy;
+
     // Token 使用跟踪
     private int lastCoreProfileTokens = 0;
     private int lastSessionContextTokens = 0;
@@ -58,14 +61,27 @@ public class ContextBudgetManager {
         StringBuilder prompt = new StringBuilder();
         prompt.append("你是一个专业的健康顾问助手。请根据以下用户信息提供个性化的健康建议。\n\n");
 
-        int contextBudget = properties.getTotalBudget() - properties.getUserMessageReserve();
+        // 根据对话复杂度动态调整预算
+        String complexity = (sessionContext != null && sessionContext.getComplexity() != null)
+                ? sessionContext.getComplexity()
+                : "medium";
+
+        DynamicBudgetStrategy.BaseBudgetConfig baseBudget = new DynamicBudgetStrategy.BaseBudgetConfig();
+        baseBudget.setCoreProfileBudget(properties.getCoreProfileBudget());
+        baseBudget.setRelevantMemoriesBudget(properties.getRelevantMemoriesBudget());
+        baseBudget.setConversationHistoryBudget(properties.getConversationHistoryBudget());
+        baseBudget.setExtendedProfileBudget(properties.getExtendedProfileBudget());
+
+        BudgetAllocation dynamicBudget = dynamicBudgetStrategy.calculateBudget(complexity, baseBudget);
+
+        int contextBudget = dynamicBudget.getTotalBudget();
         int remainingBudget = contextBudget;
         int usedTokens = 0;
 
         // 1. 核心画像（优先级最高，必须包含）
         String coreProfile = extractCoreProfile(profile);
         int coreTokens = estimateTokens(coreProfile);
-        int coreProfileBudget = properties.getCoreProfileBudget();
+        int coreProfileBudget = dynamicBudget.getCoreProfileBudget();
 
         if (coreTokens <= coreProfileBudget) {
             prompt.append("## 用户核心信息\n").append(coreProfile).append("\n");
@@ -85,7 +101,7 @@ public class ContextBudgetManager {
 
         // 2. 会话上下文（新增，优先级高）
         if (sessionContext != null) {
-            int sessionContextBudget = properties.getConversationHistoryBudget(); // 复用对话历史预算
+            int sessionContextBudget = dynamicBudget.getSessionContextBudget(); // 使用动态预算
             String sessionContextText = formatSessionContext(sessionContext);
             int sessionContextTokens = estimateTokens(sessionContextText);
 
@@ -108,7 +124,7 @@ public class ContextBudgetManager {
         }
 
         // 3. 相关记忆（优先级高，根据相似度排序）
-        int relevantMemoriesBudget = properties.getRelevantMemoriesBudget();
+        int relevantMemoriesBudget = dynamicBudget.getMemoryBudget();
         String relevantMemories = selectRelevantMemories(
                 memories,
                 Math.min(relevantMemoriesBudget, remainingBudget));
@@ -123,18 +139,18 @@ public class ContextBudgetManager {
 
         // 4. 对话历史（优先级中，最近的对话上下文）
         String conversationHistory = buildConversationHistory(
-                customerId, conversationId, Math.min(properties.getConversationHistoryBudget(), remainingBudget));
+                customerId, conversationId, Math.min(dynamicBudget.getSessionContextBudget(), remainingBudget));
         if (!conversationHistory.isEmpty()) {
             int conversationTokens = estimateTokens(conversationHistory);
             prompt.append("## 对话历史\n").append(conversationHistory).append("\n");
             usedTokens += conversationTokens;
             remainingBudget -= conversationTokens;
             lastConversationTokens = conversationTokens;
-            log.debug("对话历史 tokens: {}/{}", conversationTokens, properties.getConversationHistoryBudget());
+            log.debug("对话历史 tokens: {}/{}", conversationTokens, dynamicBudget.getSessionContextBudget());
         }
 
         // 5. 扩展画像（优先级低，根据问题类型动态选择）
-        int extendedProfileBudget = properties.getExtendedProfileBudget();
+        int extendedProfileBudget = dynamicBudget.getExtendedProfileBudget();
         if (remainingBudget > 0) {
             String extendedProfile = extractExtendedProfile(
                     profile,
