@@ -1,5 +1,6 @@
 package com.lx.governance.vectormemory.service;
 
+import com.lx.governance.vectormemory.config.MemoryRetrievalProperties;
 import com.lx.governance.vectormemory.dto.MemoryItemDTO;
 import com.lx.governance.vectormemory.entity.AiGroupMemoryEntity;
 import com.lx.governance.vectormemory.mapper.AiGroupMemoryMapper;
@@ -9,10 +10,10 @@ import org.springframework.ai.document.Document;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -30,10 +31,16 @@ public class MemoryRetrievalService {
     private final VectorStoreService vectorStoreService;
     private final AiGroupMemoryMapper memoryMapper;
     private final RedisMemoryIndexService redisMemoryIndexService;
+    private final MemoryRerankService rerankService;
+    private final MemoryRetrievalProperties properties;
 
     /**
-     * 检索群组记忆
-     * 优先从 Redis 缓存获取最近记忆，不足时再查询 Milvus
+     * 检索群组记忆（混合检索 + Rerank）
+     * 策略：
+     * 1. 并行检索 Redis（最近记忆）和 Milvus（语义相似）
+     * 2. 合并结果并去重
+     * 3. 使用 Rerank 基于语义相关性重新排序
+     * 4. 返回 topK 结果
      *
      * @param query      查询文本
      * @param groupId    群组ID
@@ -43,122 +50,157 @@ public class MemoryRetrievalService {
      */
     public List<MemoryItemDTO> retrieveGroupMemories(String query, String groupId, String customerId, int topK) {
         long startTime = System.currentTimeMillis();
-        log.info("Retrieving group memories: query={}, groupId={}, customerId={}, topK={}",
+        log.info("Retrieving group memories with hybrid search + rerank: query={}, groupId={}, customerId={}, topK={}",
                 query, groupId, customerId, topK);
 
-        // Step 1: 优先从 Redis 获取最近记忆
+        // Step 1: 并行检索 Redis 和 Milvus（请求 2 倍数量以便 rerank 后筛选）
+        int fetchCount = topK * 2;
+
         List<MemoryItemDTO> recentMemories = new ArrayList<>();
+        List<MemoryItemDTO> milvusMemories = new ArrayList<>();
+
+        // 1.1 从 Redis 获取最近记忆
         try {
             if (redisMemoryIndexService != null) {
-                List<String> redisValues = redisMemoryIndexService.getRecentMemories(groupId, topK);
-                log.debug("Retrieved {} recent memories from Redis", redisValues.size());
-
-                // 解析 Redis 值（格式: "memoryId:content"）
+                List<String> redisValues = redisMemoryIndexService.getRecentMemories(groupId, fetchCount);
                 recentMemories = parseRedisMemories(redisValues);
+                log.debug("Retrieved {} recent memories from Redis", recentMemories.size());
+            }
+        } catch (Exception e) {
+            log.warn("Failed to retrieve from Redis: {}", e.getMessage());
+        }
 
-                // 如果 Redis 返回的记忆数量足够，直接返回
-                if (recentMemories.size() >= topK) {
-                    log.info("Redis cache hit: returning {} memories without Milvus query", recentMemories.size());
-                    long elapsedTime = System.currentTimeMillis() - startTime;
-                    log.info("Memory retrieval completed from Redis: found {} memories in {} ms",
-                            recentMemories.size(), elapsedTime);
-                    return recentMemories;
+        // 1.2 从 Milvus 获取语义相似记忆
+        try {
+            List<Document> documents = vectorStoreService.searchGroupMemories(query, groupId, customerId, fetchCount);
+
+            if (!documents.isEmpty()) {
+                // 提取 embeddingIds
+                List<String> embeddingIds = documents.stream()
+                        .map(Document::getId)
+                        .collect(Collectors.toList());
+
+                log.debug("Found {} embedding IDs from Milvus", embeddingIds.size());
+
+                // 查询完整信息
+                List<AiGroupMemoryEntity> memoryEntities = memoryMapper.selectByEmbeddingIds(embeddingIds);
+
+                if (!memoryEntities.isEmpty()) {
+                    // 构建 embeddingId -> similarity 映射
+                    Map<String, Double> similarityMap = new HashMap<>();
+                    for (Document doc : documents) {
+                        String embeddingId = doc.getId();
+                        Object distanceObj = doc.getMetadata().get("distance");
+                        double distance = 0.0;
+                        if (distanceObj instanceof Number) {
+                            distance = ((Number) distanceObj).doubleValue();
+                        }
+                        double similarity = 1.0 - distance;
+                        similarityMap.put(embeddingId, similarity);
+                    }
+
+                    // 转换为 MemoryItemDTO
+                    milvusMemories = memoryEntities.stream()
+                            .map(entity -> {
+                                Double similarity = similarityMap.getOrDefault(entity.getEmbeddingId(), 0.0);
+                                return MemoryItemDTO.builder()
+                                        .id(entity.getId())
+                                        .content(entity.getMemoryContent())
+                                        .similarity(similarity)
+                                        .confidenceScore(entity.getConfidenceScore() != null ?
+                                                entity.getConfidenceScore().doubleValue() : null)
+                                        .verified(entity.getConfidenceScore() != null &&
+                                                entity.getConfidenceScore().doubleValue() >= 0.8)
+                                        .source(entity.getMemoryType())
+                                        .build();
+                            })
+                            .collect(Collectors.toList());
+
+                    log.debug("Retrieved {} memories from Milvus", milvusMemories.size());
                 }
             }
         } catch (Exception e) {
-            log.warn("Failed to retrieve from Redis, falling back to Milvus: {}", e.getMessage());
-            recentMemories = new ArrayList<>();
+            log.warn("Failed to retrieve from Milvus: {}", e.getMessage());
         }
 
-        // Step 2: Redis 记忆不足，查询 Milvus
-        log.debug("Redis returned {} memories, querying Milvus for additional results", recentMemories.size());
-        List<Document> documents = vectorStoreService.searchGroupMemories(query, groupId, customerId, topK);
+        // Step 2: 合并结果并去重
+        List<MemoryItemDTO> allCandidates = mergeAndDeduplicate(recentMemories, milvusMemories);
 
-        if (documents.isEmpty()) {
-            log.info("No similar memories found in vector store");
-            // 如果 Milvus 也没有结果，返回 Redis 的结果（如果有）
-            if (!recentMemories.isEmpty()) {
-                return recentMemories;
-            }
+        if (allCandidates.isEmpty()) {
+            log.info("No memories found from both Redis and Milvus");
             return new ArrayList<>();
         }
 
-        // Step 3: 提取 embeddingIds
-        List<String> embeddingIds = documents.stream()
-                .map(Document::getId)
-                .collect(Collectors.toList());
+        log.info("Merged candidates: total={} (Redis={}, Milvus={})",
+                allCandidates.size(), recentMemories.size(), milvusMemories.size());
 
-        log.debug("Found {} embedding IDs from vector search: {}", embeddingIds.size(), embeddingIds);
+        // Step 3: Rerank（基于语义相关性重新排序）
+        List<MemoryItemDTO> finalResults;
 
-        // Step 4: 查询完整信息
-        List<AiGroupMemoryEntity> memoryEntities = memoryMapper.selectByEmbeddingIds(embeddingIds);
+        if (properties.getRerank().isEnabled()) {
+            String strategy = properties.getRerank().getStrategy();
+            log.info("Rerank enabled with strategy: {}", strategy);
 
-        if (memoryEntities.isEmpty()) {
-            log.warn("No memory entities found in database for embedding IDs: {}", embeddingIds);
-            return new ArrayList<>();
-        }
-
-        // Step 5: 构建 embeddingId -> similarity 映射
-        Map<String, Double> similarityMap = new HashMap<>();
-        for (Document doc : documents) {
-            String embeddingId = doc.getId();
-            Object distanceObj = doc.getMetadata().get("distance");
-            double distance = 0.0;
-            if (distanceObj instanceof Number) {
-                distance = ((Number) distanceObj).doubleValue();
+            if ("full".equalsIgnoreCase(strategy)) {
+                // 全量重排序：对所有候选记忆重新计算相似度
+                finalResults = rerankService.rerank(query, allCandidates, topK);
+            } else {
+                // 部分重排序（默认）：仅对 Redis 缓存记忆重新计算相似度
+                finalResults = rerankService.rerankPartial(query, allCandidates, topK);
             }
-            double similarity = 1.0 - distance;
-            similarityMap.put(embeddingId, similarity);
-            log.debug("Embedding ID: {}, distance: {}, similarity: {}", embeddingId, distance, similarity);
-        }
-
-        // Step 6: 转换为 MemoryItemDTO 列表
-        List<MemoryItemDTO> milvusResults = memoryEntities.stream()
-                .map(entity -> {
-                    Double similarity = similarityMap.getOrDefault(entity.getEmbeddingId(), 0.0);
-                    return MemoryItemDTO.builder()
-                            .id(entity.getId())
-                            .content(entity.getMemoryContent())
-                            .similarity(similarity)
-                            .confidenceScore(entity.getConfidenceScore() != null ?
-                                    entity.getConfidenceScore().doubleValue() : null)
-                            .verified(entity.getConfidenceScore() != null &&
-                                    entity.getConfidenceScore().doubleValue() >= 0.8)
-                            .source(entity.getMemoryType())
-                            .build();
-                })
-                .collect(Collectors.toList());
-
-        // Step 7: 合并 Redis 和 Milvus 结果（去重）
-        List<MemoryItemDTO> finalResults = new ArrayList<>();
-
-        // 收集 Redis 缓存的记忆 ID（用于去重）
-        Set<Long> redisMemoryIds = recentMemories.stream()
-                .map(MemoryItemDTO::getId)
-                .filter(id -> id != null)
-                .collect(Collectors.toSet());
-
-        // 先添加 Redis 缓存的记忆
-        finalResults.addAll(recentMemories);
-
-        // 再添加 Milvus 的记忆（去重：排除 Redis 中已存在的记忆 ID）
-        for (MemoryItemDTO milvusItem : milvusResults) {
-            if (milvusItem.getId() == null || !redisMemoryIds.contains(milvusItem.getId())) {
-                finalResults.add(milvusItem);
-            }
-        }
-
-        // 限制返回数量
-        if (finalResults.size() > topK) {
-            finalResults = finalResults.subList(0, topK);
+        } else {
+            // 不启用 Rerank，直接按现有相似度排序
+            log.info("Rerank disabled, sorting by existing similarity scores");
+            finalResults = allCandidates.stream()
+                    .sorted(Comparator.comparing(m -> m.getSimilarity() != null ? m.getSimilarity() : 0.0,
+                            Comparator.reverseOrder()))
+                    .limit(topK)
+                    .collect(Collectors.toList());
         }
 
         long elapsedTime = System.currentTimeMillis() - startTime;
-        log.info("Memory retrieval completed: found {} memories ({} from Redis, {} from Milvus) in {} ms",
-                finalResults.size(), recentMemories.size(),
-                finalResults.size() - recentMemories.size(), elapsedTime);
+        log.info("Memory retrieval completed: candidates={}, final={}, duration={}ms",
+                allCandidates.size(), finalResults.size(), elapsedTime);
 
         return finalResults;
+    }
+
+    /**
+     * 合并 Redis 和 Milvus 结果，并去重
+     * 去重策略：基于 memoryId，保留相似度更高的
+     *
+     * @param redisMemories  Redis 缓存的记忆
+     * @param milvusMemories Milvus 检索的记忆
+     * @return 合并后的记忆列表
+     */
+    private List<MemoryItemDTO> mergeAndDeduplicate(List<MemoryItemDTO> redisMemories, List<MemoryItemDTO> milvusMemories) {
+        Map<Long, MemoryItemDTO> memoryMap = new HashMap<>();
+
+        // 添加 Redis 记忆
+        for (MemoryItemDTO memory : redisMemories) {
+            if (memory.getId() != null) {
+                memoryMap.put(memory.getId(), memory);
+            }
+        }
+
+        // 添加 Milvus 记忆（如果 ID 重复，保留相似度更高的）
+        for (MemoryItemDTO memory : milvusMemories) {
+            if (memory.getId() != null) {
+                MemoryItemDTO existing = memoryMap.get(memory.getId());
+                if (existing == null) {
+                    memoryMap.put(memory.getId(), memory);
+                } else {
+                    // 如果已存在，比较相似度，保留更高的
+                    double existingSimilarity = existing.getSimilarity() != null ? existing.getSimilarity() : 0.0;
+                    double newSimilarity = memory.getSimilarity() != null ? memory.getSimilarity() : 0.0;
+                    if (newSimilarity > existingSimilarity) {
+                        memoryMap.put(memory.getId(), memory);
+                    }
+                }
+            }
+        }
+
+        return new ArrayList<>(memoryMap.values());
     }
 
     /**
