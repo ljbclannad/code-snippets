@@ -8,11 +8,11 @@ import org.springframework.context.annotation.Bean;
 import com.lx.governance.common.web.TraceIdFilter;
 
 @SpringBootApplication(scanBasePackages = {
-    "com.lx.governance.payment",
-    "com.lx.governance.common.auth",
-    "com.lx.governance.common.trace",
-    "com.lx.governance.common.web",
-    "com.lx.governance.common.api"
+        "com.lx.governance.payment",
+        "com.lx.governance.common.auth",
+        "com.lx.governance.common.trace",
+        "com.lx.governance.common.web",
+        "com.lx.governance.common.api"
 })
 public class PaymentServiceApplication {
     public static void main(String[] args) {

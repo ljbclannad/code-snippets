@@ -72,6 +72,7 @@ public class ContextBudgetManager {
         baseBudget.setConversationHistoryBudget(properties.getConversationHistoryBudget());
         baseBudget.setExtendedProfileBudget(properties.getExtendedProfileBudget());
 
+        // 动态预算分配
         BudgetAllocation dynamicBudget = dynamicBudgetStrategy.calculateBudget(complexity, baseBudget);
 
         int contextBudget = dynamicBudget.getTotalBudget();

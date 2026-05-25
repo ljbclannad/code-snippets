@@ -82,13 +82,20 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,refresh,env
+        include: health,info,refresh,env,metrics,prometheus
   endpoint:
     health:
       show-details: always
   health:
     defaults:
       enabled: true
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    tags:
+      application: ${spring.application.name}
+      environment: ${ENVIRONMENT:dev}
 
 logging:
   level:

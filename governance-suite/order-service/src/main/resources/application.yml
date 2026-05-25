@@ -59,13 +59,20 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,bulkhead,refresh
+        include: health,info,bulkhead,refresh,metrics,prometheus
   endpoint:
     health:
       show-details: always
   health:
     defaults:
       enabled: true
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    tags:
+      application: ${spring.application.name}
+      environment: ${ENVIRONMENT:dev}
 
 mybatis:
   mapper-locations: classpath*:mapper/*.xml
