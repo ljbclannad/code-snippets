@@ -20,6 +20,11 @@ public class MemoryRetrievalProperties {
      */
     private RerankConfig rerank = new RerankConfig();
 
+    /**
+     * 去重配置
+     */
+    private DeduplicationConfig deduplication = new DeduplicationConfig();
+
     @Data
     public static class RerankConfig {
         /**
@@ -33,5 +38,18 @@ public class MemoryRetrievalProperties {
          * - partial: 部分重排序（仅对 Redis 缓存的记忆重新计算相似度，Milvus 的保留原始分数）
          */
         private String strategy = "partial";
+    }
+
+    @Data
+    public static class DeduplicationConfig {
+        /**
+         * 是否启用语义去重
+         */
+        private boolean semanticEnabled = true;
+
+        /**
+         * 语义相似度阈值（>= 此值视为重复）
+         */
+        private double semanticThreshold = 0.95;
     }
 }

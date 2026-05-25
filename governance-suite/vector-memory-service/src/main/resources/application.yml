@@ -125,6 +125,13 @@ memory:
       enabled: true
       # Rerank 策略: full（全量重排序）, partial（仅对 Redis 缓存记忆重排序）
       strategy: partial
+
+    # 去重配置
+    deduplication:
+      # 语义去重：相似度 >= 阈值视为重复
+      semantic-enabled: true
+      semantic-threshold: 0.95
+
   # Redis 去重配置
   redis:
     dedup:

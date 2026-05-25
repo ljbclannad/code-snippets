@@ -32,6 +32,7 @@ public class MemoryRetrievalService {
     private final AiGroupMemoryMapper memoryMapper;
     private final RedisMemoryIndexService redisMemoryIndexService;
     private final MemoryRerankService rerankService;
+    private final MemoryDeduplicationService deduplicationService;
     private final MemoryRetrievalProperties properties;
 
     /**
@@ -123,8 +124,8 @@ public class MemoryRetrievalService {
             log.warn("Failed to retrieve from Milvus: {}", e.getMessage());
         }
 
-        // Step 2: 合并结果并去重
-        List<MemoryItemDTO> allCandidates = mergeAndDeduplicate(recentMemories, milvusMemories);
+        // Step 2: 合并结果并去重（使用增强去重策略）
+        List<MemoryItemDTO> allCandidates = deduplicationService.mergeAndDeduplicate(recentMemories, milvusMemories);
 
         if (allCandidates.isEmpty()) {
             log.info("No memories found from both Redis and Milvus");
@@ -163,44 +164,6 @@ public class MemoryRetrievalService {
                 allCandidates.size(), finalResults.size(), elapsedTime);
 
         return finalResults;
-    }
-
-    /**
-     * 合并 Redis 和 Milvus 结果，并去重
-     * 去重策略：基于 memoryId，保留相似度更高的
-     *
-     * @param redisMemories  Redis 缓存的记忆
-     * @param milvusMemories Milvus 检索的记忆
-     * @return 合并后的记忆列表
-     */
-    private List<MemoryItemDTO> mergeAndDeduplicate(List<MemoryItemDTO> redisMemories, List<MemoryItemDTO> milvusMemories) {
-        Map<Long, MemoryItemDTO> memoryMap = new HashMap<>();
-
-        // 添加 Redis 记忆
-        for (MemoryItemDTO memory : redisMemories) {
-            if (memory.getId() != null) {
-                memoryMap.put(memory.getId(), memory);
-            }
-        }
-
-        // 添加 Milvus 记忆（如果 ID 重复，保留相似度更高的）
-        for (MemoryItemDTO memory : milvusMemories) {
-            if (memory.getId() != null) {
-                MemoryItemDTO existing = memoryMap.get(memory.getId());
-                if (existing == null) {
-                    memoryMap.put(memory.getId(), memory);
-                } else {
-                    // 如果已存在，比较相似度，保留更高的
-                    double existingSimilarity = existing.getSimilarity() != null ? existing.getSimilarity() : 0.0;
-                    double newSimilarity = memory.getSimilarity() != null ? memory.getSimilarity() : 0.0;
-                    if (newSimilarity > existingSimilarity) {
-                        memoryMap.put(memory.getId(), memory);
-                    }
-                }
-            }
-        }
-
-        return new ArrayList<>(memoryMap.values());
     }
 
     /**
