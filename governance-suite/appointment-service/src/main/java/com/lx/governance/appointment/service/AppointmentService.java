@@ -33,7 +33,7 @@ public class AppointmentService {
         if (!idempotencyService.tryLock(idempotencyKey, Duration.ofHours(1))) {
             log.warn("[APPOINTMENT] [GRAB] 重复请求: userId={}, scheduleId={}, requestId={}",
                 userId, scheduleId, requestId);
-            throw new RuntimeException("DUPLICATE_REQUEST");
+            throw new IllegalArgumentException("重复请求");
         }
 
         // 2. 执行 Redis Lua 脚本
@@ -53,12 +53,12 @@ public class AppointmentService {
         // 3. 解析结果
         if ("SOLD_OUT".equals(result)) {
             log.warn("[APPOINTMENT] [GRAB] 号源已抢完: userId={}, scheduleId={}", userId, scheduleId);
-            throw new RuntimeException("SOLD_OUT");
+            throw new IllegalStateException("号源已抢完");
         }
 
         if ("ALREADY_GRABBED".equals(result)) {
             log.warn("[APPOINTMENT] [GRAB] 用户已抢过: userId={}, scheduleId={}", userId, scheduleId);
-            throw new RuntimeException("ALREADY_GRABBED");
+            throw new IllegalStateException("您已抢过该排班");
         }
 
         // 4. 返回成功

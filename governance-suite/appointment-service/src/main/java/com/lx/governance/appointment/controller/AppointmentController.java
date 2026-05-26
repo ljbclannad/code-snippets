@@ -25,34 +25,12 @@ public class AppointmentController {
             @RequestHeader("Idempotency-Key") String requestId,
             @RequestBody GrabRequest request) {
 
-        try {
-            GrabResultVO result = appointmentService.grabAppointment(
-                userId,
-                request.getScheduleId(),
-                requestId
-            );
+        GrabResultVO result = appointmentService.grabAppointment(
+            userId,
+            request.getScheduleId(),
+            requestId
+        );
 
-            return ApiResponse.ok(result, Trace.getOrCreate());
-
-        } catch (RuntimeException e) {
-            String code = e.getMessage();
-            String message;
-
-            switch (code) {
-                case "SOLD_OUT":
-                    message = "号源已抢完";
-                    break;
-                case "ALREADY_GRABBED":
-                    message = "您已抢过该排班";
-                    break;
-                case "DUPLICATE_REQUEST":
-                    message = "重复请求";
-                    break;
-                default:
-                    message = "抢号失败";
-            }
-
-            return ApiResponse.fail(code, message, Trace.getOrCreate());
-        }
+        return ApiResponse.ok(result, Trace.getOrCreate());
     }
 }
