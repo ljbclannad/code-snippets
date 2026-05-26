@@ -14,8 +14,11 @@ public class SnowflakeConfig {
     @Value("${snowflake.datacenter-id:1}")
     private long datacenterId;
 
+    @Value("${snowflake.max-backward-ms:5000}")
+    private long maxBackwardMs;
+
     @Bean
     public SnowflakeIdGenerator snowflakeIdGenerator() {
-        return new SnowflakeIdGenerator(workerId, datacenterId);
+        return new SnowflakeIdGenerator(datacenterId, workerId, maxBackwardMs);
     }
 }
