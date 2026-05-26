@@ -5,6 +5,9 @@ global:
     cluster: 'governance-suite'
     environment: 'development'
 
+rule_files:
+  - '/etc/prometheus/alerts/*.yml'
+
 scrape_configs:
   # AI Chat Service 监控
   - job_name: 'ai-chat-service'
