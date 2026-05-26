@@ -46,13 +46,10 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info,refresh,metrics,prometheus
+        include: health,info,metrics,prometheus
   endpoint:
     health:
       show-details: always
-  health:
-    defaults:
-      enabled: true
   metrics:
     export:
       prometheus:
@@ -60,8 +57,16 @@ management:
     tags:
       application: ${spring.application.name}
       environment: ${ENVIRONMENT:dev}
-    defaults:
-      enabled: true
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  tracing:
+    sampling:
+      probability: 1.0
+  otlp:
+    tracing:
+      endpoint: http://localhost:4317
+      compression: gzip
 
 app:
   nacos:
