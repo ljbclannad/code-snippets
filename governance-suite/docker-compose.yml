@@ -285,6 +285,24 @@ services:
             timeout: 10s
             retries: 3
 
+    jaeger:
+        image: jaegertracing/all-in-one:1.55
+        container_name: gov-jaeger
+        restart: unless-stopped
+        environment:
+            - COLLECTOR_OTLP_ENABLED=true
+            - SPAN_STORAGE_TYPE=memory
+            - MEMORY_MAX_TRACES=10000
+        ports:
+            - "16686:16686"  # Jaeger UI
+            - "4317:4317"    # OTLP gRPC
+            - "4318:4318"    # OTLP HTTP
+        healthcheck:
+            test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:16686/"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+
 volumes:
     gov_mysql_data:
     gov_mysql_slave1_data:
