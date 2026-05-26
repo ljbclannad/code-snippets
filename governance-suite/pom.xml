@@ -19,6 +19,7 @@
     <module>vector-memory-service</module>
     <module>ai-chat-service</module>
     <module>doctor-assistant-agent</module>
+    <module>appointment-service</module>
   </modules>
 
   <properties>
