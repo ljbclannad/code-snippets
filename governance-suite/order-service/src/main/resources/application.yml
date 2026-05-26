@@ -75,10 +75,10 @@ management:
         http.server.requests: true
   tracing:
     sampling:
-      probability: 1.0
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}
   otlp:
     tracing:
-      endpoint: http://localhost:4317
+      endpoint: ${OTLP_ENDPOINT:http://localhost:4317}
       compression: gzip
 
 mybatis:
