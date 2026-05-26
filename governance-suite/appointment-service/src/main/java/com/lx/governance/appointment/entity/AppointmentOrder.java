@@ -2,11 +2,11 @@ package com.lx.governance.appointment.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
-import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.baomidou.mybatisplus.annotation.Version;
 import lombok.Data;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
@@ -48,9 +48,39 @@ public class AppointmentOrder {
     private Long deptId;
 
     /**
-     * 预约状态 (PENDING-待就诊, COMPLETED-已完成, CANCELLED-已取消)
+     * 就诊日期
+     */
+    private LocalDate appointmentDate;
+
+    /**
+     * 就诊时段
+     */
+    private String timeSlot;
+
+    /**
+     * 挂号费(分)
+     */
+    private Integer feeCents;
+
+    /**
+     * 预约状态 (RESERVED-已预约, PAID-已支付, CANCELLED-已取消, EXPIRED-已过期)
      */
     private String status;
+
+    /**
+     * 预约时间
+     */
+    private LocalDateTime reservedAt;
+
+    /**
+     * 支付时间
+     */
+    private LocalDateTime paidAt;
+
+    /**
+     * 取消时间
+     */
+    private LocalDateTime cancelledAt;
 
     /**
      * 取消原因
@@ -62,12 +92,6 @@ public class AppointmentOrder {
      */
     @Version
     private Integer version;
-
-    /**
-     * 逻辑删除标记 (0-未删除, 1-已删除)
-     */
-    @TableLogic
-    private Integer deleted;
 
     /**
      * 创建时间

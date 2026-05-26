@@ -17,7 +17,7 @@ public class AppointmentIdempotency {
     /**
      * 主键ID
      */
-    @TableId(type = IdType.ASSIGN_ID)
+    @TableId(type = IdType.AUTO)
     private Long id;
 
     /**
@@ -26,14 +26,19 @@ public class AppointmentIdempotency {
     private String idempotencyKey;
 
     /**
+     * 用户ID
+     */
+    private Long userId;
+
+    /**
+     * 排班ID
+     */
+    private Long scheduleId;
+
+    /**
      * 订单号
      */
     private String orderNo;
-
-    /**
-     * 过期时间
-     */
-    private LocalDateTime expireTime;
 
     /**
      * 创建时间
