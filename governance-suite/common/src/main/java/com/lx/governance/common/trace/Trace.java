@@ -17,6 +17,8 @@ import java.util.UUID;
 @Component
 public class Trace {
 
+    public static final String TRACE_ID = "traceId";
+
     private static Tracer tracer;
 
     @Autowired
@@ -47,6 +49,22 @@ public class Trace {
         String fallbackId = generateFallbackId();
         MDC.put("traceId", fallbackId);
         return fallbackId;
+    }
+
+    /**
+     * 获取或创建 trace ID（兼容旧 API）
+     */
+    public static String getOrCreate() {
+        return getTraceId();
+    }
+
+    /**
+     * 设置 trace ID（兼容旧 API，但优先使用 Micrometer Tracing 的 trace ID）
+     */
+    public static void set(String traceId) {
+        if (traceId != null && !traceId.isBlank()) {
+            MDC.put(TRACE_ID, traceId);
+        }
     }
 
     /**
