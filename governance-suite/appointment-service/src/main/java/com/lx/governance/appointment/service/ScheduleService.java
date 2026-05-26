@@ -95,7 +95,12 @@ public class ScheduleService {
             String stock = redisTemplate.opsForValue().get(stockKey);
 
             if (stock != null) {
-                vo.setAvailableQuota(Integer.parseInt(stock));
+                try {
+                    vo.setAvailableQuota(Integer.parseInt(stock));
+                } catch (NumberFormatException e) {
+                    vo.setAvailableQuota(schedule.getRemainQuota());
+                    log.warn("[APPOINTMENT] [QUERY] Redis 库存格式错误: scheduleId={}, value={}", schedule.getId(), stock);
+                }
             } else {
                 // Redis 无数据，回退到 DB
                 vo.setAvailableQuota(schedule.getRemainQuota());
@@ -107,12 +112,20 @@ public class ScheduleService {
             if (doctor != null) {
                 vo.setDoctorName(doctor.getDoctorName());
                 vo.setTitle(doctor.getTitle());
-            }
 
-            // 设置科室信息
-            Department dept = deptMap.get(schedule.getDeptId());
-            if (dept != null) {
-                vo.setDeptName(dept.getDeptName());
+                // 设置科室信息
+                Department dept = deptMap.get(doctor.getDeptId());
+                if (dept != null) {
+                    vo.setDeptName(dept.getDeptName());
+                } else {
+                    log.warn("[APPOINTMENT] [QUERY] 科室信息缺失: deptId={}", doctor.getDeptId());
+                    vo.setDeptName("未知科室");
+                }
+            } else {
+                log.warn("[APPOINTMENT] [QUERY] 医生信息缺失: doctorId={}", schedule.getDoctorId());
+                vo.setDoctorName("未知医生");
+                vo.setTitle("未知");
+                vo.setDeptName("未知科室");
             }
 
             result.add(vo);
