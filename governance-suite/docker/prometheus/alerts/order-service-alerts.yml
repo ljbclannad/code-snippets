@@ -1,0 +1,54 @@
+groups:
+  - name: order-service
+    interval: 30s
+    rules:
+      # 订单创建失败率过高
+      - alert: HighOrderFailureRate
+        expr: |
+          sum(rate(order_create_total{status="failure"}[5m]))
+          /
+          sum(rate(order_create_total[5m]))
+          > 0.1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "订单创建失败率过高"
+          description: "失败率 {{ $value | humanizePercentage }}"
+
+      # Seata 事务回滚率过高
+      - alert: HighSeataRollbackRate
+        expr: |
+          sum(rate(seata_transaction_total{status="rollback"}[5m]))
+          /
+          sum(rate(seata_transaction_total[5m]))
+          > 0.2
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Seata 分布式事务回滚率过高"
+          description: "回滚率 {{ $value | humanizePercentage }}"
+
+      # 秒杀库存耗尽
+      - alert: SeckillStockDepleted
+        expr: seckill_stock_remaining == 0
+        for: 30s
+        labels:
+          severity: info
+        annotations:
+          summary: "秒杀商品库存耗尽"
+          description: "SKU {{ $labels.sku_id }} 库存已清空"
+
+      # 订单创建耗时过长
+      - alert: SlowOrderCreation
+        expr: |
+          histogram_quantile(0.99,
+            sum(rate(order_create_duration_bucket[5m])) by (le)
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "订单创建耗时过长"
+          description: "P99 耗时 {{ $value | humanizeDuration }}"

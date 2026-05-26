@@ -1,0 +1,24 @@
+groups:
+  - name: gateway
+    interval: 30s
+    rules:
+      # 限流拒绝率过高
+      - alert: HighRateLimitRejection
+        expr: |
+          rate(gateway_ratelimit_rejected_total[5m]) > 10
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Gateway 限流拒绝率过高"
+          description: "每秒拒绝 {{ $value }} 个请求"
+
+      # 熔断器打开
+      - alert: CircuitBreakerOpen
+        expr: gateway_circuit_open == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Gateway 熔断器打开"
+          description: "路由 {{ $labels.route }} 的熔断器已打开"

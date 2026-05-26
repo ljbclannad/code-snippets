@@ -1,0 +1,36 @@
+groups:
+  - name: outbox
+    interval: 30s
+    rules:
+      # Outbox 发布延迟过高
+      - alert: HighOutboxPublishLag
+        expr: outbox_publish_lag > 60
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Outbox 发布延迟过高"
+          description: "延迟 {{ $value | humanizeDuration }}"
+
+      # DEAD 消息数增长
+      - alert: OutboxDeadMessagesIncreasing
+        expr: increase(outbox_dead_total[10m]) > 5
+        labels:
+          severity: critical
+        annotations:
+          summary: "Outbox DEAD 消息数增长"
+          description: "10 分钟内新增 {{ $value }} 条 DEAD 消息"
+
+      # Outbox 发布失败率过高
+      - alert: HighOutboxPublishFailureRate
+        expr: |
+          sum(rate(outbox_publish_total{status="failure"}[5m]))
+          /
+          sum(rate(outbox_publish_total[5m]))
+          > 0.2
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Outbox 发布失败率过高"
+          description: "失败率 {{ $value | humanizePercentage }}"

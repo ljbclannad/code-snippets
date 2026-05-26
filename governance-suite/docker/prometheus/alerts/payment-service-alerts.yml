@@ -1,0 +1,31 @@
+groups:
+  - name: payment-service
+    interval: 30s
+    rules:
+      # 支付成功率过低
+      - alert: LowPaymentSuccessRate
+        expr: |
+          sum(rate(payment_confirm_total{status="success"}[5m]))
+          /
+          sum(rate(payment_confirm_total[5m]))
+          < 0.95
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "支付成功率过低"
+          description: "成功率 {{ $value | humanizePercentage }}"
+
+      # 支付预处理失败率过高
+      - alert: HighPaymentPrepareFailureRate
+        expr: |
+          sum(rate(payment_prepare_total{status="failure"}[5m]))
+          /
+          sum(rate(payment_prepare_total[5m]))
+          > 0.1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "支付预处理失败率过高"
+          description: "失败率 {{ $value | humanizePercentage }}"

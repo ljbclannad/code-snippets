@@ -1,0 +1,27 @@
+groups:
+  - name: inventory-service
+    interval: 30s
+    rules:
+      # 库存扣减失败率过高
+      - alert: HighInventoryDeductFailureRate
+        expr: |
+          sum(rate(inventory_deduct_total{status="failure"}[5m]))
+          /
+          sum(rate(inventory_deduct_total[5m]))
+          > 0.1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "库存扣减失败率过高"
+          description: "失败率 {{ $value | humanizePercentage }}"
+
+      # 乐观锁重试次数过多
+      - alert: HighInventoryRetryCount
+        expr: rate(inventory_deduct_retry_total[5m]) > 5
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "库存扣减乐观锁重试次数过多"
+          description: "每秒重试 {{ $value }} 次，可能存在高并发冲突"
