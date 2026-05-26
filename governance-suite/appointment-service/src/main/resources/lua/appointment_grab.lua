@@ -7,7 +7,7 @@
 -- ARGV[3]: requestId
 -- ARGV[4]: timestamp
 
--- 1. 检查库存
+-- 1. 检查库存（快速失败）
 local stock = redis.call('GET', KEYS[1])
 if not stock or tonumber(stock) <= 0 then
     return 'SOLD_OUT'
@@ -19,8 +19,13 @@ if exists == 1 then
     return 'ALREADY_GRABBED'
 end
 
--- 3. 扣减库存
-redis.call('DECR', KEYS[1])
+-- 3. 扣减库存（原子检查）
+local newStock = redis.call('DECR', KEYS[1])
+if newStock < 0 then
+    -- 回滚库存
+    redis.call('INCR', KEYS[1])
+    return 'SOLD_OUT'
+end
 
 -- 4. 记录用户
 redis.call('SADD', KEYS[2], ARGV[1])
