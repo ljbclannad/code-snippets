@@ -54,13 +54,14 @@ CREATE TABLE t_schedule (
     available_quota INT NOT NULL COMMENT '剩余号源数',
     fee_cents INT NOT NULL COMMENT '挂号费(分)',
     status VARCHAR(16) NOT NULL DEFAULT 'AVAILABLE' COMMENT '状态: AVAILABLE-可预约 FULL-已满 CLOSED-已关闭',
+    version INT NOT NULL DEFAULT 0 COMMENT '乐观锁版本号，每次更新+1',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     UNIQUE KEY uk_doctor_date_slot (doctor_id, schedule_date, time_slot),
     INDEX idx_dept_date (dept_id, schedule_date),
     INDEX idx_date_slot (schedule_date, time_slot),
     INDEX idx_status (status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='排班表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='排班表。注意：1) 生产环境ID应使用Snowflake生成 2) 更新available_quota时必须使用乐观锁(WHERE version=?)';
 
 -- =====================================================
 -- Step 5: 挂号订单表
@@ -81,6 +82,7 @@ CREATE TABLE t_appointment_order (
     paid_at TIMESTAMP NULL COMMENT '支付时间',
     cancelled_at TIMESTAMP NULL COMMENT '取消时间',
     cancel_reason VARCHAR(255) NULL COMMENT '取消原因',
+    version INT NOT NULL DEFAULT 0 COMMENT '乐观锁版本号，每次更新+1',
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     INDEX idx_order_no (order_no),
@@ -88,7 +90,7 @@ CREATE TABLE t_appointment_order (
     INDEX idx_schedule_id (schedule_id),
     INDEX idx_status (status),
     INDEX idx_appointment_date (appointment_date)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='挂号订单表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='挂号订单表。注意：1) 生产环境ID应使用Snowflake生成 2) 更新status时必须使用乐观锁(WHERE version=?)';
 
 -- =====================================================
 -- Step 6: 幂等表
