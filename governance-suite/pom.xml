@@ -33,6 +33,9 @@
     <mysql.version>8.0.33</mysql.version>
     <!-- Spring AI -->
     <spring-ai.version>1.0.0-M3</spring-ai.version>
+    <!-- Observability -->
+    <micrometer-tracing.version>1.2.5</micrometer-tracing.version>
+    <opentelemetry.version>1.36.0</opentelemetry.version>
   </properties>
 
   <dependencyManagement>
@@ -63,6 +66,14 @@
         <groupId>org.springframework.ai</groupId>
         <artifactId>spring-ai-bom</artifactId>
         <version>${spring-ai.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <!-- Micrometer Tracing BOM -->
+      <dependency>
+        <groupId>io.micrometer</groupId>
+        <artifactId>micrometer-tracing-bom</artifactId>
+        <version>${micrometer-tracing.version}</version>
         <type>pom</type>
         <scope>import</scope>
       </dependency>
