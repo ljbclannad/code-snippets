@@ -1,30 +1,66 @@
 package com.lx.governance.common.trace;
 
+import io.micrometer.tracing.Tracer;
+import io.micrometer.tracing.TraceContext;
+import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
 import java.util.UUID;
 
-public final class Trace {
-    public static final String TRACE_ID = "traceId";
+/**
+ * Trace 工具类，从 Micrometer Tracing 获取 trace ID
+ * 兼容现有代码，但改为使用 OpenTelemetry trace ID
+ */
+@Slf4j
+@Component
+public class Trace {
 
-    private Trace() {}
+    private static Tracer tracer;
 
-    public static String getOrCreate() {
-        String id = MDC.get(TRACE_ID);
-        if (id == null || id.isBlank()) {
-            id = UUID.randomUUID().toString().replace("-", "");
-            MDC.put(TRACE_ID, id);
-        }
-        return id;
+    @Autowired
+    public void setTracer(Tracer tracer) {
+        Trace.tracer = tracer;
     }
 
-    public static void set(String traceId) {
-        if (traceId != null && !traceId.isBlank()) {
-            MDC.put(TRACE_ID, traceId);
+    /**
+     * 获取当前 trace ID（从 Micrometer Tracing）
+     * 如果没有 trace context，生成临时 ID
+     */
+    public static String getTraceId() {
+        if (tracer != null) {
+            TraceContext context = tracer.currentTraceContext().context();
+            if (context != null) {
+                String traceId = context.traceId();
+                String spanId = context.spanId();
+
+                // 设置到 MDC 供日志使用
+                MDC.put("traceId", traceId);
+                MDC.put("spanId", spanId);
+
+                return traceId;
+            }
         }
+
+        // Fallback：如果没有 trace context，生成临时 ID
+        String fallbackId = generateFallbackId();
+        MDC.put("traceId", fallbackId);
+        return fallbackId;
     }
 
+    /**
+     * 生成临时 trace ID（用于非 HTTP 请求场景）
+     */
+    private static String generateFallbackId() {
+        return UUID.randomUUID().toString().replace("-", "");
+    }
+
+    /**
+     * 清除 MDC 中的 trace 信息
+     */
     public static void clear() {
-        MDC.remove(TRACE_ID);
+        MDC.remove("traceId");
+        MDC.remove("spanId");
     }
 }
