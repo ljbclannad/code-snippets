@@ -73,6 +73,16 @@ management:
     tags:
       application: ${spring.application.name}
       environment: ${ENVIRONMENT:dev}
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  tracing:
+    sampling:
+      probability: 1.0
+  otlp:
+    tracing:
+      endpoint: http://localhost:4317
+      compression: gzip
 
 mybatis:
   mapper-locations: classpath*:mapper/*.xml
