@@ -9,7 +9,13 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 /**
  * 预约服务启动类
  */
-@SpringBootApplication
+@SpringBootApplication(scanBasePackages = {
+    "com.lx.governance.appointment",
+    "com.lx.governance.common.auth",
+    "com.lx.governance.common.trace",
+    "com.lx.governance.common.web",
+    "com.lx.governance.common.api"
+})
 @EnableDiscoveryClient
 @EnableFeignClients
 @EnableScheduling
