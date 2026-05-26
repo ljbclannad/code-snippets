@@ -89,6 +89,10 @@ public class ScheduleService {
             vo.setScheduleDate(schedule.getScheduleDate());
             vo.setTimeSlot(schedule.getTimeSlot());
             vo.setFeeCents(schedule.getFeeCents());
+            vo.setTotalQuota(schedule.getTotalQuota());
+            vo.setStatus(schedule.getStatus());
+            vo.setDeptId(schedule.getDeptId());
+            vo.setDoctorId(schedule.getDoctorId());
 
             // 从 Redis 获取实时库存
             String stockKey = "appointment:stock:" + schedule.getId();

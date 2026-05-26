@@ -9,9 +9,13 @@ public class ScheduleVO {
 
     private Long scheduleId;
 
-    private String doctorName;
+    private Long deptId;
 
     private String deptName;
+
+    private Long doctorId;
+
+    private String doctorName;
 
     private String title;
 
@@ -19,7 +23,11 @@ public class ScheduleVO {
 
     private String timeSlot;
 
+    private Integer totalQuota;
+
     private Integer availableQuota;
 
     private Integer feeCents;
+
+    private String status;
 }
