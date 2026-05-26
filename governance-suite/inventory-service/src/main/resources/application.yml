@@ -66,6 +66,16 @@ management:
       environment: ${ENVIRONMENT:dev}
     defaults:
       enabled: true
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+  tracing:
+    sampling:
+      probability: 1.0
+  otlp:
+    tracing:
+      endpoint: http://localhost:4317
+      compression: gzip
 
 app:
   nacos:
