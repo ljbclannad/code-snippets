@@ -1,38 +1,20 @@
 package com.lx.governance.appointment.config;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
-import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
-import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 import org.springframework.scripting.support.ResourceScriptSource;
 
+/**
+ * Redis 配置类
+ * 注意：RedisConnectionFactory 和 StringRedisTemplate 由 Spring Boot 自动配置提供
+ */
 @Configuration
 public class RedisConfig {
-
-    @Value("${spring.redis.host:localhost}")
-    private String redisHost;
-
-    @Value("${spring.redis.port:6379}")
-    private int redisPort;
-
-    @Value("${spring.redis.database:0}")
-    private int redisDatabase;
-
-    @Bean
-    public RedisConnectionFactory redisConnectionFactory() {
-        RedisStandaloneConfiguration config = new RedisStandaloneConfiguration();
-        config.setHostName(redisHost);
-        config.setPort(redisPort);
-        config.setDatabase(redisDatabase);
-        return new LettuceConnectionFactory(config);
-    }
 
     @Bean
     public RedisTemplate<String, Object> redisTemplate(RedisConnectionFactory connectionFactory) {
@@ -48,11 +30,6 @@ public class RedisConfig {
 
         template.afterPropertiesSet();
         return template;
-    }
-
-    @Bean
-    public StringRedisTemplate stringRedisTemplate(RedisConnectionFactory connectionFactory) {
-        return new StringRedisTemplate(connectionFactory);
     }
 
     @Bean
