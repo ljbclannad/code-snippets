@@ -21,6 +21,7 @@ import org.springframework.stereotype.Service;
 import com.alibaba.csp.sentinel.annotation.SentinelResource;
 import com.lx.governance.common.auth.AuthHeaders;
 import com.lx.governance.common.id.IdGenerator;
+import com.lx.governance.common.monitoring.annotation.Monitored;
 import com.lx.governance.common.trace.Trace;
 import com.lx.governance.payment.config.RabbitConfig;
 import com.lx.governance.payment.domain.PaymentDto;
@@ -55,6 +56,7 @@ public class PaymentAppService {
         this.payNoGenerator = "snowflake".equalsIgnoreCase(mode) ? payNoSnowflakeGenerator : payNoSegmentGenerator;
     }
 
+    @Monitored(value = "payment.prepare", description = "支付准备")
     @SentinelResource(value = "payment_prepare", blockHandler = "blockPrepare", fallback = "fallbackPrepare")
     public PaymentDto prepare(PreparePaymentRequest req) {
         log.info("Payment preparation started",
@@ -111,6 +113,7 @@ public class PaymentAppService {
         }
     }
 
+    @Monitored(value = "payment.confirm", description = "支付确认")
     public PaymentDto confirm(Long userId, String orderNo) {
         log.info("Payment confirmation started",
             kv("event", "payment_confirm_start"),

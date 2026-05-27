@@ -5,6 +5,7 @@ import com.lx.governance.common.auth.AuthTokenService;
 import com.lx.governance.common.auth.PasswordCodec;
 import com.lx.governance.common.id.IdGenerator;
 import com.lx.governance.common.api.ApiResponse;
+import com.lx.governance.common.monitoring.annotation.Monitored;
 import com.lx.governance.user.client.PaymentQueryClient;
 import com.lx.governance.user.domain.LoginRequest;
 import com.lx.governance.user.domain.LoginResponse;
@@ -15,6 +16,7 @@ import com.lx.governance.user.domain.UserPaymentDto;
 import com.lx.governance.user.domain.UserProfile;
 import com.lx.governance.user.repo.UserAccountRepository;
 import com.lx.governance.user.repo.UserProfileRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
@@ -32,6 +34,7 @@ public class UserAppService {
     private final AuthTokenService authTokenService;
     private final IdGenerator userIdGenerator;
     private final long tokenTtlSeconds;
+    private final MeterRegistry meterRegistry;
 
     public UserAppService(UserAccountRepository userAccountRepository,
                           UserProfileRepository userProfileRepository,
@@ -40,15 +43,18 @@ public class UserAppService {
                           @Value("${id.mode:segment}") String mode,
                           IdGenerator userIdSegmentGenerator,
                           IdGenerator userIdSnowflakeGenerator,
-                          @Value("${app.auth.token-ttl-seconds:7200}") long tokenTtlSeconds) {
+                          @Value("${app.auth.token-ttl-seconds:7200}") long tokenTtlSeconds,
+                          MeterRegistry meterRegistry) {
         this.userAccountRepository = userAccountRepository;
         this.userProfileRepository = userProfileRepository;
         this.paymentQueryClient = paymentQueryClient;
         this.authTokenService = authTokenService;
         this.userIdGenerator = "snowflake".equalsIgnoreCase(mode) ? userIdSnowflakeGenerator : userIdSegmentGenerator;
         this.tokenTtlSeconds = tokenTtlSeconds;
+        this.meterRegistry = meterRegistry;
     }
 
+    @Monitored(value = "user.register", description = "用户注册")
     @Transactional
     public UserProfile register(RegisterUserRequest request) {
         validateRegisterRequest(request);
@@ -67,6 +73,7 @@ public class UserAppService {
         return userProfileRepository.findByUserId(userId);
     }
 
+    @Monitored(value = "user.login", description = "用户登录")
     public LoginResponse login(LoginRequest request) {
         if (request.getUsername() == null || request.getUsername().isBlank() || request.getPassword() == null) {
             throw new IllegalArgumentException("username and password are required");
@@ -84,6 +91,7 @@ public class UserAppService {
         }
         UserProfile profile = userProfileRepository.findByUserId(account.getUserId());
         String token = authTokenService.issueToken(account.getUserId(), account.getUsername());
+        meterRegistry.counter("user.token.issued").increment();
         LoginResponse response = new LoginResponse();
         response.setToken(token);
         response.setExpireAt(Instant.now().getEpochSecond() + tokenTtlSeconds);

@@ -15,6 +15,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import com.lx.governance.outbox.repo.OutboxRepo;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.Tracer;
 
 @Component
 public class OutboxPublisher {
@@ -26,27 +29,41 @@ public class OutboxPublisher {
     private final int maxRetries;
     private final int retryDelaySeconds;
     private final boolean failPublish;
+    private final MeterRegistry meterRegistry;
+    private final Tracer tracer;
 
     public OutboxPublisher(OutboxRepo repo,
                            RabbitTemplate rabbitTemplate,
                            @Value("${outbox.max-retries:5}") int maxRetries,
                            @Value("${outbox.retry-delay-seconds:10}") int retryDelaySeconds,
-                           @Value("${lab.fail.publish:false}") boolean failPublish) {
+                           @Value("${lab.fail.publish:false}") boolean failPublish,
+                           MeterRegistry meterRegistry,
+                           Tracer tracer) {
         this.repo = repo;
         this.rabbitTemplate = rabbitTemplate;
         this.maxRetries = maxRetries;
         this.retryDelaySeconds = retryDelaySeconds;
         this.failPublish = failPublish;
+        this.meterRegistry = meterRegistry;
+        this.tracer = tracer;
     }
 
     @Scheduled(fixedDelayString = "${outbox.poll-interval-ms:1000}")
     public void pollAndPublish() {
+        meterRegistry.counter("outbox.poll.total").increment();
+
         List<OutboxRepo.Record> batch = repo.findNew(50);
         if (batch.isEmpty()) {
             return;
         }
+
         for (OutboxRepo.Record r : batch) {
+            Span span = tracer.nextSpan().name("outbox.publish").start();
             try {
+                span.tag("event.id", r.eventId);
+                span.tag("event.type", r.eventType);
+                span.tag("message.id", String.valueOf(r.id));
+
                 log.info("Outbox message publishing started",
                     kv("event", "outbox_publish_start"),
                     kv("messageId", r.id),
@@ -66,6 +83,11 @@ public class OutboxPublisher {
 
                 rabbitTemplate.send(EXCHANGE, r.eventType, msg);
                 repo.markSent(r.id);
+
+                meterRegistry.counter("outbox.publish.total", "status", "success").increment();
+
+                span.tag("status", "success");
+
                 log.info("Outbox message published successfully",
                     kv("event", "outbox_published"),
                     kv("messageId", r.id),
@@ -77,6 +99,17 @@ public class OutboxPublisher {
             } catch (Exception e) {
                 int nextRetryCount = r.retryCount + 1;
                 repo.markFailed(r.id, nextRetryCount, maxRetries, retryDelaySeconds, trimReason(e.getMessage()));
+
+                if (nextRetryCount >= maxRetries) {
+                    meterRegistry.counter("outbox.dead.total").increment();
+                } else {
+                    meterRegistry.counter("outbox.retry.total").increment();
+                }
+                meterRegistry.counter("outbox.publish.total", "status", "failure").increment();
+
+                span.tag("status", "failure");
+                span.tag("error", e.getClass().getSimpleName());
+
                 log.error("Outbox message publishing failed",
                     kv("event", "outbox_publish_failed"),
                     kv("messageId", r.id),
@@ -88,6 +121,8 @@ public class OutboxPublisher {
                     kv("status", "FAILED"),
                     e
                 );
+            } finally {
+                span.end();
             }
         }
     }

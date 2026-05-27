@@ -10,8 +10,10 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.alibaba.csp.sentinel.annotation.SentinelResource;
+import com.lx.governance.common.monitoring.annotation.Monitored;
 import com.lx.governance.inventory.domain.DeductRequest;
 import com.lx.governance.inventory.repo.StockRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 
 import static net.logstash.logback.argument.StructuredArguments.kv;
 
@@ -23,15 +25,19 @@ public class InventoryAppService {
     private final StockRepository stockRepository;
     private final StringRedisTemplate redisTemplate;
     private final boolean failDeduct;
+    private final MeterRegistry meterRegistry;
 
     public InventoryAppService(StockRepository stockRepository,
                                StringRedisTemplate redisTemplate,
-                               @Value("${lab.fail.deduct:false}") boolean failDeduct) {
+                               @Value("${lab.fail.deduct:false}") boolean failDeduct,
+                               MeterRegistry meterRegistry) {
         this.stockRepository = stockRepository;
         this.redisTemplate = redisTemplate;
         this.failDeduct = failDeduct;
+        this.meterRegistry = meterRegistry;
     }
 
+    @Monitored(value = "inventory.deduct", description = "库存扣减")
     @Transactional
     @SentinelResource(value = "inventory_deduct", blockHandler = "blockDeduct", fallback = "fallbackDeduct")
     public void deduct(DeductRequest req) {
@@ -60,6 +66,10 @@ public class InventoryAppService {
 
         int tries = 5;
         while (tries-- > 0) {
+            if (tries < 4) {
+                // Record retry attempts (not the first attempt)
+                meterRegistry.counter("inventory.deduct.retry").increment();
+            }
             StockRepository.StockRow row = stockRepository.find(req.getProductId());
             if (row == null) {
                 throw new IllegalArgumentException("product not found");

@@ -2,6 +2,7 @@ package com.lx.governance.order.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lx.governance.common.api.ApiResponse;
+import com.lx.governance.common.monitoring.annotation.Monitored;
 import com.lx.governance.common.trace.Trace;
 import com.lx.governance.order.client.InventoryClient;
 import com.lx.governance.order.client.PaymentClient;
@@ -16,6 +17,10 @@ import com.lx.governance.order.id.OrderNoGenerator;
 import com.lx.governance.order.repo.OutboxRepository;
 import com.lx.governance.order.repo.OrderRepository;
 import com.lx.governance.order.repo.PaymentEventConsumeRepository;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.Tracer;
 import io.seata.spring.annotation.GlobalTransactional;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -42,6 +47,8 @@ public class OrderAppService {
     private final StringRedisTemplate redisTemplate;
     private final OrderNoGenerator orderNoGenerator;
     private final UserReadWriteContext readWriteContext;
+    private final MeterRegistry meterRegistry;
+    private final Tracer tracer;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private static final String STREAM_KEY = "seckill:stream:orders";
     private static final String CREATE_V2_LUA = """
@@ -74,7 +81,9 @@ public class OrderAppService {
                            IdempotencyService idempotencyService,
                            StringRedisTemplate redisTemplate,
                            OrderNoGenerator orderNoGenerator,
-                           UserReadWriteContext readWriteContext) {
+                           UserReadWriteContext readWriteContext,
+                           MeterRegistry meterRegistry,
+                           Tracer tracer) {
         this.orderRepository = orderRepository;
         this.outboxRepository = outboxRepository;
         this.inventoryClient = inventoryClient;
@@ -84,8 +93,11 @@ public class OrderAppService {
         this.redisTemplate = redisTemplate;
         this.orderNoGenerator = orderNoGenerator;
         this.readWriteContext = readWriteContext;
+        this.meterRegistry = meterRegistry;
+        this.tracer = tracer;
     }
 
+    @Monitored(value = "order.create", description = "订单创建")
     @GlobalTransactional(name = "create-order", rollbackFor = Exception.class)
     public OrderDto create(CreateOrderRequest req, String idempotencyKey) {
         log.info("Order creation started",
@@ -95,7 +107,15 @@ public class OrderAppService {
                 kv("quantity", req.getQuantity())
         );
 
+        // Seata distributed transaction tracing
+        Span seataSpan = tracer.nextSpan().name("seata.global.transaction").start();
+        Timer.Sample sample = Timer.start(meterRegistry);
+
         try {
+            seataSpan.tag("transaction.name", "create-order");
+            seataSpan.tag("user.id", req.getCustomerId());
+            seataSpan.tag("product.id", req.getProductId());
+
             String idemKey = "idem:order:" + (idempotencyKey == null ? "none" : idempotencyKey);
             if (idempotencyKey != null && !idempotencyKey.isBlank()) {
                 boolean locked = idempotencyService.tryLock(idemKey, Duration.ofMinutes(5));
@@ -148,6 +168,10 @@ public class OrderAppService {
 
         OrderDto result = orderRepository.findByOrderNo(orderNo);
 
+        sample.stop(meterRegistry.timer("seata.transaction.duration", "name", "create-order", "status", "success"));
+        meterRegistry.counter("seata.transaction.total", "name", "create-order", "status", "success").increment();
+        seataSpan.tag("status", "success");
+
         log.info("Order created successfully",
                 kv("event", "order_created"),
                 kv("orderId", orderNo),
@@ -158,6 +182,11 @@ public class OrderAppService {
 
         return result;
         } catch (Exception e) {
+            sample.stop(meterRegistry.timer("seata.transaction.duration", "name", "create-order", "status", "failure"));
+            meterRegistry.counter("seata.transaction.total", "name", "create-order", "status", "failure").increment();
+            seataSpan.tag("status", "failure");
+            seataSpan.tag("error", e.getClass().getSimpleName());
+
             log.error("Order creation failed",
                     kv("event", "order_create_failed"),
                     kv("userId", req.getCustomerId()),
@@ -166,6 +195,8 @@ public class OrderAppService {
                     e
             );
             throw e;
+        } finally {
+            seataSpan.end();
         }
     }
 

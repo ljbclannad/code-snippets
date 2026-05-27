@@ -8,8 +8,8 @@ import com.lx.governance.appointment.dto.OrderVO;
 import com.lx.governance.appointment.entity.AppointmentOrder;
 import com.lx.governance.appointment.mapper.AppointmentOrderMapper;
 import com.lx.governance.appointment.service.AppointmentService;
-import com.lx.governance.appointment.service.CancelService;
 import com.lx.governance.appointment.service.PaymentService;
+import com.lx.governance.appointment.service.CancelService;
 import com.lx.governance.common.api.ApiResponse;
 import com.lx.governance.common.trace.Trace;
 import jakarta.validation.Valid;
@@ -53,9 +53,6 @@ public class AppointmentController {
         return ApiResponse.ok(result, Trace.getOrCreate());
     }
 
-    /**
-     * 支付订单
-     */
     @PostMapping("/pay/{orderNo}")
     public ApiResponse<Void> payOrder(
             @RequestHeader("X-User-Id") Long userId,
@@ -65,9 +62,6 @@ public class AppointmentController {
         return ApiResponse.ok(null, Trace.getOrCreate());
     }
 
-    /**
-     * 取消订单
-     */
     @PostMapping("/cancel")
     public ApiResponse<Void> cancelOrder(
             @RequestHeader("X-User-Id") Long userId,
@@ -77,9 +71,6 @@ public class AppointmentController {
         return ApiResponse.ok(null, Trace.getOrCreate());
     }
 
-    /**
-     * 查询订单详情
-     */
     @GetMapping("/order/{orderNo}")
     public ApiResponse<OrderVO> getOrder(
             @RequestHeader("X-User-Id") Long userId,
@@ -88,11 +79,14 @@ public class AppointmentController {
         AppointmentOrder order = orderMapper.selectOne(
             new LambdaQueryWrapper<AppointmentOrder>()
                 .eq(AppointmentOrder::getOrderNo, orderNo)
-                .eq(AppointmentOrder::getUserId, userId)
         );
 
         if (order == null) {
             throw new IllegalArgumentException("订单不存在");
+        }
+
+        if (!order.getUserId().equals(userId)) {
+            throw new IllegalArgumentException("无权访问该订单");
         }
 
         OrderVO orderVO = new OrderVO();
