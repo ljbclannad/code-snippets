@@ -31,6 +31,16 @@ public class QuotaRefundLog {
     private Long scheduleId;
 
     /**
+     * 退还类型 (CANCEL-取消订单, EXPIRE-订单过期)
+     */
+    private String refundType;
+
+    /**
+     * 退还时间
+     */
+    private LocalDateTime refundedAt;
+
+    /**
      * 退还状态 (SUCCESS-成功, FAILED-失败)
      */
     private String status;
