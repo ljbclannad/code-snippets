@@ -21,8 +21,11 @@ import reactor.core.publisher.Mono;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
+
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 
 import static net.logstash.logback.argument.StructuredArguments.kv;
 
@@ -156,16 +159,54 @@ public class AppointmentRateLimitFilter implements GlobalFilter, Ordered {
 
     /**
      * 检查科室是否为热门科室
-     * 简化实现：scheduleId % 2 == 0 为热门
-     * 实际应该从 Redis 查询：appointment:dept:hot:{deptId}
+     * 从 Redis 查询排班信息获取 deptId，再查询科室热门标识
      */
     private boolean checkIfHot(Long scheduleId) {
-        return scheduleId % 2 == 0;
+        try {
+            // 1. 从 Redis 查询排班信息获取 deptId
+            String scheduleKey = "appointment:schedule:" + scheduleId;
+            String scheduleJson = redisTemplate.opsForValue().get(scheduleKey);
+
+            if (scheduleJson == null) {
+                log.warn("Schedule not found in cache, treating as normal",
+                    kv("event", "schedule_cache_miss"),
+                    kv("scheduleId", scheduleId));
+                return false; // 降级：查询失败默认为普通科室
+            }
+
+            JsonNode scheduleNode = objectMapper.readTree(scheduleJson);
+            if (!scheduleNode.has("deptId")) {
+                log.warn("Schedule JSON missing deptId field",
+                    kv("event", "schedule_invalid_format"),
+                    kv("scheduleId", scheduleId));
+                return false;
+            }
+
+            Long deptId = scheduleNode.get("deptId").asLong();
+
+            // 2. 查询科室热门标识
+            String hotKey = "appointment:dept:hot:" + deptId;
+            Boolean isHot = redisTemplate.hasKey(hotKey);
+
+            log.debug("Hot dept check completed",
+                kv("scheduleId", scheduleId),
+                kv("deptId", deptId),
+                kv("isHot", isHot));
+
+            return Boolean.TRUE.equals(isHot);
+
+        } catch (Exception e) {
+            log.error("Failed to check hot dept, treating as normal",
+                kv("event", "hot_dept_check_error"),
+                kv("scheduleId", scheduleId),
+                e);
+            return false; // 降级：异常时默认为普通科室
+        }
     }
 
     /**
      * 检查限流
-     * 使用 Redis INCR + EXPIRE 实现简化版令牌桶
+     * 使用 Lua 脚本保证原子性（INCR + EXPIRE）
      *
      * @param key Redis key
      * @param replenishRate 每秒补充速率（未使用，简化实现）
@@ -174,30 +215,48 @@ public class AppointmentRateLimitFilter implements GlobalFilter, Ordered {
      */
     private boolean checkRateLimit(String key, int replenishRate, int burstCapacity) {
         try {
+            // Lua 脚本保证原子性：GET + SET/INCR + EXPIRE
+            String luaScript =
+                "local key = KEYS[1]\n" +
+                "local capacity = tonumber(ARGV[1])\n" +
+                "local ttl = tonumber(ARGV[2])\n" +
+                "local current = redis.call('GET', key)\n" +
+                "if current == false then\n" +
+                "    redis.call('SET', key, 1, 'EX', ttl)\n" +
+                "    return 1\n" +
+                "end\n" +
+                "current = tonumber(current)\n" +
+                "if current < capacity then\n" +
+                "    redis.call('INCR', key)\n" +
+                "    return current + 1\n" +
+                "else\n" +
+                "    return -1\n" +
+                "end";
+
             String countKey = key + ":count";
-            Long count = redisTemplate.opsForValue().increment(countKey);
 
-            if (count == null) {
-                log.error("Redis increment returned null",
+            Long result = redisTemplate.execute(
+                new DefaultRedisScript<>(luaScript, Long.class),
+                Collections.singletonList(countKey),
+                String.valueOf(burstCapacity),
+                "1" // TTL 1秒
+            );
+
+            if (result == null) {
+                log.error("Redis Lua script returned null",
                     kv("event", "rate_limit_redis_error"),
-                    kv("key", countKey)
-                );
-                return true; // 限流失败时放行
+                    kv("key", countKey));
+                return true; // 降级：限流失败时放行
             }
 
-            if (count == 1) {
-                // 第一次请求，设置过期时间（1秒）
-                redisTemplate.expire(countKey, Duration.ofSeconds(1));
-            }
+            return result > 0; // -1 表示超限，>0 表示通过
 
-            return count <= burstCapacity;
         } catch (Exception e) {
             log.error("Rate limit check failed",
                 kv("event", "rate_limit_check_error"),
                 kv("key", key),
-                e
-            );
-            return true; // 限流失败时放行
+                e);
+            return true; // 降级：限流失败时放行
         }
     }
 
