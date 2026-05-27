@@ -24,6 +24,11 @@ public class CancelService {
     private static final String STATUS_CANCELLED = "CANCELLED";
     private static final String REFUND_TYPE_CANCEL = "CANCEL";
     private static final String DEFAULT_CANCEL_REASON = "用户主动取消";
+    private static final String REFUND_STATUS_SUCCESS = "REFUNDED";
+    private static final String REFUND_STATUS_NOT_FOUND = "NOT_FOUND";
+    private static final String IDEMPOTENCY_KEY_PREFIX = "idem:refund:";
+    private static final String LOG_STATUS_SUCCESS = "SUCCESS";
+    private static final String LOG_STATUS_FAILED = "FAILED";
 
     private final AppointmentOrderMapper orderMapper;
     private final QuotaRefundLogMapper refundLogMapper;
@@ -75,9 +80,9 @@ public class CancelService {
         }
 
         // 5. 回补幂等检查
-        String idempotencyKey = "idempotency:refund:" + orderNo;
+        String idempotencyKey = IDEMPOTENCY_KEY_PREFIX + orderNo;
         if (!idempotencyService.tryLock(idempotencyKey, Duration.ofHours(1))) {
-            log.warn("[APPOINTMENT] [CANCEL] 重复取消请求: userId={}, orderNo={}", userId, orderNo);
+            log.info("[APPOINTMENT] [CANCEL] 重复取消请求: userId={}, orderNo={}", userId, orderNo);
             return; // 幂等返回
         }
 
@@ -111,12 +116,20 @@ public class CancelService {
                 userId.toString()
         );
 
-        // 8. 记录回补日志
+        // 8. 检查回补结果
+        if (!REFUND_STATUS_SUCCESS.equals(result)) {
+            log.error("[APPOINTMENT] [CANCEL] 配额回补失败: userId={}, orderNo={}, result={}",
+                userId, orderNo, result);
+            throw new IllegalStateException("配额回补失败: " + result);
+        }
+
+        // 9. 记录回补日志
         QuotaRefundLog refundLog = new QuotaRefundLog();
         refundLog.setScheduleId(order.getScheduleId());
         refundLog.setOrderNo(orderNo);
         refundLog.setRefundType(REFUND_TYPE_CANCEL);
         refundLog.setRefundedAt(cancelledAt);
+        refundLog.setStatus(LOG_STATUS_SUCCESS);
         refundLogMapper.insert(refundLog);
 
         log.info("[APPOINTMENT] [CANCEL] 取消成功: userId={}, orderNo={}, luaResult={}",
