@@ -38,6 +38,6 @@ public class TraceIdGlobalFilter implements GlobalFilter, Ordered {
 
     @Override
     public int getOrder() {
-        return -90;
+        return -100; // 最先执行，在 AuthTokenGlobalFilter (-90) 之前
     }
 }
