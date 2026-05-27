@@ -1,6 +1,8 @@
 package com.lx.governance.appointment.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lx.governance.appointment.entity.AppointmentOrder;
 import com.lx.governance.appointment.mapper.AppointmentOrderMapper;
 import com.lx.governance.common.id.SnowflakeIdGenerator;
@@ -11,24 +13,35 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Map;
+import java.util.Objects;
 
 @Service
 @Slf4j
 public class PaymentService {
 
+    private static final String STATUS_RESERVED = "RESERVED";
+    private static final String STATUS_PAID = "PAID";
+    private static final String OUTBOX_STATUS_NEW = "NEW";
+    private static final String AGGREGATE_TYPE = "AppointmentOrder";
+    private static final String EVENT_TYPE_PAID = "appointment.paid";
+
     private final AppointmentOrderMapper orderMapper;
     private final IdempotencyService idempotencyService;
     private final SnowflakeIdGenerator snowflakeIdGenerator;
     private final JdbcTemplate jdbcTemplate;
+    private final ObjectMapper objectMapper;
 
     public PaymentService(AppointmentOrderMapper orderMapper,
                           IdempotencyService idempotencyService,
                           SnowflakeIdGenerator snowflakeIdGenerator,
-                          JdbcTemplate jdbcTemplate) {
+                          JdbcTemplate jdbcTemplate,
+                          ObjectMapper objectMapper) {
         this.orderMapper = orderMapper;
         this.idempotencyService = idempotencyService;
         this.snowflakeIdGenerator = snowflakeIdGenerator;
         this.jdbcTemplate = jdbcTemplate;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -50,13 +63,13 @@ public class PaymentService {
             throw new IllegalArgumentException("订单不存在");
         }
 
-        // 3. 校验用户权限
-        if (!order.getUserId().equals(userId)) {
+        // 3. 校验用户权限（防止空指针）
+        if (!Objects.equals(order.getUserId(), userId)) {
             throw new IllegalArgumentException("无权操作该订单");
         }
 
         // 4. 校验订单状态
-        if (!"RESERVED".equals(order.getStatus())) {
+        if (!STATUS_RESERVED.equals(order.getStatus())) {
             throw new IllegalStateException("订单状态不正确，当前状态: " + order.getStatus());
         }
 
@@ -68,23 +81,39 @@ public class PaymentService {
         }
 
         // 6. 更新订单状态为 PAID（使用乐观锁）
+        LocalDateTime paidAt = LocalDateTime.now();
         AppointmentOrder updateOrder = new AppointmentOrder();
         updateOrder.setId(order.getId());
-        updateOrder.setStatus("PAID");
-        updateOrder.setPaidAt(LocalDateTime.now());
+        updateOrder.setStatus(STATUS_PAID);
+        updateOrder.setPaidAt(paidAt);
         updateOrder.setVersion(order.getVersion());
 
         int updated = orderMapper.updateById(updateOrder);
         if (updated == 0) {
+            // 乐观锁失败，检查订单是否已支付（处理幂等性竞态窗口）
+            AppointmentOrder latestOrder = orderMapper.selectById(order.getId());
+            if (latestOrder != null && STATUS_PAID.equals(latestOrder.getStatus())) {
+                log.info("[APPOINTMENT] [PAY] 订单已支付，幂等返回: orderNo={}", orderNo);
+                return;
+            }
             throw new IllegalStateException("订单更新失败，可能已被其他操作修改");
         }
 
-        // 7. 写入 Outbox
+        // 7. 写入 Outbox（使用 Jackson 序列化，防止 JSON 注入）
         String eventId = "evt-" + snowflakeIdGenerator.nextId();
-        String payload = String.format(
-            "{\"orderNo\":\"%s\",\"userId\":%d,\"scheduleId\":%d,\"paidAt\":\"%s\"}",
-            orderNo, userId, order.getScheduleId(), LocalDateTime.now()
-        );
+        String payload;
+        try {
+            Map<String, Object> payloadMap = Map.of(
+                "orderNo", orderNo,
+                "userId", userId,
+                "scheduleId", order.getScheduleId(),
+                "paidAt", paidAt.toString()
+            );
+            payload = objectMapper.writeValueAsString(payloadMap);
+        } catch (JsonProcessingException e) {
+            log.error("[APPOINTMENT] [PAY] JSON序列化失败: orderNo={}", orderNo, e);
+            throw new IllegalStateException("事件数据序列化失败", e);
+        }
 
         jdbcTemplate.update(
             """
@@ -92,11 +121,11 @@ public class PaymentService {
             VALUES (?, ?, ?, ?, ?, ?, NOW())
             """,
             eventId,
-            "AppointmentOrder",
+            AGGREGATE_TYPE,
             orderNo,
-            "appointment.paid",
+            EVENT_TYPE_PAID,
             payload,
-            "NEW"
+            OUTBOX_STATUS_NEW
         );
 
         log.info("[APPOINTMENT] [PAY] 支付成功: userId={}, orderNo={}, eventId={}",
