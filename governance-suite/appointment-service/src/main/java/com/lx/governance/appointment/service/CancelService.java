@@ -58,6 +58,9 @@ public class CancelService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void cancelOrder(Long userId, String orderNo, String reason) {
+        String idempotencyKey = IDEMPOTENCY_KEY_PREFIX + orderNo;
+        boolean completed = false;
+
         // 1. 查询订单
         AppointmentOrder order = orderMapper.selectOne(
                 new LambdaQueryWrapper<AppointmentOrder>()
@@ -80,59 +83,66 @@ public class CancelService {
         }
 
         // 5. 回补幂等检查
-        String idempotencyKey = IDEMPOTENCY_KEY_PREFIX + orderNo;
         if (!idempotencyService.tryLock(idempotencyKey, Duration.ofHours(1))) {
             log.info("[APPOINTMENT] [CANCEL] 重复取消请求: userId={}, orderNo={}", userId, orderNo);
             return; // 幂等返回
         }
 
-        // 6. 更新订单状态为 CANCELLED（使用乐观锁）
-        LocalDateTime cancelledAt = LocalDateTime.now();
-        AppointmentOrder updateOrder = new AppointmentOrder();
-        updateOrder.setId(order.getId());
-        updateOrder.setStatus(STATUS_CANCELLED);
-        updateOrder.setCancelledAt(cancelledAt);
-        updateOrder.setCancelReason(reason != null ? reason : DEFAULT_CANCEL_REASON);
-        updateOrder.setVersion(order.getVersion());
+        try {
+            // 6. 更新订单状态为 CANCELLED（使用乐观锁）
+            LocalDateTime cancelledAt = LocalDateTime.now();
+            AppointmentOrder updateOrder = new AppointmentOrder();
+            updateOrder.setId(order.getId());
+            updateOrder.setStatus(STATUS_CANCELLED);
+            updateOrder.setCancelledAt(cancelledAt);
+            updateOrder.setCancelReason(reason != null ? reason : DEFAULT_CANCEL_REASON);
+            updateOrder.setVersion(order.getVersion());
 
-        int updated = orderMapper.updateById(updateOrder);
-        if (updated == 0) {
-            // 检查订单是否已取消
-            AppointmentOrder latestOrder = orderMapper.selectById(order.getId());
-            if (latestOrder != null && STATUS_CANCELLED.equals(latestOrder.getStatus())) {
-                log.info("[APPOINTMENT] [CANCEL] 订单已取消，幂等返回: orderNo={}", orderNo);
-                return;
+            int updated = orderMapper.updateById(updateOrder);
+            if (updated == 0) {
+                // 检查订单是否已取消
+                AppointmentOrder latestOrder = orderMapper.selectById(order.getId());
+                if (latestOrder != null && STATUS_CANCELLED.equals(latestOrder.getStatus())) {
+                    log.info("[APPOINTMENT] [CANCEL] 订单已取消，幂等返回: orderNo={}", orderNo);
+                    completed = true;
+                    return;
+                }
+                throw new IllegalStateException("订单更新失败，版本冲突且订单未取消");
             }
-            throw new IllegalStateException("订单更新失败，版本冲突且订单未取消");
+
+            // 7. 执行 Redis Lua 回补脚本
+            String result = redisTemplate.execute(
+                    refundLuaScript,
+                    Arrays.asList(
+                            "appointment:stock:" + order.getScheduleId(),
+                            "appointment:buyers:" + order.getScheduleId()
+                    ),
+                    userId.toString()
+            );
+
+            // 8. 检查回补结果
+            if (!REFUND_STATUS_SUCCESS.equals(result)) {
+                log.error("[APPOINTMENT] [CANCEL] 配额回补失败: userId={}, orderNo={}, result={}",
+                    userId, orderNo, result);
+                throw new IllegalStateException("配额回补失败: " + result);
+            }
+
+            // 9. 记录回补日志
+            QuotaRefundLog refundLog = new QuotaRefundLog();
+            refundLog.setScheduleId(order.getScheduleId());
+            refundLog.setOrderNo(orderNo);
+            refundLog.setRefundType(REFUND_TYPE_CANCEL);
+            refundLog.setRefundedAt(cancelledAt);
+            refundLog.setStatus(LOG_STATUS_SUCCESS);
+            refundLogMapper.insert(refundLog);
+
+            log.info("[APPOINTMENT] [CANCEL] 取消成功: userId={}, orderNo={}, luaResult={}",
+                    userId, orderNo, result);
+            completed = true;
+        } finally {
+            if (!completed) {
+                idempotencyService.unlock(idempotencyKey);
+            }
         }
-
-        // 7. 执行 Redis Lua 回补脚本
-        String result = redisTemplate.execute(
-                refundLuaScript,
-                Arrays.asList(
-                        "appointment:stock:" + order.getScheduleId(),
-                        "appointment:buyers:" + order.getScheduleId()
-                ),
-                userId.toString()
-        );
-
-        // 8. 检查回补结果
-        if (!REFUND_STATUS_SUCCESS.equals(result)) {
-            log.error("[APPOINTMENT] [CANCEL] 配额回补失败: userId={}, orderNo={}, result={}",
-                userId, orderNo, result);
-            throw new IllegalStateException("配额回补失败: " + result);
-        }
-
-        // 9. 记录回补日志
-        QuotaRefundLog refundLog = new QuotaRefundLog();
-        refundLog.setScheduleId(order.getScheduleId());
-        refundLog.setOrderNo(orderNo);
-        refundLog.setRefundType(REFUND_TYPE_CANCEL);
-        refundLog.setRefundedAt(cancelledAt);
-        refundLog.setStatus(LOG_STATUS_SUCCESS);
-        refundLogMapper.insert(refundLog);
-
-        log.info("[APPOINTMENT] [CANCEL] 取消成功: userId={}, orderNo={}, luaResult={}",
-                userId, orderNo, result);
     }
 }

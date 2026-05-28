@@ -108,59 +108,68 @@ public class TimeoutCancelScheduler {
     public void processTimeoutOrder(AppointmentOrder order) {
         String orderNo = order.getOrderNo();
         Long userId = order.getUserId();
+        String idempotencyKey = IDEMPOTENCY_KEY_PREFIX + orderNo;
+        boolean completed = false;
 
         // 1. 回补幂等检查
-        String idempotencyKey = IDEMPOTENCY_KEY_PREFIX + orderNo;
         if (!idempotencyService.tryLock(idempotencyKey, Duration.ofHours(1))) {
             log.info("[APPOINTMENT] [TIMEOUT] 订单已处理，跳过: orderNo={}", orderNo);
             return;
         }
 
-        // 2. 更新订单状态为 CANCELLED（使用乐观锁）
-        LocalDateTime cancelledAt = LocalDateTime.now();
-        AppointmentOrder updateOrder = new AppointmentOrder();
-        updateOrder.setId(order.getId());
-        updateOrder.setStatus(STATUS_CANCELLED);
-        updateOrder.setCancelledAt(cancelledAt);
-        updateOrder.setCancelReason(TIMEOUT_CANCEL_REASON);
-        updateOrder.setVersion(order.getVersion());
+        try {
+            // 2. 更新订单状态为 CANCELLED（使用乐观锁）
+            LocalDateTime cancelledAt = LocalDateTime.now();
+            AppointmentOrder updateOrder = new AppointmentOrder();
+            updateOrder.setId(order.getId());
+            updateOrder.setStatus(STATUS_CANCELLED);
+            updateOrder.setCancelledAt(cancelledAt);
+            updateOrder.setCancelReason(TIMEOUT_CANCEL_REASON);
+            updateOrder.setVersion(order.getVersion());
 
-        int updated = orderMapper.updateById(updateOrder);
-        if (updated == 0) {
-            // 检查订单是否已取消
-            AppointmentOrder latestOrder = orderMapper.selectById(order.getId());
-            if (latestOrder != null && STATUS_CANCELLED.equals(latestOrder.getStatus())) {
-                log.info("[APPOINTMENT] [TIMEOUT] 订单已取消，幂等返回: orderNo={}", orderNo);
-                return;
+            int updated = orderMapper.updateById(updateOrder);
+            if (updated == 0) {
+                // 检查订单是否已取消
+                AppointmentOrder latestOrder = orderMapper.selectById(order.getId());
+                if (latestOrder != null && STATUS_CANCELLED.equals(latestOrder.getStatus())) {
+                    log.info("[APPOINTMENT] [TIMEOUT] 订单已取消，幂等返回: orderNo={}", orderNo);
+                    completed = true;
+                    return;
+                }
+                throw new IllegalStateException("订单更新失败，版本冲突且订单未取消");
             }
-            throw new IllegalStateException("订单更新失败，版本冲突且订单未取消");
+
+            // 3. 执行 Redis Lua 回补脚本
+            String result = redisTemplate.execute(
+                    refundLuaScript,
+                    Arrays.asList(
+                            "appointment:stock:" + order.getScheduleId(),
+                            "appointment:buyers:" + order.getScheduleId()
+                    ),
+                    userId.toString()
+            );
+
+            // 4. 检查回补结果
+            if (!REFUND_STATUS_SUCCESS.equals(result)) {
+                log.error("[APPOINTMENT] [TIMEOUT] 配额回补失败: orderNo={}, result={}", orderNo, result);
+                throw new IllegalStateException("配额回补失败: " + result);
+            }
+
+            // 5. 记录回补日志
+            QuotaRefundLog refundLog = new QuotaRefundLog();
+            refundLog.setScheduleId(order.getScheduleId());
+            refundLog.setOrderNo(orderNo);
+            refundLog.setRefundType(REFUND_TYPE_TIMEOUT);
+            refundLog.setRefundedAt(cancelledAt);
+            refundLog.setStatus(LOG_STATUS_SUCCESS);
+            refundLogMapper.insert(refundLog);
+
+            log.info("[APPOINTMENT] [TIMEOUT] 超时订单取消成功: orderNo={}, userId={}", orderNo, userId);
+            completed = true;
+        } finally {
+            if (!completed) {
+                idempotencyService.unlock(idempotencyKey);
+            }
         }
-
-        // 3. 执行 Redis Lua 回补脚本
-        String result = redisTemplate.execute(
-                refundLuaScript,
-                Arrays.asList(
-                        "appointment:stock:" + order.getScheduleId(),
-                        "appointment:buyers:" + order.getScheduleId()
-                ),
-                userId.toString()
-        );
-
-        // 4. 检查回补结果
-        if (!REFUND_STATUS_SUCCESS.equals(result)) {
-            log.error("[APPOINTMENT] [TIMEOUT] 配额回补失败: orderNo={}, result={}", orderNo, result);
-            throw new IllegalStateException("配额回补失败: " + result);
-        }
-
-        // 5. 记录回补日志
-        QuotaRefundLog refundLog = new QuotaRefundLog();
-        refundLog.setScheduleId(order.getScheduleId());
-        refundLog.setOrderNo(orderNo);
-        refundLog.setRefundType(REFUND_TYPE_TIMEOUT);
-        refundLog.setRefundedAt(cancelledAt);
-        refundLog.setStatus(LOG_STATUS_SUCCESS);
-        refundLogMapper.insert(refundLog);
-
-        log.info("[APPOINTMENT] [TIMEOUT] 超时订单取消成功: orderNo={}, userId={}", orderNo, userId);
     }
 }

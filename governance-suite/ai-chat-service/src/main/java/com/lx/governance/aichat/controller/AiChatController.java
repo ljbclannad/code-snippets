@@ -9,6 +9,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.concurrent.CompletableFuture;
+
 /**
  * AI Chat REST Controller
  */
@@ -24,24 +26,26 @@ public class AiChatController {
      * Handle chat request
      */
     @PostMapping
-    public ResponseEntity<ChatResponse> chat(@RequestBody @Valid ChatRequest request) {
+    public CompletableFuture<ResponseEntity<ChatResponse>> chat(@RequestBody @Valid ChatRequest request) {
         log.info("收到聊天请求 - customerId: {}, groupId: {}, message: {}",
                 request.getCustomerId(),
                 request.getGroupId(),
                 truncate(request.getMessage(), 50));
 
         try {
-            ChatResponse response = aiChatService.handleChatRequest(request);
-
-            if (response.getSuccess()) {
-                return ResponseEntity.ok(response);
-            } else {
-                return ResponseEntity.status(500).body(response);
-            }
+            return aiChatService.handleChatRequest(request)
+                    .thenApply(response -> response.getSuccess()
+                            ? ResponseEntity.ok(response)
+                            : ResponseEntity.status(500).body(response))
+                    .exceptionally(ex -> {
+                        log.error("聊天请求处理异常 - customerId: {}", request.getCustomerId(), ex);
+                        ChatResponse errorResponse = ChatResponse.error("聊天请求处理失败: " + ex.getMessage());
+                        return ResponseEntity.status(500).body(errorResponse);
+                    });
         } catch (Exception e) {
             log.error("聊天请求处理异常 - customerId: {}", request.getCustomerId(), e);
             ChatResponse errorResponse = ChatResponse.error("聊天请求处理失败: " + e.getMessage());
-            return ResponseEntity.status(500).body(errorResponse);
+            return CompletableFuture.completedFuture(ResponseEntity.status(500).body(errorResponse));
         }
     }
 

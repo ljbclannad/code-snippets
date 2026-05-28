@@ -52,6 +52,9 @@ public class PaymentService {
      */
     @Transactional(rollbackFor = Exception.class)
     public void payOrder(Long userId, String orderNo) {
+        String idempotencyKey = "idempotency:pay:" + orderNo;
+        boolean completed = false;
+
         // 1. 查询订单
         AppointmentOrder order = orderMapper.selectOne(
             new LambdaQueryWrapper<AppointmentOrder>()
@@ -74,61 +77,68 @@ public class PaymentService {
         }
 
         // 5. 幂等检查
-        String idempotencyKey = "idempotency:pay:" + orderNo;
         if (!idempotencyService.tryLock(idempotencyKey, Duration.ofHours(1))) {
             log.warn("[APPOINTMENT] [PAY] 重复支付请求: userId={}, orderNo={}", userId, orderNo);
             return; // 幂等返回，不抛异常
         }
 
-        // 6. 更新订单状态为 PAID（使用乐观锁）
-        LocalDateTime paidAt = LocalDateTime.now();
-        AppointmentOrder updateOrder = new AppointmentOrder();
-        updateOrder.setId(order.getId());
-        updateOrder.setStatus(STATUS_PAID);
-        updateOrder.setPaidAt(paidAt);
-        updateOrder.setVersion(order.getVersion());
-
-        int updated = orderMapper.updateById(updateOrder);
-        if (updated == 0) {
-            // 乐观锁失败，检查订单是否已支付（处理幂等性竞态窗口）
-            AppointmentOrder latestOrder = orderMapper.selectById(order.getId());
-            if (latestOrder != null && STATUS_PAID.equals(latestOrder.getStatus())) {
-                log.info("[APPOINTMENT] [PAY] 订单已支付，幂等返回: orderNo={}", orderNo);
-                return;
-            }
-            throw new IllegalStateException("订单更新失败，可能已被其他操作修改");
-        }
-
-        // 7. 写入 Outbox（使用 Jackson 序列化，防止 JSON 注入）
-        String eventId = "evt-" + snowflakeIdGenerator.nextId();
-        String payload;
         try {
-            Map<String, Object> payloadMap = Map.of(
-                "orderNo", orderNo,
-                "userId", userId,
-                "scheduleId", order.getScheduleId(),
-                "paidAt", paidAt.toString()
+            // 6. 更新订单状态为 PAID（使用乐观锁）
+            LocalDateTime paidAt = LocalDateTime.now();
+            AppointmentOrder updateOrder = new AppointmentOrder();
+            updateOrder.setId(order.getId());
+            updateOrder.setStatus(STATUS_PAID);
+            updateOrder.setPaidAt(paidAt);
+            updateOrder.setVersion(order.getVersion());
+
+            int updated = orderMapper.updateById(updateOrder);
+            if (updated == 0) {
+                // 乐观锁失败，检查订单是否已支付（处理幂等性竞态窗口）
+                AppointmentOrder latestOrder = orderMapper.selectById(order.getId());
+                if (latestOrder != null && STATUS_PAID.equals(latestOrder.getStatus())) {
+                    log.info("[APPOINTMENT] [PAY] 订单已支付，幂等返回: orderNo={}", orderNo);
+                    completed = true;
+                    return;
+                }
+                throw new IllegalStateException("订单更新失败，可能已被其他操作修改");
+            }
+
+            // 7. 写入 Outbox（使用 Jackson 序列化，防止 JSON 注入）
+            String eventId = "evt-" + snowflakeIdGenerator.nextId();
+            String payload;
+            try {
+                Map<String, Object> payloadMap = Map.of(
+                    "orderNo", orderNo,
+                    "userId", userId,
+                    "scheduleId", order.getScheduleId(),
+                    "paidAt", paidAt.toString()
+                );
+                payload = objectMapper.writeValueAsString(payloadMap);
+            } catch (JsonProcessingException e) {
+                log.error("[APPOINTMENT] [PAY] JSON序列化失败: orderNo={}", orderNo, e);
+                throw new IllegalStateException("事件数据序列化失败", e);
+            }
+
+            jdbcTemplate.update(
+                """
+                INSERT INTO t_outbox (event_id, aggregate_type, aggregate_id, event_type, payload, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, NOW())
+                """,
+                eventId,
+                AGGREGATE_TYPE,
+                orderNo,
+                EVENT_TYPE_PAID,
+                payload,
+                OUTBOX_STATUS_NEW
             );
-            payload = objectMapper.writeValueAsString(payloadMap);
-        } catch (JsonProcessingException e) {
-            log.error("[APPOINTMENT] [PAY] JSON序列化失败: orderNo={}", orderNo, e);
-            throw new IllegalStateException("事件数据序列化失败", e);
+
+            log.info("[APPOINTMENT] [PAY] 支付成功: userId={}, orderNo={}, eventId={}",
+                userId, orderNo, eventId);
+            completed = true;
+        } finally {
+            if (!completed) {
+                idempotencyService.unlock(idempotencyKey);
+            }
         }
-
-        jdbcTemplate.update(
-            """
-            INSERT INTO t_outbox (event_id, aggregate_type, aggregate_id, event_type, payload, status, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, NOW())
-            """,
-            eventId,
-            AGGREGATE_TYPE,
-            orderNo,
-            EVENT_TYPE_PAID,
-            payload,
-            OUTBOX_STATUS_NEW
-        );
-
-        log.info("[APPOINTMENT] [PAY] 支付成功: userId={}, orderNo={}, eventId={}",
-            userId, orderNo, eventId);
     }
 }

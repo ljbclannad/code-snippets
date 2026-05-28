@@ -1,6 +1,5 @@
 package com.lx.governance.aichat.rule;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lx.governance.aichat.config.ProfileCompletionProperties;
 import com.lx.governance.aichat.dto.DiagnosisResult;
 import com.lx.governance.aichat.dto.RequiredField;

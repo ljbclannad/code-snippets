@@ -6,7 +6,6 @@ import com.health.agent.exception.AgentException;
 import com.health.agent.metrics.AgentMetrics;
 import com.health.agent.model.*;
 import com.health.agent.service.AgentSessionService;
-import com.health.agent.tool.Tool;
 import com.health.agent.tool.ToolRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;

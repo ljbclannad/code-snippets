@@ -75,14 +75,16 @@ public class StreamConsumerService {
             // 2. 批量处理消息
             for (MapRecord<String, Object, Object> record : records) {
                 try {
-                    processMessage(record);
+                    boolean shouldAck = processMessage(record);
 
-                    // 3. ACK 消息
-                    redisTemplate.opsForStream().acknowledge(
-                        STREAM_KEY,
-                        CONSUMER_GROUP,
-                        record.getId()
-                    );
+                    if (shouldAck) {
+                        // 3. 仅在成功处理或幂等重复时 ACK
+                        redisTemplate.opsForStream().acknowledge(
+                            STREAM_KEY,
+                            CONSUMER_GROUP,
+                            record.getId()
+                        );
+                    }
 
                 } catch (Exception e) {
                     log.error("[APPOINTMENT] [STREAM] 处理消息失败: recordId={}", record.getId(), e);
@@ -96,7 +98,7 @@ public class StreamConsumerService {
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public void processMessage(MapRecord<String, Object, Object> record) {
+    public boolean processMessage(MapRecord<String, Object, Object> record) {
         Long userId = Long.parseLong((String) record.getValue().get("userId"));
         Long scheduleId = Long.parseLong((String) record.getValue().get("scheduleId"));
         String requestId = (String) record.getValue().get("requestId");
@@ -104,8 +106,7 @@ public class StreamConsumerService {
         // 1. 查询排班信息
         Schedule schedule = scheduleMapper.selectById(scheduleId);
         if (schedule == null) {
-            log.error("[APPOINTMENT] [STREAM] 排班不存在: scheduleId={}", scheduleId);
-            return;
+            throw new IllegalStateException("排班不存在: scheduleId=" + scheduleId);
         }
 
         // 2. 生成订单号
@@ -139,10 +140,12 @@ public class StreamConsumerService {
 
             log.info("[APPOINTMENT] [STREAM] 订单创建成功: orderNo={}, userId={}, scheduleId={}",
                 orderNo, userId, scheduleId);
+            return true;
 
         } catch (DuplicateKeyException e) {
             // 幂等键冲突，说明已处理过
             log.warn("[APPOINTMENT] [STREAM] 重复消息，跳过: requestId={}", requestId);
+            return true;
         }
     }
 }

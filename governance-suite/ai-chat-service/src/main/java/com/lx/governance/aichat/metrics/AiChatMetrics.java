@@ -6,6 +6,7 @@ import io.micrometer.core.instrument.Timer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
 
 @Component
@@ -116,6 +117,16 @@ public class AiChatMetrics {
     // 计时器方法
     public <T> T recordChatResponse(Supplier<T> operation) {
         return chatResponseTimer.record(operation);
+    }
+
+    public <T> CompletableFuture<T> recordChatResponseAsync(Supplier<CompletableFuture<T>> operation) {
+        Timer.Sample sample = Timer.start(meterRegistry);
+        try {
+            return operation.get().whenComplete((result, throwable) -> sample.stop(chatResponseTimer));
+        } catch (Exception e) {
+            sample.stop(chatResponseTimer);
+            throw e;
+        }
     }
 
     public <T> T recordContextAnalysis(Supplier<T> operation) {

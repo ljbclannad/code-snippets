@@ -9,7 +9,6 @@ import io.milvus.param.index.CreateIndexParam;
 import io.milvus.param.IndexType;
 import io.milvus.param.MetricType;
 import io.milvus.grpc.DataType;
-import io.milvus.grpc.SearchResults;
 import io.milvus.response.SearchResultsWrapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;

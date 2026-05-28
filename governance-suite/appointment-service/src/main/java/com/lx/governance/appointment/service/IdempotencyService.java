@@ -18,4 +18,8 @@ public class IdempotencyService {
         Boolean ok = redisTemplate.opsForValue().setIfAbsent(key, "1", ttl);
         return Boolean.TRUE.equals(ok);
     }
+
+    public void unlock(String key) {
+        redisTemplate.delete(key);
+    }
 }

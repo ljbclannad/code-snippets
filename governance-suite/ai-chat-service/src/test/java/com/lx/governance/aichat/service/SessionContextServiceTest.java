@@ -1,7 +1,6 @@
 package com.lx.governance.aichat.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.lx.governance.aichat.dto.MessageSummary;
 import com.lx.governance.aichat.dto.SessionContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
