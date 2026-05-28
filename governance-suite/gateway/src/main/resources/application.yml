@@ -74,9 +74,6 @@ gateway:
   rate-limit:
     replenish-rate: 5
     burst-capacity: 10
-  sentinel:
-    order-list:
-      qps: 2
 
 feign:
   sentinel:
@@ -111,14 +108,6 @@ management:
 logging:
   level:
     org.springframework.cloud.gateway: INFO
-
-# Sentinel Dashboard（可选）
-# 访问 http://localhost:8858
-spring.cloud.sentinel:
-  transport:
-    dashboard: ${SENTINEL_DASHBOARD:localhost:8858}
-    port: 8719
-  eager: true
 
 app:
   auth:

@@ -1,5 +1,7 @@
 package com.lx.governance.order.controller;
 
+import com.alibaba.csp.sentinel.annotation.SentinelResource;
+import com.alibaba.csp.sentinel.slots.block.BlockException;
 import com.lx.governance.common.api.ApiResponse;
 import com.lx.governance.common.auth.AuthHeaders;
 import com.lx.governance.common.trace.Trace;
@@ -20,6 +22,7 @@ public class OrderController {
         this.appService = appService;
     }
 
+    @SentinelResource(value = "order:create", blockHandler = "handleCreateBlocked")
     @PostMapping("/order")
     public ApiResponse<OrderDto> create(@RequestBody CreateOrderRequest req,
                                         @RequestHeader(value = AuthHeaders.USER_ID, required = false) Long authenticatedUserId,
@@ -31,6 +34,7 @@ public class OrderController {
         return ApiResponse.ok(dto, Trace.getOrCreate());
     }
 
+    @SentinelResource(value = "order:create-v2", blockHandler = "handleCreateV2Blocked")
     @PostMapping("/order/v2")
     public ApiResponse<Map<String, String>> createV2(@RequestBody CreateOrderRequest req,
                                                      @RequestHeader(value = AuthHeaders.USER_ID, required = false) Long authenticatedUserId,
@@ -39,6 +43,20 @@ public class OrderController {
             req.setCustomerId(String.valueOf(authenticatedUserId));
         }
         return ApiResponse.ok(appService.createV2(req, reqId), Trace.getOrCreate());
+    }
+
+    public ApiResponse<OrderDto> handleCreateBlocked(CreateOrderRequest req,
+                                                     Long authenticatedUserId,
+                                                     String idempotencyKey,
+                                                     BlockException ex) {
+        return ApiResponse.fail("ORDER_RATE_LIMITED", "Order create rate limit exceeded", Trace.getOrCreate());
+    }
+
+    public ApiResponse<Map<String, String>> handleCreateV2Blocked(CreateOrderRequest req,
+                                                                  Long authenticatedUserId,
+                                                                  String reqId,
+                                                                  BlockException ex) {
+        return ApiResponse.fail("ORDER_RATE_LIMITED", "Order create rate limit exceeded", Trace.getOrCreate());
     }
 
     @GetMapping("/order/{orderNo}")

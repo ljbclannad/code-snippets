@@ -90,6 +90,12 @@ id:
     max-backward-ms: ${SNOWFLAKE_MAX_BACKWARD_MS:5}
 
 app:
+  sentinel:
+    order:
+      create:
+        qps: 5
+      create-v2:
+        qps: 3
   nacos:
     retry-registration:
       enabled: true
