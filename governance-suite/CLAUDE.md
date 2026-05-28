@@ -21,6 +21,7 @@ mvn -q -pl order-service spring-boot:run    # port 8081
 mvn -q -pl payment-service spring-boot:run  # port 8082
 mvn -q -pl inventory-service spring-boot:run # port 8083
 mvn -q -pl user-service spring-boot:run     # port 8084
+mvn -q -pl appointment-service spring-boot:run # port 8089
 mvn -q -pl outbox-consumer spring-boot:run  # port 8090
 
 # Failure injection for lab experiments (run instead of normal start)
@@ -39,6 +40,8 @@ client → gateway(8080) → user-service(8084)
                        → order-service(8081) → inventory-service(8083)
                                              → payment-service(8082)
                                              → outbox-consumer(8090) → RabbitMQ
+                       → appointment-service(8089) → payment-service(8082)
+                                                   → RabbitMQ (async notifications)
 ```
 
 | Module | Role |
@@ -49,6 +52,7 @@ client → gateway(8080) → user-service(8084)
 | `order-service` | `@GlobalTransactional` (Seata) spanning inventory+payment; outbox write; Redis Lua seckill |
 | `payment-service` | Sharded by `user_id`; two-phase prepare/confirm; publishes `payment.confirmed` to RabbitMQ |
 | `inventory-service` | Optimistic-lock stock deduction with retry loop (5 attempts) |
+| `appointment-service` | Medical appointment booking; Redis Lua atomic slot reservation; dual-layer rate limiting (userId + scheduleId); async RabbitMQ notifications |
 | `outbox-consumer` | Polls `t_outbox` every 1 s, publishes to RabbitMQ, exponential backoff on failure (max 5 retries → DEAD) |
 
 ## Key Patterns
@@ -78,6 +82,18 @@ Every mutating operation uses `IdempotencyService.tryLock(key)` backed by Redis 
 ### Data sharding (ShardingSphere JDBC)
 - `t_order_{0,1}` — sharded by `order_no` hash mod 2.
 - `t_payment_{0,1}` — sharded by `user_id` hash mod 2 (query locality for user payment history).
+
+### Appointment booking flow (appointment-service)
+Four-step lifecycle: **query schedules → book slot → pay → cancel**.
+
+1. **Query schedules** — `GET /api/appointment/schedules` returns available slots with remaining capacity from `t_doctor_schedule`.
+2. **Book slot** — `POST /api/appointment/book` uses Redis Lua script to atomically: check slot availability, deduplicate user, decrement `available_slots`, write reservation to Redis hash. DB write happens after Redis success. Idempotency key: `idem:appt:book:{userId}:{scheduleId}`.
+3. **Pay** — `POST /api/appointment/{id}/pay` calls payment-service via OpenFeign, updates appointment status to `PAID`, publishes `appointment.paid` event to RabbitMQ for async notification.
+4. **Cancel** — `POST /api/appointment/{id}/cancel` refunds via payment-service, increments Redis slot counter, updates status to `CANCELLED`.
+
+**Dual-layer rate limiting** — Gateway applies per-user rate limit (10 req/min) AND per-schedule rate limit (100 req/min) using Redis sliding window. Both must pass for request to proceed.
+
+**Async notifications** — `AppointmentPaidEventHandler` listens to `appointment.paid` queue, sends confirmation message via external notification service (simulated). Failures are retried with exponential backoff (max 5 attempts).
 
 ## Infrastructure Ports
 
