@@ -139,7 +139,7 @@ TOKEN=$(curl -s -X POST http://localhost:8080/api/user/login \
 
 # 3. 下单（Seata 分布式事务）
 curl -X POST http://localhost:8080/api/order/order \
-  -H "Authorization: Bearer $TOKEN" \
+  -H "Authorization: $TOKEN" \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: demo-1' \
   -d '{"productId":"p1","quantity":1,"amountCents":100}'
@@ -149,11 +149,11 @@ curl -X POST http://localhost:8080/api/order/order \
 
 # 5. 模拟支付成功
 curl -X POST "http://localhost:8080/api/payment/confirm/<orderNo>" \
-  -H "Authorization: Bearer $TOKEN"
+  -H "Authorization: $TOKEN"
 
 # 6. 查看订单状态（应为 PAID）
 curl "http://localhost:8080/api/order/order/<orderNo>" \
-  -H "Authorization: Bearer $TOKEN"
+  -H "Authorization: $TOKEN"
 ```
 
 **观察点**：
@@ -878,31 +878,28 @@ TOKEN=$(curl -s -X POST http://localhost:8080/api/user/login \
 
 # 3. 查询排班信息（使用未来日期，例如 2026-06-15）
 curl "http://localhost:8080/api/appointment/schedules?departmentId=1&date=2026-06-15" \
-  -H "Authorization: Bearer $TOKEN"
+  -H "Authorization: $TOKEN"
 
-# 4. 抢号下单（记录 appointmentId）
-curl -X POST http://localhost:8080/api/appointment/reserve \
-  -H "Authorization: Bearer $TOKEN" \
+# 4. 抢号下单（记录 orderNo）
+curl -X POST http://localhost:8080/api/appointment/grab \
+  -H "Authorization: $TOKEN" \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: patient001-appt-1' \
   -d '{
-    "scheduleId": "sch-001",
-    "patientName": "张三",
-    "patientPhone": "13800138000",
-    "patientIdCard": "110101199001011234"
+    "scheduleId": 1
   }'
 
 # 5. 支付确认
-curl -X POST "http://localhost:8080/api/appointment/<appointmentId>/pay" \
-  -H "Authorization: Bearer $TOKEN"
+curl -X POST "http://localhost:8080/api/appointment/pay/<orderNo>" \
+  -H "Authorization: $TOKEN"
 
 # 6. 查看预约详情（应为 PAID 状态）
 curl "http://localhost:8080/api/appointment/<appointmentId>" \
-  -H "Authorization: Bearer $TOKEN"
+  -H "Authorization: $TOKEN"
 
 # 7. 取消预约（可选）
 curl -X POST "http://localhost:8080/api/appointment/<appointmentId>/cancel" \
-  -H "Authorization: Bearer $TOKEN"
+  -H "Authorization: $TOKEN"
 ```
 
 **观察点**：
@@ -1033,8 +1030,8 @@ curl -X POST "http://localhost:8080/api/appointment/<appointmentId>/cancel" \
   - `appt:reserved:{scheduleId}` - 已预约用户集合
 
 **代码位置**：
-- `appointment-service/service/AppointmentReserveService.java` - Lua 脚本执行
-- `appointment-service/lua/reserve_appointment.lua` - Lua 脚本
+- `appointment-service/service/AppointmentService.java` - Lua 脚本执行
+- `appointment-service/lua/grab_appointment.lua` - Lua 脚本
 
 ### L7: 订单状态机层
 
@@ -1120,15 +1117,12 @@ NEW/RESERVED ──支付──> PAID ──取消──> CANCELLED
 ```bash
 # 并发抢号测试（10个用户抢5个号）
 for i in {1..10}; do
-  curl -X POST http://localhost:8080/api/appointment/reserve \
-    -H "Authorization: Bearer $TOKEN_$i" \
+  curl -X POST http://localhost:8080/api/appointment/grab \
+    -H "Authorization: $TOKEN_$i" \
     -H 'Content-Type: application/json' \
     -H "Idempotency-Key: user-$i-appt-1" \
     -d '{
-      "scheduleId": "sch-001",
-      "patientName": "患者'$i'",
-      "patientPhone": "1380013800'$i'",
-      "patientIdCard": "11010119900101123'$i'"
+      "scheduleId": 1
     }' &
 done
 wait
@@ -1233,7 +1227,7 @@ curl -X POST http://localhost:8080/api/user/register \
 curl -X POST http://localhost:8080/api/user/login \
   -H 'Content-Type: application/json' \
   -d '{"username":"u1001","password":"123456"}'
-# 返回 token，后续请求需要: -H 'Authorization: Bearer <token>'
+# 返回 token，后续请求需要: -H 'Authorization: <token>'
 ```
 
 ### 2. 下单（Seata 分布式事务）
@@ -1241,7 +1235,7 @@ curl -X POST http://localhost:8080/api/user/login \
 ```bash
 curl -X POST http://localhost:8080/api/order/order \
   -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer <token>' \
+  -H 'Authorization: <token>' \
   -H 'Idempotency-Key: demo-1' \
   -d '{"productId":"p1","quantity":1,"amountCents":100}'
 ```
@@ -1263,7 +1257,7 @@ redis-cli -p 36379 del seckill:buyers:sku:1001
 # 调用秒杀接口
 curl -X POST http://localhost:8080/api/order/order/v2 \
   -H 'Content-Type: application/json' \
-  -H 'Authorization: Bearer <token>' \
+  -H 'Authorization: <token>' \
   -H 'Idempotency-Key: req-1001-u1' \
   -d '{"productId":"1001","quantity":1,"amountCents":100}'
 ```
@@ -1277,7 +1271,7 @@ curl -X POST http://localhost:8080/api/order/order/v2 \
 
 ```bash
 curl -X POST http://localhost:8080/api/payment/confirm/<orderNo> \
-  -H 'Authorization: Bearer <token>'
+  -H 'Authorization: <token>'
 ```
 
 **观察点**：
@@ -1290,7 +1284,7 @@ curl -X POST http://localhost:8080/api/payment/confirm/<orderNo> \
 
 ```bash
 curl http://localhost:8080/api/order/order/<orderNo> \
-  -H 'Authorization: Bearer <token>'
+  -H 'Authorization: <token>'
 ```
 
 ### 6. 验证 IP 限流
@@ -1312,7 +1306,7 @@ docker stop gov-rabbitmq
 
 # 触发支付回调（会写入 Outbox）
 curl -X POST http://localhost:8080/api/order/order/payment/callback/<orderNo> \
-  -H 'Authorization: Bearer <token>'
+  -H 'Authorization: <token>'
 
 # 查看 Outbox 状态（应为 FAILED）
 mysql -uroot -proot -h127.0.0.1 -P3306 order_db -e "
@@ -1395,11 +1389,11 @@ TOKEN=$(curl -s -X POST http://localhost:8080/api/user/login \
 ```bash
 # 查询指定科室和日期的排班
 curl "http://localhost:8080/api/appointment/schedules?departmentId=1&date=2026-06-15" \
-  -H "Authorization: Bearer $TOKEN"
+  -H "Authorization: $TOKEN"
 
 # 查询指定医生的排班
 curl "http://localhost:8080/api/appointment/schedules?doctorId=D001&date=2026-06-15" \
-  -H "Authorization: Bearer $TOKEN"
+  -H "Authorization: $TOKEN"
 ```
 
 **观察点**：
@@ -1414,18 +1408,15 @@ redis-cli -p 36379 set appt:stock:sch-001 5
 redis-cli -p 36379 del appt:reserved:sch-001
 
 # 抢号
-curl -X POST http://localhost:8080/api/appointment/reserve \
-  -H "Authorization: Bearer $TOKEN" \
+curl -X POST http://localhost:8080/api/appointment/grab \
+  -H "Authorization: $TOKEN" \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: patient001-appt-1' \
   -d '{
-    "scheduleId": "sch-001",
-    "patientName": "张三",
-    "patientPhone": "13800138000",
-    "patientIdCard": "110101199001011234"
+    "scheduleId": 1
   }'
 
-# 记录返回的 appointmentId
+# 记录返回的 orderNo
 ```
 
 **观察点**：
@@ -1437,7 +1428,7 @@ curl -X POST http://localhost:8080/api/appointment/reserve \
 
 ```bash
 curl -X POST "http://localhost:8080/api/appointment/<appointmentId>/pay" \
-  -H "Authorization: Bearer $TOKEN"
+  -H "Authorization: $TOKEN"
 ```
 
 **观察点**：
@@ -1449,7 +1440,7 @@ curl -X POST "http://localhost:8080/api/appointment/<appointmentId>/pay" \
 
 ```bash
 curl "http://localhost:8080/api/appointment/<appointmentId>" \
-  -H "Authorization: Bearer $TOKEN"
+  -H "Authorization: $TOKEN"
 ```
 
 **观察点**：
@@ -1460,7 +1451,7 @@ curl "http://localhost:8080/api/appointment/<appointmentId>" \
 
 ```bash
 curl -X POST "http://localhost:8080/api/appointment/<appointmentId>/cancel" \
-  -H "Authorization: Bearer $TOKEN"
+  -H "Authorization: $TOKEN"
 ```
 
 **观察点**：
@@ -1482,7 +1473,7 @@ done
 for i in {1..20}; do
   curl -s -o /dev/null -w "%{http_code}\n" \
     "http://localhost:8080/api/appointment/schedules?departmentId=1&date=2026-06-15" \
-    -H "Authorization: Bearer $TOKEN"
+    -H "Authorization: $TOKEN"
   sleep 0.1
 done
 ```
@@ -1504,15 +1495,12 @@ for i in {1..10}; do
     -H 'Content-Type: application/json' \
     -d "{\"username\":\"patient00$i\",\"password\":\"123456\"}" | jq -r '.data.token')
   
-  curl -X POST http://localhost:8080/api/appointment/reserve \
-    -H "Authorization: Bearer $TOKEN_i" \
+  curl -X POST http://localhost:8080/api/appointment/grab \
+    -H "Authorization: $TOKEN_i" \
     -H 'Content-Type: application/json' \
     -H "Idempotency-Key: patient00$i-appt-2" \
     -d "{
-      \"scheduleId\": \"sch-002\",
-      \"patientName\": \"患者00$i\",
-      \"patientPhone\": \"1380013800$i\",
-      \"patientIdCard\": \"11010119900101123$i\"
+      \"scheduleId\": 2
     }" &
 done
 wait
@@ -1557,15 +1545,12 @@ SELECT * FROM t_appointment_notification ORDER BY id DESC LIMIT 10;"
 ```bash
 # 重复提交相同的抢号请求
 for i in {1..3}; do
-  curl -X POST http://localhost:8080/api/appointment/reserve \
-    -H "Authorization: Bearer $TOKEN" \
+  curl -X POST http://localhost:8080/api/appointment/grab \
+    -H "Authorization: $TOKEN" \
     -H 'Content-Type: application/json' \
     -H 'Idempotency-Key: patient001-appt-duplicate' \
     -d '{
-      "scheduleId": "sch-003",
-      "patientName": "李四",
-      "patientPhone": "13900139000",
-      "patientIdCard": "110101199002021234"
+      "scheduleId": 3
     }'
   echo ""
 done
