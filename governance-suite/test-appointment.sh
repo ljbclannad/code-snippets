@@ -66,7 +66,7 @@ register_and_login() {
     -H "Content-Type: application/json" \
     -d "{\"username\": \"${username}\", \"password\": \"${password}\"}")
 
-  local token=$(echo $login_response | grep -o '"data":"[^"]*"' | cut -d'"' -f4)
+  local token=$(echo $login_response | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
 
   if [ -z "$token" ]; then
     print_error "用户 ${username} 登录失败"
