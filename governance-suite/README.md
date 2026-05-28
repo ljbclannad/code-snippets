@@ -1,12 +1,13 @@
 # governance-suite
 
-一个**多轨学习项目**，包含三个完全独立的系统：
+一个**多轨学习项目**，包含四个完全独立的系统：
 
 1. **[分布式系统治理](#-part-1-分布式系统治理)** - 通过订单履约流程演示微服务治理模式
 2. **[AI 记忆系统](#-part-2-ai-记忆系统)** - 企业级 AI 对话服务，具备用户画像和向量记忆能力
 3. **[医生助手 Agent](#-part-3-医生助手-agent)** - 基于 ReAct 架构的自主推理 AI Agent 系统
+4. **[医院挂号场景](#-part-4-医院挂号场景)** - 医院挂号抢号系统，演示高并发场景下的完整治理体系
 
-> 💡 **三个系统完全独立**：可以单独运行任一系统，也可以同时运行多个系统。
+> 💡 **四个系统完全独立**：可以单独运行任一系统，也可以同时运行多个系统。
 
 ---
 
@@ -773,6 +774,449 @@ Agent 恢复执行
 
 ---
 
+# 🏥 Part 4: 医院挂号场景
+
+## 系统概述
+
+医院挂号抢号系统，通过真实的医疗场景演示高并发场景下的完整治理体系，从基础设施到业务逻辑的10个治理层次。
+
+### 架构图
+
+```
+客户端 → gateway(8080) ──┬→ 双层限流（IP + 用户）
+                        └→ appointment-service(8089)
+                              ├→ Redis Lua 抢号
+                              ├→ Seata 分布式事务
+                              ├→ MySQL 订单存储
+                              └→ RabbitMQ 异步通知
+```
+
+### 核心能力
+
+- **排班查询**：查询医生排班信息，支持按科室、医生、日期筛选
+- **抢号下单**：Redis Lua 原子抢号，防止超卖和重复预约
+- **支付确认**：Seata 分布式事务保证订单-支付-号源一致性
+- **订单取消**：支持用户取消预约，自动释放号源
+- **双层限流**：Gateway IP 限流 + 用户级限流，保护系统稳定性
+- **异步通知**：RabbitMQ 异步发送预约成功/取消通知
+
+### 技术栈
+
+| 类别 | 技术 | 版本 |
+|------|------|------|
+| **框架** | Spring Boot | 3.4.0 |
+| | Spring Cloud | 2023.0.x |
+| **服务治理** | Nacos | 2.x |
+| | Seata | 2.x |
+| **数据** | MySQL | 8.0 |
+| | Redis | 7.0 |
+| **消息** | RabbitMQ | 3.x |
+
+### 模块清单
+
+| 模块 | 端口 | 职责 |
+|------|------|------|
+| `gateway` | 8080 | 网关路由、Token 校验、双层限流 |
+| `appointment-service` | 8089 | 排班查询、抢号、支付、取消、通知 |
+| `common` | - | 公共工具（返回、TraceId、Token、ID） |
+
+## 快速开始
+
+### 1. 启动基础设施
+
+```bash
+# 启动医院挂号系统所需的基础设施
+docker compose up -d
+```
+
+**基础设施访问**：
+
+| 服务 | 地址 | 账号 |
+|------|------|------|
+| MySQL | localhost:3306 | root/root |
+| Redis | localhost:36379 | - |
+| RabbitMQ 控制台 | http://localhost:15672 | guest/guest |
+| Nacos 控制台 | http://localhost:8848 | nacos/nacos |
+
+### 2. 编译项目
+
+```bash
+mvn -T 1C clean package -DskipTests
+```
+
+### 3. 启动服务
+
+```bash
+# 在不同终端分别启动
+mvn -q -pl gateway spring-boot:run              # 终端1: 网关 (8080)
+mvn -q -pl user-service spring-boot:run         # 终端2: 用户服务 (8084)
+mvn -q -pl appointment-service spring-boot:run  # 终端3: 挂号服务 (8089)
+```
+
+### 停止服务
+
+```bash
+# 停止医院挂号系统服务
+lsof -ti :8080 :8084 :8089 | xargs kill
+
+# 停止基础设施
+docker compose down
+```
+
+## 快速验证（5分钟体验）
+
+```bash
+# 1. 注册用户
+curl -X POST http://localhost:8080/api/user/register \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"patient001","password":"123456","displayName":"患者001"}'
+
+# 2. 登录获取 Token
+TOKEN=$(curl -s -X POST http://localhost:8080/api/user/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"patient001","password":"123456"}' | jq -r '.data.token')
+
+# 3. 查询排班信息（使用未来日期，例如 2026-06-15）
+curl "http://localhost:8080/api/appointment/schedules?departmentId=1&date=2026-06-15" \
+  -H "Authorization: Bearer $TOKEN"
+
+# 4. 抢号下单（记录 appointmentId）
+curl -X POST http://localhost:8080/api/appointment/reserve \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: patient001-appt-1' \
+  -d '{
+    "scheduleId": "sch-001",
+    "patientName": "张三",
+    "patientPhone": "13800138000",
+    "patientIdCard": "110101199001011234"
+  }'
+
+# 5. 支付确认
+curl -X POST "http://localhost:8080/api/appointment/<appointmentId>/pay" \
+  -H "Authorization: Bearer $TOKEN"
+
+# 6. 查看预约详情（应为 PAID 状态）
+curl "http://localhost:8080/api/appointment/<appointmentId>" \
+  -H "Authorization: Bearer $TOKEN"
+
+# 7. 取消预约（可选）
+curl -X POST "http://localhost:8080/api/appointment/<appointmentId>/cancel" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**观察点**：
+- ✅ Redis Lua 抢号：原子性保证不超卖、不重复
+- ✅ Seata 分布式事务：预约-支付-号源扣减原子性
+- ✅ 双层限流：IP 限流 + 用户级限流保护系统
+- ✅ 幂等防重：重复提交相同 Idempotency-Key 会被拒绝
+- ✅ 异步通知：RabbitMQ 发送预约成功/取消通知
+
+## 学习路径
+
+| 步骤 | 主题 | 实验内容 | 观察重点 |
+|------|------|----------|----------|
+| 1 | 排班查询 | 查询医生排班 | 基础 CRUD 和数据模型 |
+| 2 | 抢号下单 | Redis Lua 抢号 | 原子性和防超卖 |
+| 3 | 支付确认 | Seata 分布式事务 | 跨服务事务一致性 |
+| 4 | 订单取消 | 号源释放 | 状态机和补偿逻辑 |
+| 5 | 双层限流 | 压测网关 | IP 限流和用户限流 |
+| 6 | 异步通知 | 查看 RabbitMQ | 消息投递和消费 |
+| 7 | 幂等防重 | 重复提交 | 幂等 Key 生效 |
+| 8 | 并发测试 | 多用户抢号 | 并发控制和数据一致性 |
+
+## 10个治理层次详解
+
+### L1: 基础设施层
+
+**职责**：提供数据存储、缓存、消息队列等基础能力
+
+| 组件 | 作用 | 配置 |
+|------|------|------|
+| MySQL | 持久化存储（排班、订单、支付） | 端口 3306 |
+| Redis | 号源库存、限流计数、幂等锁 | 端口 36379 |
+| RabbitMQ | 异步通知（预约成功/取消） | 端口 5672, 管理端口 15672 |
+
+**关键设计**：
+- MySQL 存储核心业务数据，保证持久化和事务性
+- Redis 存储热点数据（号源库存），支持高并发读写
+- RabbitMQ 解耦同步链路和异步通知
+
+### L2: 服务注册与发现
+
+**职责**：服务自动注册、健康检查、动态路由
+
+| 组件 | 作用 | 配置 |
+|------|------|------|
+| Nacos | 服务注册中心 | 端口 8848 |
+
+**关键设计**：
+- 服务启动时自动注册到 Nacos
+- Gateway 通过 Nacos 动态发现 appointment-service
+- 支持服务实例的动态上下线
+
+**代码位置**：
+- `appointment-service/application.yml` - Nacos 客户端配置
+- `gateway/application.yml` - Nacos 服务发现配置
+
+### L3: API 网关层
+
+**职责**：统一入口、认证鉴权、双层限流、路由转发
+
+| 功能 | 实现 | 配置 |
+|------|------|------|
+| Token 校验 | AuthTokenGlobalFilter | order=-90 |
+| IP 限流 | RedisRateLimiter | 10 req/s per IP |
+| 用户限流 | UserRateLimitFilter | 5 req/s per user |
+| 路由转发 | Spring Cloud Gateway | lb://appointment-service |
+
+**关键设计**：
+- **双层限流**：先 IP 限流（防刷），再用户限流（公平性）
+- **Token 透传**：校验后注入 `X-User-Id` / `X-Username` 给下游
+- **公共路径豁免**：`/api/user/register`, `/api/user/login` 不校验 Token
+
+**代码位置**：
+- `gateway/filter/AuthTokenGlobalFilter.java` - Token 校验
+- `gateway/filter/UserRateLimitFilter.java` - 用户限流
+- `gateway/application.yml` - IP 限流配置
+
+### L4: 分布式事务层
+
+**职责**：保证跨服务操作的原子性（预约-支付-号源扣减）
+
+| 组件 | 作用 | 模式 |
+|------|------|------|
+| Seata | 分布式事务协调器 | AT 模式 |
+
+**关键设计**：
+- `AppointmentAppService.payAppointment()` 标注 `@GlobalTransactional`
+- 涉及三个操作：更新预约状态、创建支付记录、扣减号源库存
+- 任一操作失败，Seata 自动回滚所有操作
+
+**代码位置**：
+- `appointment-service/service/AppointmentAppService.java` - `@GlobalTransactional`
+- `appointment-service/application.yml` - Seata 客户端配置
+
+### L5: 幂等性保证层
+
+**职责**：防止重复提交、重复支付、重复扣减
+
+| 场景 | 实现 | Key 格式 |
+|------|------|----------|
+| 抢号幂等 | Redis SET NX | `idempotency:{requestId}` |
+| 支付幂等 | Redis SET NX | `idem:appt:pay:{userId}:{appointmentId}` |
+| 通知幂等 | DB 唯一约束 | `t_appointment_notification(appointment_id, event_type)` |
+
+**关键设计**：
+- **双重保障**：Redis 快速拦截 + DB 唯一约束兜底
+- **TTL 设置**：Redis 幂等锁 1 小时过期，避免永久占用
+- **请求级幂等**：客户端传入 `Idempotency-Key` 请求头
+
+**代码位置**：
+- `common/service/IdempotencyService.java` - 幂等锁实现
+- `appointment-service/service/AppointmentAppService.java` - 幂等调用
+
+### L6: 库存管理层
+
+**职责**：号源库存的原子扣减，防止超卖和重复预约
+
+| 实现 | 技术 | 特点 |
+|------|------|------|
+| Redis Lua 脚本 | Lua 原子执行 | 校验库存、去重、扣减、入队一次完成 |
+
+**关键设计**：
+- **原子性**：Lua 脚本在 Redis 中原子执行，不会被打断
+- **防超卖**：先检查库存，库存不足直接返回失败
+- **防重复**：通过 `appt:reserved:{scheduleId}` Set 记录已预约用户
+- **Key 设计**：
+  - `appt:stock:{scheduleId}` - 号源库存
+  - `appt:reserved:{scheduleId}` - 已预约用户集合
+
+**代码位置**：
+- `appointment-service/service/AppointmentReserveService.java` - Lua 脚本执行
+- `appointment-service/lua/reserve_appointment.lua` - Lua 脚本
+
+### L7: 订单状态机层
+
+**职责**：管理预约订单的生命周期，保证状态流转的正确性
+
+| 状态 | 说明 | 允许的操作 |
+|------|------|------------|
+| NEW | 已预约，未支付 | 支付、取消 |
+| RESERVED | 已预约（同 NEW） | 支付、取消 |
+| PAID | 已支付 | 取消（退款） |
+| CANCELLED | 已取消 | 无 |
+| EXPIRED | 已过期 | 无 |
+
+**状态流转**：
+```
+NEW/RESERVED ──支付──> PAID ──取消──> CANCELLED
+     │                              ↑
+     └──────────取消─────────────────┘
+     │
+     └──────────超时─────────────> EXPIRED
+```
+
+**关键设计**：
+- **状态校验**：每个操作前检查当前状态是否允许
+- **状态更新**：使用乐观锁（version 字段）防止并发冲突
+- **补偿逻辑**：取消时自动释放号源库存
+
+**代码位置**：
+- `appointment-service/entity/Appointment.java` - 状态枚举
+- `appointment-service/service/AppointmentAppService.java` - 状态流转逻辑
+
+### L8: 异步通知层
+
+**职责**：解耦同步链路和异步通知，提升用户体验
+
+| 事件 | 触发时机 | 通知内容 |
+|------|----------|----------|
+| appointment.paid | 支付成功 | 预约成功通知（就诊时间、地点） |
+| appointment.cancelled | 取消预约 | 取消成功通知 |
+
+**关键设计**：
+- **事件驱动**：支付成功后发布事件到 RabbitMQ
+- **异步处理**：通知服务消费消息，发送短信/推送
+- **重试机制**：消息消费失败自动重试（最多 3 次）
+- **幂等消费**：通过 `t_appointment_notification` 表去重
+
+**代码位置**：
+- `appointment-service/event/AppointmentPaidEventHandler.java` - 事件发布
+- `appointment-service/listener/AppointmentNotificationListener.java` - 事件消费
+
+### L9: 可观测性层
+
+**职责**：链路追踪、日志记录、监控告警
+
+| 功能 | 实现 | 说明 |
+|------|------|------|
+| TraceId | MDC 透传 | 全链路追踪，从 Gateway 到 Service |
+| 业务日志 | SLF4J + Logback | 记录关键操作（抢号、支付、取消） |
+| 监控指标 | Actuator | 健康检查、JVM 指标 |
+
+**关键设计**：
+- **TraceId 透传**：Gateway 生成 TraceId，通过 HTTP Header 传递给下游
+- **结构化日志**：每条日志包含 traceId、userId、操作类型、结果
+- **异常捕获**：GlobalExceptionHandler 统一处理异常，返回标准格式
+
+**代码位置**：
+- `common/filter/TraceIdFilter.java` - TraceId 生成和透传
+- `common/handler/GlobalExceptionHandler.java` - 异常处理
+- `appointment-service/application.yml` - Actuator 配置
+
+### L10: 测试验证层
+
+**职责**：端到端测试，验证系统的正确性和稳定性
+
+| 测试类型 | 工具 | 验证内容 |
+|----------|------|----------|
+| 功能测试 | curl 脚本 | 正常流程（查询、抢号、支付、取消） |
+| 并发测试 | JMeter / wrk | 多用户同时抢号，验证不超卖 |
+| 限流测试 | curl 循环 | 触发 IP 限流和用户限流 |
+| 幂等测试 | curl 重复请求 | 验证幂等 Key 生效 |
+
+**测试脚本**：
+```bash
+# 并发抢号测试（10个用户抢5个号）
+for i in {1..10}; do
+  curl -X POST http://localhost:8080/api/appointment/reserve \
+    -H "Authorization: Bearer $TOKEN_$i" \
+    -H 'Content-Type: application/json' \
+    -H "Idempotency-Key: user-$i-appt-1" \
+    -d '{
+      "scheduleId": "sch-001",
+      "patientName": "患者'$i'",
+      "patientPhone": "1380013800'$i'",
+      "patientIdCard": "11010119900101123'$i'"
+    }' &
+done
+wait
+
+# 验证结果：只有5个成功，5个失败（库存不足）
+```
+
+**代码位置**：
+- `test-appointment.sh` - 功能测试脚本（项目根目录）
+
+## 核心技术模式
+
+| 模式 | 实现 | 位置 |
+|------|------|------|
+| 服务治理 | Nacos 注册发现 + Gateway 路由 | gateway, appointment-service |
+| 认证授权 | HMAC-SHA256 Token | common/AuthTokenService |
+| 双层限流 | IP 限流 + 用户限流 | gateway/filter |
+| 分布式事务 | Seata AT 模式 | AppointmentAppService/@GlobalTransactional |
+| 幂等防重 | Redis SET NX + DB 唯一约束 | IdempotencyService |
+| 原子抢号 | Redis Lua 脚本 | AppointmentReserveService |
+| 订单状态机 | 状态枚举 + 乐观锁 | Appointment.status |
+| 异步通知 | RabbitMQ 事件驱动 | AppointmentPaidEventHandler |
+| 链路追踪 | MDC TraceId 透传 | common/TraceIdFilter |
+| ID 生成 | Snowflake 算法 | common/SnowflakeIdGenerator |
+
+## 学习价值
+
+- ✅ 为什么需要双层限流（IP + 用户）
+- ✅ 为什么抢号要用 Redis Lua 而不是数据库锁
+- ✅ 为什么支付要用 Seata 分布式事务
+- ✅ 为什么需要幂等防重（前端防抖不够）
+- ✅ 为什么通知要异步（不阻塞主流程）
+- ✅ 为什么需要订单状态机（保证状态流转正确性）
+- ✅ 为什么需要 TraceId（排查问题的利器）
+- ✅ 为什么需要并发测试（验证系统的正确性）
+
+## 常见问题
+
+<details>
+<summary><b>Q: 抢号失败，提示库存不足？</b></summary>
+
+1. 检查 Redis 中的库存：`redis-cli -p 36379 get appt:stock:{scheduleId}`
+2. 检查是否已经预约过：`redis-cli -p 36379 sismember appt:reserved:{scheduleId} {userId}`
+3. 查看数据库中的排班信息：
+   ```sql
+   SELECT * FROM t_schedule WHERE id = '{scheduleId}';
+   ```
+4. 重新初始化库存：`redis-cli -p 36379 set appt:stock:{scheduleId} 10`
+</details>
+
+<details>
+<summary><b>Q: 支付失败，Seata 事务不回滚？</b></summary>
+
+1. 检查 Seata Server 是否启动：`docker ps | grep seata`
+2. 检查服务是否注册到 Seata：查看 Seata 控制台
+3. 检查 `@GlobalTransactional` 注解是否生效
+4. 查看 Seata 日志：`docker logs gov-seata`
+</details>
+
+<details>
+<summary><b>Q: 通知消息不发送？</b></summary>
+
+1. 检查 RabbitMQ 是否启动：`docker ps | grep rabbitmq`
+2. 查看 RabbitMQ 控制台：http://localhost:15672
+3. 检查队列中是否有消息积压
+4. 查看 appointment-service 日志中的事件发布记录
+</details>
+
+<details>
+<summary><b>Q: 限流不生效？</b></summary>
+
+1. 检查 Redis 是否启动：`docker ps | grep redis`
+2. 查看 Gateway 日志中的限流记录
+3. 检查限流配置：`gateway/application.yml`
+4. 验证限流计数：`redis-cli -p 36379 keys rate_limit:*`
+</details>
+
+<details>
+<summary><b>Q: 并发测试出现超卖？</b></summary>
+
+1. 检查 Lua 脚本是否正确加载
+2. 查看 Redis 日志，确认 Lua 脚本执行
+3. 检查数据库中的预约记录数量
+4. 验证 Redis 库存和数据库记录是否一致
+</details>
+
+---
+
 # 📚 详细验证指南
 
 ## 分布式系统 - 完整验证链路
@@ -927,6 +1371,210 @@ curl http://localhost:8085/actuator/prometheus | grep ai_chat
 ```bash
 curl http://localhost:8085/actuator/health
 ```
+
+## 医院挂号场景 - 完整验证链路
+
+### 1. 用户注册与登录
+
+```bash
+# 注册多个用户（用于并发测试）
+for i in {1..10}; do
+  curl -X POST http://localhost:8080/api/user/register \
+    -H 'Content-Type: application/json' \
+    -d "{\"username\":\"patient00$i\",\"password\":\"123456\",\"displayName\":\"患者00$i\"}"
+done
+
+# 登录获取 Token
+TOKEN=$(curl -s -X POST http://localhost:8080/api/user/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username":"patient001","password":"123456"}' | jq -r '.data.token')
+```
+
+### 2. 查询排班信息
+
+```bash
+# 查询指定科室和日期的排班
+curl "http://localhost:8080/api/appointment/schedules?departmentId=1&date=2024-01-15" \
+  -H "Authorization: Bearer $TOKEN"
+
+# 查询指定医生的排班
+curl "http://localhost:8080/api/appointment/schedules?doctorId=D001&date=2024-01-15" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**观察点**：
+- 返回医生信息、科室信息、可预约时段
+- 显示剩余号源数量
+
+### 3. 抢号下单（Redis Lua 原子操作）
+
+```bash
+# 初始化号源库存（测试前准备）
+redis-cli -p 36379 set appt:stock:sch-001 5
+redis-cli -p 36379 del appt:reserved:sch-001
+
+# 抢号
+curl -X POST http://localhost:8080/api/appointment/reserve \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: patient001-appt-1' \
+  -d '{
+    "scheduleId": "sch-001",
+    "patientName": "张三",
+    "patientPhone": "13800138000",
+    "patientIdCard": "110101199001011234"
+  }'
+
+# 记录返回的 appointmentId
+```
+
+**观察点**：
+- Redis Lua 脚本原子执行：校验库存、去重、扣减、返回结果
+- 幂等 Key 生效：重复提交返回 409 Conflict
+- 库存不足时返回失败
+
+### 4. 支付确认（Seata 分布式事务）
+
+```bash
+curl -X POST "http://localhost:8080/api/appointment/<appointmentId>/pay" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**观察点**：
+- Seata 全局事务：更新预约状态、创建支付记录、扣减号源库存
+- 任一操作失败，自动回滚
+- 支付成功后发布事件到 RabbitMQ
+
+### 5. 查看预约详情
+
+```bash
+curl "http://localhost:8080/api/appointment/<appointmentId>" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**观察点**：
+- 订单状态为 PAID
+- 包含就诊时间、医生信息、患者信息
+
+### 6. 取消预约
+
+```bash
+curl -X POST "http://localhost:8080/api/appointment/<appointmentId>/cancel" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+**观察点**：
+- 订单状态变为 CANCELLED
+- 自动释放号源库存（Redis 库存 +1）
+- 发布取消事件到 RabbitMQ
+
+### 7. 验证双层限流
+
+```bash
+# 测试 IP 限流（10 req/s）
+for i in {1..30}; do
+  curl -s -o /dev/null -w "%{http_code}\n" \
+    "http://localhost:8080/api/appointment/schedules?departmentId=1&date=2024-01-15"
+  sleep 0.05
+done
+
+# 测试用户限流（5 req/s）
+for i in {1..20}; do
+  curl -s -o /dev/null -w "%{http_code}\n" \
+    "http://localhost:8080/api/appointment/schedules?departmentId=1&date=2024-01-15" \
+    -H "Authorization: Bearer $TOKEN"
+  sleep 0.1
+done
+```
+
+**观察点**：
+- 部分请求返回 `429 Too Many Requests`
+- Redis 中的限流计数器：`redis-cli -p 36379 keys rate_limit:*`
+
+### 8. 并发抢号测试（防超卖验证）
+
+```bash
+# 准备：初始化5个号源
+redis-cli -p 36379 set appt:stock:sch-002 5
+redis-cli -p 36379 del appt:reserved:sch-002
+
+# 10个用户同时抢5个号
+for i in {1..10}; do
+  TOKEN_i=$(curl -s -X POST http://localhost:8080/api/user/login \
+    -H 'Content-Type: application/json' \
+    -d "{\"username\":\"patient00$i\",\"password\":\"123456\"}" | jq -r '.data.token')
+  
+  curl -X POST http://localhost:8080/api/appointment/reserve \
+    -H "Authorization: Bearer $TOKEN_i" \
+    -H 'Content-Type: application/json' \
+    -H "Idempotency-Key: patient00$i-appt-2" \
+    -d "{
+      \"scheduleId\": \"sch-002\",
+      \"patientName\": \"患者00$i\",
+      \"patientPhone\": \"1380013800$i\",
+      \"patientIdCard\": \"11010119900101123$i\"
+    }" &
+done
+wait
+
+# 验证结果
+echo "Redis 剩余库存："
+redis-cli -p 36379 get appt:stock:sch-002
+
+echo "已预约用户数："
+redis-cli -p 36379 scard appt:reserved:sch-002
+
+echo "数据库预约记录数："
+mysql -uroot -proot -h127.0.0.1 -P3306 appointment_db -e "
+SELECT COUNT(*) FROM t_appointment WHERE schedule_id = 'sch-002' AND status != 'CANCELLED';"
+```
+
+**观察点**：
+- 只有 5 个用户抢号成功，5 个失败
+- Redis 库存为 0
+- 已预约用户集合大小为 5
+- 数据库记录数为 5
+- 无超卖现象
+
+### 9. 异步通知验证
+
+```bash
+# 查看 RabbitMQ 队列
+curl -u guest:guest http://localhost:15672/api/queues/%2F/appointment.notification
+
+# 查看通知记录
+mysql -uroot -proot -h127.0.0.1 -P3306 appointment_db -e "
+SELECT * FROM t_appointment_notification ORDER BY id DESC LIMIT 10;"
+```
+
+**观察点**：
+- RabbitMQ 队列中有消息
+- 通知记录表中有对应记录
+- 通知状态为 SENT
+
+### 10. 幂等性验证
+
+```bash
+# 重复提交相同的抢号请求
+for i in {1..3}; do
+  curl -X POST http://localhost:8080/api/appointment/reserve \
+    -H "Authorization: Bearer $TOKEN" \
+    -H 'Content-Type: application/json' \
+    -H 'Idempotency-Key: patient001-appt-duplicate' \
+    -d '{
+      "scheduleId": "sch-003",
+      "patientName": "李四",
+      "patientPhone": "13900139000",
+      "patientIdCard": "110101199002021234"
+    }'
+  echo ""
+done
+```
+
+**观察点**：
+- 第一次请求成功（201 Created）
+- 后续请求返回 409 Conflict（幂等 Key 已存在）
+- 只创建了一条预约记录
 
 ---
 
