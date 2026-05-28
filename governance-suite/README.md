@@ -1394,11 +1394,11 @@ TOKEN=$(curl -s -X POST http://localhost:8080/api/user/login \
 
 ```bash
 # 查询指定科室和日期的排班
-curl "http://localhost:8080/api/appointment/schedules?departmentId=1&date=2024-01-15" \
+curl "http://localhost:8080/api/appointment/schedules?departmentId=1&date=2026-06-15" \
   -H "Authorization: Bearer $TOKEN"
 
 # 查询指定医生的排班
-curl "http://localhost:8080/api/appointment/schedules?doctorId=D001&date=2024-01-15" \
+curl "http://localhost:8080/api/appointment/schedules?doctorId=D001&date=2026-06-15" \
   -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -1474,14 +1474,14 @@ curl -X POST "http://localhost:8080/api/appointment/<appointmentId>/cancel" \
 # 测试 IP 限流（10 req/s）
 for i in {1..30}; do
   curl -s -o /dev/null -w "%{http_code}\n" \
-    "http://localhost:8080/api/appointment/schedules?departmentId=1&date=2024-01-15"
+    "http://localhost:8080/api/appointment/schedules?departmentId=1&date=2026-06-15"
   sleep 0.05
 done
 
 # 测试用户限流（5 req/s）
 for i in {1..20}; do
   curl -s -o /dev/null -w "%{http_code}\n" \
-    "http://localhost:8080/api/appointment/schedules?departmentId=1&date=2024-01-15" \
+    "http://localhost:8080/api/appointment/schedules?departmentId=1&date=2026-06-15" \
     -H "Authorization: Bearer $TOKEN"
   sleep 0.1
 done
