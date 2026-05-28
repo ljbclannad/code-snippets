@@ -54,14 +54,4 @@ public class QuotaRefundLog {
      * 重试次数
      */
     private Integer retryCount;
-
-    /**
-     * 创建时间
-     */
-    private LocalDateTime createTime;
-
-    /**
-     * 更新时间
-     */
-    private LocalDateTime updateTime;
 }

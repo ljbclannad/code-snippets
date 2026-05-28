@@ -1,6 +1,7 @@
 package com.lx.governance.appointment.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -43,5 +44,6 @@ public class AppointmentIdempotency {
     /**
      * 创建时间
      */
+    @TableField("created_at")
     private LocalDateTime createTime;
 }

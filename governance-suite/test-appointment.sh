@@ -3,6 +3,11 @@
 # 医院挂号场景完整测试脚本
 # 使用方式：./test-appointment.sh
 
+# Redis 命令包装函数（使用 docker exec）
+redis_cmd() {
+  docker exec gov-redis redis-cli "$@"
+}
+
 GATEWAY_URL="http://localhost:8080"
 REDIS_HOST="localhost"
 REDIS_PORT="36379"
@@ -77,22 +82,22 @@ prepare_test_data() {
   print_step "准备测试数据"
 
   # 设置排班信息
-  redis-cli -h $REDIS_HOST -p $REDIS_PORT SET "appointment:schedule:1" \
+  redis_cmd SET "appointment:schedule:1" \
     '{"scheduleId":1,"deptId":101,"doctorId":1,"scheduleDate":"2026-05-28","timeSlot":"AM","quota":10}' > /dev/null
 
-  redis-cli -h $REDIS_HOST -p $REDIS_PORT SET "appointment:schedule:2" \
+  redis_cmd SET "appointment:schedule:2" \
     '{"scheduleId":2,"deptId":102,"doctorId":2,"scheduleDate":"2026-05-28","timeSlot":"PM","quota":10}' > /dev/null
 
-  redis-cli -h $REDIS_HOST -p $REDIS_PORT SET "appointment:schedule:3" \
+  redis_cmd SET "appointment:schedule:3" \
     '{"scheduleId":3,"deptId":103,"doctorId":3,"scheduleDate":"2026-05-29","timeSlot":"AM","quota":2}' > /dev/null
 
   # 设置库存
-  redis-cli -h $REDIS_HOST -p $REDIS_PORT SET "appointment:stock:1" "10" > /dev/null
-  redis-cli -h $REDIS_HOST -p $REDIS_PORT SET "appointment:stock:2" "10" > /dev/null
-  redis-cli -h $REDIS_HOST -p $REDIS_PORT SET "appointment:stock:3" "2" > /dev/null
+  redis_cmd SET "appointment:stock:1" "10" > /dev/null
+  redis_cmd SET "appointment:stock:2" "10" > /dev/null
+  redis_cmd SET "appointment:stock:3" "2" > /dev/null
 
   # 设置热门科室（用于限流测试）
-  redis-cli -h $REDIS_HOST -p $REDIS_PORT SET "appointment:dept:hot:101" "1" > /dev/null
+  redis_cmd SET "appointment:dept:hot:101" "1" > /dev/null
 
   print_success "测试数据准备完成"
 }
@@ -196,7 +201,7 @@ test_normal_flow() {
   fi
 
   print_step "1.8 验证 Redis 库存扣减"
-  local current_stock=$(redis-cli -h $REDIS_HOST -p $REDIS_PORT GET "appointment:stock:1" 2>/dev/null)
+  local current_stock=$(redis_cmd GET "appointment:stock:1" 2>/dev/null)
   echo "当前库存: ${current_stock} (初始: 10)"
 
   if [ "$current_stock" -lt 10 ]; then
@@ -208,8 +213,8 @@ test_normal_flow() {
 
   print_step "1.9 验证 Redis 幂等键"
   local idem_key="idempotency:${request_id}"
-  local idem_exists=$(redis-cli -h $REDIS_HOST -p $REDIS_PORT EXISTS "$idem_key" 2>/dev/null)
-  local idem_ttl=$(redis-cli -h $REDIS_HOST -p $REDIS_PORT TTL "$idem_key" 2>/dev/null)
+  local idem_exists=$(redis_cmd EXISTS "$idem_key" 2>/dev/null)
+  local idem_ttl=$(redis_cmd TTL "$idem_key" 2>/dev/null)
 
   echo "幂等键存在: ${idem_exists} (1=存在, 0=不存在)"
   echo "幂等键 TTL: ${idem_ttl} 秒"
@@ -287,9 +292,9 @@ test_duplicate_grab() {
 
   print_step "2.5 验证 Redis 幂等键状态"
   local idem_key="idempotency:${request_id}"
-  local idem_exists=$(redis-cli -h $REDIS_HOST -p $REDIS_PORT EXISTS "$idem_key" 2>/dev/null)
-  local idem_ttl=$(redis-cli -h $REDIS_HOST -p $REDIS_PORT TTL "$idem_key" 2>/dev/null)
-  local idem_value=$(redis-cli -h $REDIS_HOST -p $REDIS_PORT GET "$idem_key" 2>/dev/null)
+  local idem_exists=$(redis_cmd EXISTS "$idem_key" 2>/dev/null)
+  local idem_ttl=$(redis_cmd TTL "$idem_key" 2>/dev/null)
+  local idem_value=$(redis_cmd GET "$idem_key" 2>/dev/null)
 
   echo "幂等键存在: ${idem_exists}"
   echo "幂等键 TTL: ${idem_ttl} 秒"
@@ -309,7 +314,7 @@ test_stock_exhaustion() {
   print_section "场景3：库存耗尽"
 
   print_step "3.1 设置低库存排班"
-  redis-cli -h $REDIS_HOST -p $REDIS_PORT SET "appointment:stock:3" "2" > /dev/null
+  redis_cmd SET "appointment:stock:3" "2" > /dev/null
   print_success "库存设置为 2"
 
   print_step "3.2 并发抢号（5个用户抢2个名额）"
@@ -357,7 +362,7 @@ test_stock_exhaustion() {
   # 等待 Stream 消费器处理
   sleep 3
 
-  local final_stock=$(redis-cli -h $REDIS_HOST -p $REDIS_PORT GET "appointment:stock:3" 2>/dev/null)
+  local final_stock=$(redis_cmd GET "appointment:stock:3" 2>/dev/null)
   echo "最终库存: ${final_stock}"
 
   if [ "$final_stock" -eq 0 ]; then
@@ -464,7 +469,7 @@ test_user_cancel() {
 
   print_step "4.6 验证 Redis 库存回补"
   local stock_before=10
-  local current_stock=$(redis-cli -h $REDIS_HOST -p $REDIS_PORT GET "appointment:stock:2" 2>/dev/null)
+  local current_stock=$(redis_cmd GET "appointment:stock:2" 2>/dev/null)
 
   echo "当前库存: ${current_stock}"
   echo "预期库存: ${stock_before} (取消后应回补)"
@@ -554,7 +559,7 @@ test_payment_timeout() {
 
   print_step "5.6 验证 Redis 库存回补"
   local stock_before=10
-  local current_stock=$(redis-cli -h $REDIS_HOST -p $REDIS_PORT GET "appointment:stock:2" 2>/dev/null)
+  local current_stock=$(redis_cmd GET "appointment:stock:2" 2>/dev/null)
 
   echo "当前库存: ${current_stock}"
   echo "预期库存: ${stock_before} (超时取消后应回补)"
@@ -686,8 +691,8 @@ test_rate_limit() {
   local user_rate_key="rate_limit:user:${user_id}"
   local schedule_rate_key="rate_limit:schedule:1"
 
-  local user_rate_count=$(redis-cli -h $REDIS_HOST -p $REDIS_PORT GET "$user_rate_key" 2>/dev/null)
-  local user_rate_ttl=$(redis-cli -h $REDIS_HOST -p $REDIS_PORT TTL "$user_rate_key" 2>/dev/null)
+  local user_rate_count=$(redis_cmd GET "$user_rate_key" 2>/dev/null)
+  local user_rate_ttl=$(redis_cmd TTL "$user_rate_key" 2>/dev/null)
 
   echo "用户限流键: ${user_rate_key}"
   echo "用户限流计数: ${user_rate_count}"
@@ -699,8 +704,8 @@ test_rate_limit() {
     print_warning "Redis 用户限流键未找到（可能已过期）"
   fi
 
-  local schedule_rate_count=$(redis-cli -h $REDIS_HOST -p $REDIS_PORT GET "$schedule_rate_key" 2>/dev/null)
-  local schedule_rate_ttl=$(redis-cli -h $REDIS_HOST -p $REDIS_PORT TTL "$schedule_rate_key" 2>/dev/null)
+  local schedule_rate_count=$(redis_cmd GET "$schedule_rate_key" 2>/dev/null)
+  local schedule_rate_ttl=$(redis_cmd TTL "$schedule_rate_key" 2>/dev/null)
 
   echo "排班限流键: ${schedule_rate_key}"
   echo "排班限流计数: ${schedule_rate_count}"
