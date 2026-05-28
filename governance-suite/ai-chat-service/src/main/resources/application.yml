@@ -165,3 +165,16 @@ resilience4j:
         max-attempts: 3
         wait-duration: 500ms
         exponential-backoff-multiplier: 2
+
+# 画像补全配置
+profile-completion:
+  enabled: true
+
+  # 追问控制
+  follow-up:
+    max-rounds: 3                    # 最多追问轮数
+    max-questions-per-round: 2       # 每轮最多追问问题数
+    timeout-minutes: 10              # 追问超时时间（分钟）
+
+  # 规则配置文件路径
+  rules-config: classpath:profile-completion-rules.yml

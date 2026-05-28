@@ -50,6 +50,13 @@ print_warning() {
   echo -e "${YELLOW}⚠️  $1${NC}"
 }
 
+NORMAL_SCHEDULE_ID=""
+NORMAL_DEPT_ID=""
+CANCEL_SCHEDULE_ID=""
+CANCEL_DEPT_ID=""
+LOW_STOCK_SCHEDULE_ID=""
+LOW_STOCK_DEPT_ID=""
+
 # 注册并登录用户
 register_and_login() {
   local user_id=$1
@@ -77,27 +84,77 @@ register_and_login() {
   echo "$token"
 }
 
+# 从排班查询结果中提取真实排班 ID 和科室 ID
+extract_schedule_field() {
+  local schedules_response="$1"
+  local target_date="$2"
+  local target_slot="$3"
+  local field_name="$4"
+
+  SCHEDULES_RESPONSE="$schedules_response" python3 - "$target_date" "$target_slot" "$field_name" <<'PY'
+import json
+import os
+import sys
+
+target_date, target_slot, field_name = sys.argv[1:4]
+payload = json.loads(os.environ["SCHEDULES_RESPONSE"])
+for item in payload.get("data", []):
+    if item.get("scheduleDate") == target_date and item.get("timeSlot") == target_slot:
+        value = item.get(field_name)
+        if value is not None:
+            print(value)
+            sys.exit(0)
+sys.exit(1)
+PY
+}
+
+# 查询真实排班并缓存测试用 scheduleId
+resolve_test_schedules() {
+  local token="$1"
+
+  local schedules_response=$(curl -s -X GET "${GATEWAY_URL}/api/appointment/schedules?startDate=2026-05-28&endDate=2026-05-30" \
+    -H "Authorization: ${token}")
+
+  if ! echo "$schedules_response" | grep -q '"success":true'; then
+    print_error "排班查询失败，无法解析测试排班"
+    echo "响应: ${schedules_response}"
+    return 1
+  fi
+
+  NORMAL_SCHEDULE_ID=$(extract_schedule_field "$schedules_response" "2026-05-28" "afternoon" "scheduleId") || return 1
+  NORMAL_DEPT_ID=$(extract_schedule_field "$schedules_response" "2026-05-28" "afternoon" "deptId") || return 1
+  CANCEL_SCHEDULE_ID=$(extract_schedule_field "$schedules_response" "2026-05-28" "evening" "scheduleId") || return 1
+  CANCEL_DEPT_ID=$(extract_schedule_field "$schedules_response" "2026-05-28" "evening" "deptId") || return 1
+  LOW_STOCK_SCHEDULE_ID=$(extract_schedule_field "$schedules_response" "2026-05-29" "morning" "scheduleId") || return 1
+  LOW_STOCK_DEPT_ID=$(extract_schedule_field "$schedules_response" "2026-05-29" "morning" "deptId") || return 1
+}
+
 # 准备测试数据
 prepare_test_data() {
   print_step "准备测试数据"
 
-  # 设置排班信息
-  redis_cmd SET "appointment:schedule:1" \
-    '{"scheduleId":1,"deptId":101,"doctorId":1,"scheduleDate":"2026-05-28","timeSlot":"AM","quota":10}' > /dev/null
+  local bootstrap_token=$(register_and_login 3999)
+  if [ -z "$bootstrap_token" ]; then
+    print_error "无法获取初始化 token"
+    return 1
+  fi
 
-  redis_cmd SET "appointment:schedule:2" \
-    '{"scheduleId":2,"deptId":102,"doctorId":2,"scheduleDate":"2026-05-28","timeSlot":"PM","quota":10}' > /dev/null
+  resolve_test_schedules "$bootstrap_token" || {
+    print_error "无法解析真实排班 ID"
+    return 1
+  }
 
-  redis_cmd SET "appointment:schedule:3" \
-    '{"scheduleId":3,"deptId":103,"doctorId":3,"scheduleDate":"2026-05-29","timeSlot":"AM","quota":2}' > /dev/null
-
-  # 设置库存
-  redis_cmd SET "appointment:stock:1" "10" > /dev/null
-  redis_cmd SET "appointment:stock:2" "10" > /dev/null
-  redis_cmd SET "appointment:stock:3" "2" > /dev/null
+  # 设置真实排班库存
+  redis_cmd SET "appointment:stock:${NORMAL_SCHEDULE_ID}" "10" > /dev/null
+  redis_cmd SET "appointment:stock:${CANCEL_SCHEDULE_ID}" "10" > /dev/null
+  redis_cmd SET "appointment:stock:${LOW_STOCK_SCHEDULE_ID}" "2" > /dev/null
 
   # 设置热门科室（用于限流测试）
-  redis_cmd SET "appointment:dept:hot:101" "1" > /dev/null
+  redis_cmd SET "appointment:dept:hot:${NORMAL_DEPT_ID}" "1" > /dev/null
+
+  echo "正常流程排班: ${NORMAL_SCHEDULE_ID} (dept=${NORMAL_DEPT_ID})"
+  echo "取消流程排班: ${CANCEL_SCHEDULE_ID} (dept=${CANCEL_DEPT_ID})"
+  echo "低库存排班: ${LOW_STOCK_SCHEDULE_ID} (dept=${LOW_STOCK_DEPT_ID})"
 
   print_success "测试数据准备完成"
 }
@@ -135,7 +192,7 @@ test_normal_flow() {
     -H "Content-Type: application/json" \
     -H "Authorization: ${token}" \
     -H "Idempotency-Key: ${request_id}" \
-    -d '{"scheduleId": 1}')
+    -d "{\"scheduleId\": ${NORMAL_SCHEDULE_ID}}")
 
   echo "抢号响应: ${grab_response}"
 
@@ -201,7 +258,7 @@ test_normal_flow() {
   fi
 
   print_step "1.8 验证 Redis 库存扣减"
-  local current_stock=$(redis_cmd GET "appointment:stock:1" 2>/dev/null)
+  local current_stock=$(redis_cmd GET "appointment:stock:${NORMAL_SCHEDULE_ID}" 2>/dev/null)
   echo "当前库存: ${current_stock} (初始: 10)"
 
   if [ "$current_stock" -lt 10 ]; then
@@ -247,7 +304,7 @@ test_duplicate_grab() {
     -H "Content-Type: application/json" \
     -H "Authorization: ${token}" \
     -H "Idempotency-Key: ${request_id}" \
-    -d '{"scheduleId": 1}')
+    -d "{\"scheduleId\": ${NORMAL_SCHEDULE_ID}}")
 
   echo "第一次抢号响应: ${grab_response1}"
 
@@ -265,7 +322,7 @@ test_duplicate_grab() {
     -H "Content-Type: application/json" \
     -H "Authorization: ${token}" \
     -H "Idempotency-Key: ${request_id}" \
-    -d '{"scheduleId": 1}')
+    -d "{\"scheduleId\": ${NORMAL_SCHEDULE_ID}}")
 
   echo "第二次抢号响应: ${grab_response2}"
 
@@ -314,7 +371,7 @@ test_stock_exhaustion() {
   print_section "场景3：库存耗尽"
 
   print_step "3.1 设置低库存排班"
-  redis_cmd SET "appointment:stock:3" "2" > /dev/null
+  redis_cmd SET "appointment:stock:${LOW_STOCK_SCHEDULE_ID}" "2" > /dev/null
   print_success "库存设置为 2"
 
   print_step "3.2 并发抢号（5个用户抢2个名额）"
@@ -338,7 +395,7 @@ test_stock_exhaustion() {
         -H "Content-Type: application/json" \
         -H "Authorization: ${token}" \
         -H "Idempotency-Key: ${request_id}" \
-        -d '{"scheduleId": 3}')
+        -d "{\"scheduleId\": ${LOW_STOCK_SCHEDULE_ID}}")
 
       if echo "$grab_response" | grep -q '"success":true'; then
         echo "SUCCESS" >> "$temp_file"
@@ -362,7 +419,7 @@ test_stock_exhaustion() {
   # 等待 Stream 消费器处理
   sleep 3
 
-  local final_stock=$(redis_cmd GET "appointment:stock:3" 2>/dev/null)
+  local final_stock=$(redis_cmd GET "appointment:stock:${LOW_STOCK_SCHEDULE_ID}" 2>/dev/null)
   echo "最终库存: ${final_stock}"
 
   if [ "$final_stock" -eq 0 ]; then
@@ -379,7 +436,7 @@ test_stock_exhaustion() {
 
   print_step "3.4 验证数据库订单数量"
   local db_order_count=$(mysql -h$DB_HOST -P$DB_PORT -u$DB_USER -p$DB_PASS $DB_NAME -N -e \
-    "SELECT COUNT(*) FROM t_appointment_order WHERE schedule_id=3" 2>/dev/null)
+    "SELECT COUNT(*) FROM t_appointment_order WHERE schedule_id=${LOW_STOCK_SCHEDULE_ID}" 2>/dev/null)
 
   echo "数据库订单数: ${db_order_count}"
   echo "成功抢号数: ${success_count}"
@@ -412,7 +469,7 @@ test_user_cancel() {
     -H "Content-Type: application/json" \
     -H "Authorization: ${token}" \
     -H "Idempotency-Key: ${request_id}" \
-    -d '{"scheduleId": 2}' > /dev/null
+    -d "{\"scheduleId\": ${CANCEL_SCHEDULE_ID}}" > /dev/null
 
   sleep 3
 
@@ -469,7 +526,7 @@ test_user_cancel() {
 
   print_step "4.6 验证 Redis 库存回补"
   local stock_before=10
-  local current_stock=$(redis_cmd GET "appointment:stock:2" 2>/dev/null)
+  local current_stock=$(redis_cmd GET "appointment:stock:${CANCEL_SCHEDULE_ID}" 2>/dev/null)
 
   echo "当前库存: ${current_stock}"
   echo "预期库存: ${stock_before} (取消后应回补)"
@@ -502,7 +559,7 @@ test_payment_timeout() {
     -H "Content-Type: application/json" \
     -H "Authorization: ${token}" \
     -H "Idempotency-Key: ${request_id}" \
-    -d '{"scheduleId": 2}' > /dev/null
+    -d "{\"scheduleId\": ${CANCEL_SCHEDULE_ID}}" > /dev/null
 
   sleep 3
 
@@ -559,7 +616,7 @@ test_payment_timeout() {
 
   print_step "5.6 验证 Redis 库存回补"
   local stock_before=10
-  local current_stock=$(redis_cmd GET "appointment:stock:2" 2>/dev/null)
+  local current_stock=$(redis_cmd GET "appointment:stock:${CANCEL_SCHEDULE_ID}" 2>/dev/null)
 
   echo "当前库存: ${current_stock}"
   echo "预期库存: ${stock_before} (超时取消后应回补)"
@@ -595,7 +652,7 @@ test_rate_limit() {
       -H "Content-Type: application/json" \
       -H "Authorization: ${token}" \
       -H "Idempotency-Key: req-ratelimit-${i}-$$" \
-      -d '{"scheduleId": 1}')
+      -d "{\"scheduleId\": ${NORMAL_SCHEDULE_ID}}")
 
     local http_code=$(echo "$response" | grep "HTTP_CODE" | cut -d: -f2)
 
@@ -636,7 +693,7 @@ test_rate_limit() {
         -H "Content-Type: application/json" \
         -H "Authorization: ${token}" \
         -H "Idempotency-Key: req-concurrent-${i}-$$" \
-        -d '{"scheduleId": 1}')
+        -d "{\"scheduleId\": ${NORMAL_SCHEDULE_ID}}")
 
       local http_code=$(echo "$response" | grep "HTTP_CODE" | cut -d: -f2)
 
@@ -668,14 +725,14 @@ test_rate_limit() {
       -H "Content-Type: application/json" \
       -H "Authorization: ${token}" \
       -H "Idempotency-Key: req-format-${i}-$$" \
-      -d '{"scheduleId": 1}' > /dev/null
+      -d "{\"scheduleId\": ${NORMAL_SCHEDULE_ID}}" > /dev/null
   done
 
   local response=$(curl -s -X POST "${GATEWAY_URL}/api/appointment/grab" \
     -H "Content-Type: application/json" \
     -H "Authorization: ${token}" \
     -H "Idempotency-Key: req-format-final-$$" \
-    -d '{"scheduleId": 1}')
+    -d "{\"scheduleId\": ${NORMAL_SCHEDULE_ID}}")
 
   echo "429 响应示例:"
   echo "${response}" | python3 -m json.tool 2>/dev/null || echo "${response}"
@@ -689,7 +746,7 @@ test_rate_limit() {
 
   print_step "6.5 验证 Redis 限流键"
   local user_rate_key="rate_limit:user:${user_id}"
-  local schedule_rate_key="rate_limit:schedule:1"
+  local schedule_rate_key="rate_limit:schedule:${NORMAL_SCHEDULE_ID}"
 
   local user_rate_count=$(redis_cmd GET "$user_rate_key" 2>/dev/null)
   local user_rate_ttl=$(redis_cmd TTL "$user_rate_key" 2>/dev/null)
@@ -722,7 +779,7 @@ test_rate_limit() {
     local total_requests=15
     local expected_max_orders=$((total_requests - rate_limit_count))
     local actual_orders=$(mysql -h$DB_HOST -P$DB_PORT -u$DB_USER -p$DB_PASS $DB_NAME -N -e \
-      "SELECT COUNT(*) FROM t_appointment_order WHERE user_id=${user_id} AND schedule_id=1" 2>/dev/null)
+      "SELECT COUNT(*) FROM t_appointment_order WHERE user_id=${user_id} AND schedule_id=${NORMAL_SCHEDULE_ID}" 2>/dev/null)
 
     echo "总请求数: ${total_requests}"
     echo "被限流数: ${rate_limit_count}"

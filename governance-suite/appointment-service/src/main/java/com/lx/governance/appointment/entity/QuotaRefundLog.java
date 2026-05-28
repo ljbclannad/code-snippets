@@ -1,6 +1,7 @@
 package com.lx.governance.appointment.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -43,15 +44,18 @@ public class QuotaRefundLog {
     /**
      * 退还状态 (SUCCESS-成功, FAILED-失败)
      */
+    @TableField(exist = false)
     private String status;
 
     /**
      * 失败原因
      */
+    @TableField(exist = false)
     private String failReason;
 
     /**
      * 重试次数
      */
+    @TableField(exist = false)
     private Integer retryCount;
 }

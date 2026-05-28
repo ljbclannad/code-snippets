@@ -12,11 +12,13 @@ import org.springframework.stereotype.Service;
 
 import com.lx.governance.aichat.client.DeepSeekClient;
 import com.lx.governance.aichat.client.UserProfileClientFixed;
+import com.lx.governance.aichat.config.ProfileCompletionProperties;
 import com.lx.governance.aichat.config.RabbitMQConfig;
 import com.lx.governance.aichat.document.ChatHistoryDocument;
 import com.lx.governance.aichat.dto.ChatHistorySyncMessage;
 import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.ChatResponse;
+import com.lx.governance.aichat.dto.DiagnosisResult;
 import com.lx.governance.aichat.dto.DifyResponse;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.SessionContext;
@@ -42,6 +44,10 @@ public class AiChatService {
     private final ChatHistorySearchService searchService;
     private final SessionContextService sessionContextService;
     private final AiChatMetrics metrics;
+    private final ProfileDiagnosisService profileDiagnosisService;
+    private final FollowUpStateManager followUpStateManager;
+    private final FollowUpResponseBuilder followUpResponseBuilder;
+    private final ProfileCompletionProperties profileCompletionProperties;
 
     @Value("${ai-chat.chat-history.sync-enabled:true}")
     private boolean syncEnabled;
@@ -106,6 +112,74 @@ public class AiChatService {
                             }
                         });
 
+                // ========== 新增：画像诊断与补全决策 ==========
+                // 等待画像获取完成
+                UserProfileDTO profile = profileFuture.join();
+
+                // 检查是否启用画像补全功能
+                if (profileCompletionProperties.isEnabled()) {
+                    // 执行画像诊断
+                    DiagnosisResult diagnosis = profileDiagnosisService.diagnoseProfile(
+                            profile,
+                            sessionContext,
+                            request.getMessage()
+                    );
+
+                    // 如果需要补全且未超过追问限制
+                    if (diagnosis.isNeedsCompletion() &&
+                            !followUpStateManager.shouldStopFollowUp(sessionContext.getConversationId())) {
+
+                        // 生成追问问题
+                        List<String> questions = profileDiagnosisService.generateFollowUpQuestions(
+                                diagnosis,
+                                profileCompletionProperties.getFollowUp().getMaxQuestionsPerRound()
+                        );
+
+                        // 提取字段路径
+                        List<String> fieldPaths = diagnosis.getMissingFields().stream()
+                                .map(DiagnosisResult.MissingField::getFieldPath)
+                                .collect(Collectors.toList());
+
+                        // 更新追问状态
+                        followUpStateManager.recordFollowUp(
+                                sessionContext.getConversationId(),
+                                questions,
+                                fieldPaths
+                        );
+
+                        // 更新会话上下文的 pendingQuestions
+                        sessionContext.setPendingQuestions(questions);
+                        sessionContextService.updateContext(
+                                sessionContext.getConversationId(),
+                                request.getMessage(),
+                                ""  // AI 响应为空，因为是追问
+                        );
+
+                        // 构建追问响应（不调用 DeepSeek API）
+                        String followUpMessage = followUpResponseBuilder.buildFollowUpMessage(
+                                questions,
+                                diagnosis
+                        );
+
+                        // 保存对话历史（用户问题 + 追问响应）
+                        saveFollowUpHistory(request, followUpMessage, sessionContext.getConversationId());
+
+                        log.info("画像诊断触发追问 - conversationId: {}, 缺失字段数: {}, 追问问题数: {}",
+                                sessionContext.getConversationId(),
+                                diagnosis.getMissingFields().size(),
+                                questions.size());
+
+                        // 直接返回追问响应
+                        return ChatResponse.success(followUpMessage, sessionContext.getConversationId());
+                    }
+
+                    // 如果画像充足或已超过追问限制，标记追问完成
+                    if (!diagnosis.isNeedsCompletion()) {
+                        followUpStateManager.markCompleted(sessionContext.getConversationId());
+                    }
+                }
+
+                // ========== 继续原有流程 ==========
                 // 智能判断是否需要记忆检索（混合方案：规则 + 意图分析）
                 CompletableFuture<List<MemoryItemDTO>> memoriesFuture;
                 boolean shouldRetrieve = MessageValidator.shouldRetrieveMemories(
@@ -130,10 +204,9 @@ public class AiChatService {
                 }
 
                 // 等待两个结果（不阻塞工作线程，只阻塞主线程）
-                CompletableFuture.allOf(profileFuture, memoriesFuture).join();
+                CompletableFuture.allOf(memoriesFuture).join();
 
                 // 获取结果
-                UserProfileDTO profile = profileFuture.get();
                 List<MemoryItemDTO> memories = memoriesFuture.get();
 
                 log.info("上下文获取完成 - customerId: {}, 记忆数: {}, correlationId: {}",
@@ -282,6 +355,31 @@ public class AiChatService {
         } catch (Exception e) {
             log.error("获取相似对话推荐失败 - customerId: {}", customerId, e);
             return List.of();
+        }
+    }
+
+    /**
+     * 保存追问对话历史
+     */
+    private void saveFollowUpHistory(ChatRequest request, String followUpMessage, String conversationId) {
+        try {
+            AiChatHistory history = new AiChatHistory();
+            history.setCustomerId(request.getCustomerId());
+            history.setConversationId(conversationId);
+            history.setUserMessage(request.getMessage());
+            history.setAiResponse(followUpMessage);
+            history.setPromptTokens(0);  // 追问不消耗 Token
+            history.setCompletionTokens(0);
+            history.setTotalTokens(0);
+            history.setCreateTime(LocalDateTime.now());
+            history.setIsDeleted(0);
+
+            chatHistoryMapper.insert(history);
+
+            log.debug("追问对话历史已保存 - conversationId: {}", conversationId);
+
+        } catch (Exception e) {
+            log.error("保存追问对话历史失败 - conversationId: {}", conversationId, e);
         }
     }
 

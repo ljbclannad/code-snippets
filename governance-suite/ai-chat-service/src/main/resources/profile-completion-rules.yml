@@ -1,0 +1,118 @@
+# 画像补全规则配置
+
+rules:
+  # 血糖管理相关
+  - intent: "血糖管理"
+    keywords: ["血糖", "糖尿病", "胰岛素", "降糖", "血糖仪"]
+    required-fields:
+      - path: "healthProfile.bloodSugar"
+        name: "血糖值"
+        priority: HIGH
+        question: "您最近一次测量的血糖值是多少？"
+      - path: "healthProfile.chronicDiseases"
+        name: "慢性病史"
+        priority: MEDIUM
+        question: "您是否有糖尿病或其他慢性疾病？"
+
+  # 饮食咨询相关
+  - intent: "饮食咨询"
+    keywords: ["饮食", "吃", "食物", "营养", "菜谱", "食谱", "餐"]
+    required-fields:
+      - path: "behaviorPreferences.dietaryPreferences"
+        name: "饮食偏好"
+        priority: HIGH
+        question: "您有什么饮食偏好或禁忌吗？"
+      - path: "healthProfile.allergies"
+        name: "过敏史"
+        priority: HIGH
+        question: "您有食物过敏史吗？"
+      - path: "basicInfo.age"
+        name: "年龄"
+        priority: MEDIUM
+        question: "请问您的年龄是多少？"
+
+  # 运动建议相关
+  - intent: "运动建议"
+    keywords: ["运动", "锻炼", "健身", "跑步", "散步", "走路", "瑜伽"]
+    required-fields:
+      - path: "behaviorPreferences.exerciseHabits"
+        name: "运动习惯"
+        priority: MEDIUM
+        question: "您平时的运动频率如何？"
+      - path: "healthProfile.bmi"
+        name: "BMI"
+        priority: LOW
+        question: "您的身高和体重是多少？"
+      - path: "basicInfo.age"
+        name: "年龄"
+        priority: MEDIUM
+        question: "请问您的年龄是多少？"
+
+  # 血压管理相关
+  - intent: "血压管理"
+    keywords: ["血压", "高血压", "低血压", "血压计", "降压"]
+    required-fields:
+      - path: "healthProfile.bloodPressure"
+        name: "血压值"
+        priority: HIGH
+        question: "您最近一次测量的血压是多少？"
+      - path: "healthProfile.chronicDiseases"
+        name: "慢性病史"
+        priority: MEDIUM
+        question: "您是否有高血压或其他心血管疾病？"
+
+  # 减肥相关
+  - intent: "减肥"
+    keywords: ["减肥", "体重", "瘦身", "减重", "肥胖", "瘦"]
+    required-fields:
+      - path: "healthProfile.bmi"
+        name: "BMI"
+        priority: HIGH
+        question: "您的身高和体重是多少？"
+      - path: "behaviorPreferences.exerciseHabits"
+        name: "运动习惯"
+        priority: MEDIUM
+        question: "您平时的运动频率如何？"
+      - path: "behaviorPreferences.dietaryPreferences"
+        name: "饮食偏好"
+        priority: MEDIUM
+        question: "您有什么饮食偏好或禁忌吗？"
+
+  # 用药咨询相关
+  - intent: "用药咨询"
+    keywords: ["药", "吃药", "服药", "用药", "药物", "处方"]
+    required-fields:
+      - path: "healthProfile.chronicDiseases"
+        name: "慢性病史"
+        priority: HIGH
+        question: "您是否有慢性疾病？正在服用哪些药物？"
+      - path: "healthProfile.allergies"
+        name: "过敏史"
+        priority: HIGH
+        question: "您有药物过敏史吗？"
+
+  # 睡眠健康相关
+  - intent: "睡眠健康"
+    keywords: ["睡眠", "失眠", "睡觉", "休息", "困", "睡不着"]
+    required-fields:
+      - path: "behaviorPreferences.sleepHabits"
+        name: "睡眠习惯"
+        priority: MEDIUM
+        question: "您平时的睡眠时间和质量如何？"
+      - path: "basicInfo.age"
+        name: "年龄"
+        priority: LOW
+        question: "请问您的年龄是多少？"
+
+  # 通用健康咨询
+  - intent: "健康咨询"
+    keywords: ["健康", "体检", "检查", "咨询"]
+    required-fields:
+      - path: "basicInfo.age"
+        name: "年龄"
+        priority: MEDIUM
+        question: "请问您的年龄是多少？"
+      - path: "basicInfo.gender"
+        name: "性别"
+        priority: MEDIUM
+        question: "请问您的性别是？"

@@ -19,7 +19,6 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import com.alibaba.csp.sentinel.annotation.SentinelResource;
-import com.lx.governance.common.auth.AuthHeaders;
 import com.lx.governance.common.id.IdGenerator;
 import com.lx.governance.common.monitoring.annotation.Monitored;
 import com.lx.governance.common.trace.Trace;
@@ -60,10 +59,9 @@ public class PaymentAppService {
     @SentinelResource(value = "payment_prepare", blockHandler = "blockPrepare", fallback = "fallbackPrepare")
     public PaymentDto prepare(PreparePaymentRequest req) {
         log.info("Payment preparation started",
-            kv("event", "payment_prepare_start"),
-            kv("orderId", req.getOrderNo()),
-            kv("amount", req.getAmountCents())
-        );
+                kv("event", "payment_prepare_start"),
+                kv("orderId", req.getOrderNo()),
+                kv("amount", req.getAmountCents()));
 
         try {
             if (failPrepare) {
@@ -93,22 +91,20 @@ public class PaymentAppService {
             PaymentDto result = repository.findByUserIdAndOrderNo(req.getUserId(), req.getOrderNo());
 
             log.info("Payment prepared successfully",
-                kv("event", "payment_prepared"),
-                kv("paymentId", result.getPayNo()),
-                kv("orderId", req.getOrderNo()),
-                kv("amount", req.getAmountCents()),
-                kv("status", "PREPARED")
-            );
+                    kv("event", "payment_prepared"),
+                    kv("paymentId", result.getPayNo()),
+                    kv("orderId", req.getOrderNo()),
+                    kv("amount", req.getAmountCents()),
+                    kv("status", "PREPARED"));
 
             return result;
         } catch (Exception e) {
             log.error("Payment preparation failed",
-                kv("event", "payment_prepare_failed"),
-                kv("orderId", req.getOrderNo()),
-                kv("error", e.getMessage()),
-                kv("status", "FAILED"),
-                e
-            );
+                    kv("event", "payment_prepare_failed"),
+                    kv("orderId", req.getOrderNo()),
+                    kv("error", e.getMessage()),
+                    kv("status", "FAILED"),
+                    e);
             throw e;
         }
     }
@@ -116,16 +112,16 @@ public class PaymentAppService {
     @Monitored(value = "payment.confirm", description = "支付确认")
     public PaymentDto confirm(Long userId, String orderNo) {
         log.info("Payment confirmation started",
-            kv("event", "payment_confirm_start"),
-            kv("orderId", orderNo),
-            kv("userId", userId)
-        );
+                kv("event", "payment_confirm_start"),
+                kv("orderId", orderNo),
+                kv("userId", userId));
 
         if (failConfirm) {
             throw new IllegalStateException("lab injected failure: payment confirm");
         }
 
-        PaymentDto p = userId == null ? repository.findByOrderNo(orderNo) : repository.findByUserIdAndOrderNo(userId, orderNo);
+        PaymentDto p = userId == null ? repository.findByOrderNo(orderNo)
+                : repository.findByUserIdAndOrderNo(userId, orderNo);
         if (p == null) {
             throw new IllegalArgumentException("payment not found");
         }
@@ -140,11 +136,10 @@ public class PaymentAppService {
         p = userId == null ? repository.findByOrderNo(orderNo) : repository.findByUserIdAndOrderNo(userId, orderNo);
 
         log.info("Payment confirmed successfully",
-            kv("event", "payment_confirmed"),
-            kv("paymentId", p.getPayNo()),
-            kv("orderId", orderNo),
-            kv("status", "CONFIRMED")
-        );
+                kv("event", "payment_confirmed"),
+                kv("paymentId", p.getPayNo()),
+                kv("orderId", orderNo),
+                kv("status", "CONFIRMED"));
 
         // 复用 traceId，便于串联业务日志与消息发送确认日志。
         String traceId = Trace.getOrCreate();
