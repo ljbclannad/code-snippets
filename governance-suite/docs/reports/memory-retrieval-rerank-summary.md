@@ -15,7 +15,7 @@
 | `MemoryRerankService.java` | Rerank 服务，提供全量和部分重排序功能 |
 | `MemoryRetrievalProperties.java` | 配置属性类，支持启用/禁用 Rerank |
 | `MemoryRerankServiceTest.java` | 单元测试 |
-| `docs/memory-retrieval-rerank.md` | 详细设计文档 |
+| `docs/analysis/memory-retrieval-rerank.md` | 详细设计文档 |
 
 ### 2. 修改文件
 
@@ -209,7 +209,7 @@ mvn -q -pl vector-memory-service compile -DskipTests
 
 ## 相关文档
 
-- 📄 [详细设计文档](./memory-retrieval-rerank.md)
+- 📄 [详细设计文档](../analysis/memory-retrieval-rerank.md)
 - 📄 [CLAUDE.md](../CLAUDE.md) - 项目总览
 - 📄 [README.md](../README.md) - 项目说明
 

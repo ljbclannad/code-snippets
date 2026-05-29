@@ -400,7 +400,7 @@ cp .env.example .env
 
 ## 四、启动脚本
 
-### 4.1 start-ai-services.sh
+### 4.1 sh/run/start-ai-services.sh
 
 ```bash
 #!/bin/bash
@@ -463,10 +463,10 @@ echo "vector-memory-service: http://localhost:8102"
 echo "ai-chat-service: http://localhost:8103"
 echo ""
 echo "查看日志: tail -f logs/*.log"
-echo "停止服务: ./stop-ai-services.sh"
+echo "停止服务: ./sh/run/stop-ai-services.sh"
 ```
 
-### 4.2 stop-ai-services.sh
+### 4.2 sh/run/stop-ai-services.sh
 
 ```bash
 #!/bin/bash

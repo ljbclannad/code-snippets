@@ -1,16 +1,30 @@
+# Build output
 **/target/
+
+# Local environment
 .env
+.env.local
+.env.*.local
+
+# Logs and runtime artifacts
 logs/
+**/logs/
+*.log
 *.pid
+*.out
+
+# Local test/debug output
+test-results*.log
+order-service.log
+
+# IDE and OS files
+.idea/
+.vscode/
+.DS_Store
 
 # Backup files
 *.backup
 *.bak
 
-# Superpowers plans (local only)
+# Superpowers plans (local working artifacts)
 docs/superpowers/plans/
-
-# Local scripts
-start-all-services.sh
-stop-all-services.sh
-test-create-order.sh

@@ -50,7 +50,7 @@ management:
 ```
 
 ### 4. 创建验证工具
-- ✅ 创建 `verify-monitoring.sh` 验证脚本
+- ✅ 创建 `sh/verify/verify-monitoring.sh` 验证脚本
 
 ---
 
@@ -109,7 +109,7 @@ mvn -q -pl outbox-consumer spring-boot:run  # 端口 8090
 mvn -q -pl ai-chat-service spring-boot:run  # 端口 8100
 
 # 验证监控端点
-./verify-monitoring.sh
+./sh/verify/verify-monitoring.sh
 ```
 
 ### 3. 验证 Prometheus 端点
@@ -310,8 +310,8 @@ curl http://localhost:8081/actuator/prometheus
 - **Prometheus 配置**: `docker/prometheus/prometheus.yml`
 - **Grafana 仪表盘**: `docker/grafana/provisioning/dashboards/`
 - **监控使用指南**: `docker/prometheus/README.md`
-- **总体监控说明**: `MONITORING.md`
-- **验证脚本**: `verify-monitoring.sh`
+- **总体监控说明**: `docs/runbooks/MONITORING.md`
+- **验证脚本**: `sh/verify/verify-monitoring.sh`
 
 ---
 

@@ -1,107 +1,189 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file defines repository-specific rules for agents working in `governance-suite`.
 
-## Project Purpose
+## Purpose
 
-A Spring Cloud microservices **learning project** demonstrating distributed systems patterns through a runnable order-fulfillment flow. It is intentionally experimental — not a production template.
+`governance-suite` is a multi-system learning repository. It currently contains four independent tracks:
 
-## Build & Run
+1. Distributed systems governance
+2. AI memory system
+3. Doctor assistant agent
+4. Hospital appointment scenario
+
+Treat these as separate subprojects that happen to share infrastructure and some common modules.
+
+## Hard Rules
+
+### Scope control
+
+- MUST identify the target subproject before editing code.
+- MUST keep searches, edits, builds, and validation scoped to the relevant module whenever possible.
+- MUST NOT do repo-wide refactors unless the user explicitly asks for them.
+- MUST NOT change unrelated files just because they are nearby.
+
+### File organization
+
+- MUST keep root-level documentation in `docs/`, except `README.md` and `CLAUDE.md`.
+- MUST keep root-level scripts in `sh/`.
+- MUST classify root-level scripts under `sh/run/`, `sh/test/`, or `sh/verify/` when practical.
+- MUST preserve existing subproject-local documentation under each module unless the user explicitly asks to centralize it.
+- MUST update references when moving files that are used by root documentation or scripts.
+
+### Editing and safety
+
+- MUST prefer minimal, targeted changes over broad rewrites.
+- MUST preserve user changes and in-progress work unless explicitly told to revert them.
+- MUST NOT use destructive cleanup commands such as `git reset --hard` or `git checkout --` unless explicitly requested.
+- MUST NOT silently “fix” unrelated warnings or style issues while addressing another task.
+
+### Validation
+
+- MUST validate with the smallest command that proves the change.
+- MUST prefer module-scoped Maven commands such as `mvn -f <module>/pom.xml ...`.
+- MUST report exactly what was validated and what was not validated.
+- MUST treat runtime verification as more authoritative than static assumptions for integration issues.
+
+### Debugging discipline
+
+- MUST find the failing layer before changing code for runtime issues.
+- MUST verify across configuration, runtime logs, and actual behavior for distributed or infra problems.
+- MUST NOT claim a fix works without evidence from logs, API calls, tests, or builds.
+
+## Repo Conventions
+
+### Root layout
+
+- `README.md` is the entry document, not the full design manual.
+- `docs/` stores root-level guides, analyses, and implementation notes.
+- `sh/` stores root-level utility and verification scripts.
+- `sh/run/` is for start/stop scripts.
+- `sh/test/` is for scenario and business test scripts.
+- `sh/verify/` is for environment or monitoring verification scripts.
+- `docker-compose.yml` defines the shared local infrastructure.
+
+### Documentation conventions
+
+- Keep `README.md` concise and navigational.
+- Put deep technical explanations, investigations, and implementation notes in `docs/`.
+- Prefer adding links from `README.md` to detailed docs instead of expanding the homepage indefinitely.
+
+### Script conventions
+
+- Root scripts should be invoked from `sh/`.
+- New root-level operational or verification scripts should be created under `sh/`, not at repository root.
+- Prefer `sh/run/`, `sh/test/`, and `sh/verify/` over placing all scripts directly under `sh/`.
+- If a script is specific to one subproject and already lives inside that subproject, keep it there unless the user asks otherwise.
+
+## Validation Heuristics
+
+### Maven
+
+- Prefer:
+  - `mvn -f common/pom.xml compile`
+  - `mvn -f order-service/pom.xml spring-boot:run`
+  - `mvn -f payment-service/pom.xml test`
+- Avoid broad reactor builds when a single module build is enough.
+
+### Runtime verification
+
+- For service registration issues, check:
+  - service config
+  - runtime logs
+  - registry state
+- For Seata issues, check:
+  - service logs
+  - Seata server logs
+  - transaction begin/branch/commit/rollback events
+- For Nacos issues, check:
+  - client startup logs
+  - Nacos API or console
+  - actual reachable instances
+- For observability issues, verify both:
+  - exporter endpoint/protocol configuration
+  - actual collector behavior
+
+## Build and Run
+
+### Shared infrastructure
 
 ```bash
-# Start all infrastructure first
 docker compose up -d
+```
 
-# Build all modules (skip tests)
+### Full build
+
+```bash
 mvn -T 1C clean package -DskipTests
+```
 
-# Run individual services (each in its own terminal)
-mvn -q -pl gateway spring-boot:run          # port 8080
-mvn -q -pl order-service spring-boot:run    # port 8081
-mvn -q -pl payment-service spring-boot:run  # port 8082
-mvn -q -pl inventory-service spring-boot:run # port 8083
-mvn -q -pl user-service spring-boot:run     # port 8084
-mvn -q -pl appointment-service spring-boot:run # port 8089
-mvn -q -pl outbox-consumer spring-boot:run  # port 8090
+### Common service runs
 
-# Failure injection for lab experiments (run instead of normal start)
+```bash
+mvn -q -pl gateway spring-boot:run
+mvn -q -pl user-service spring-boot:run
+mvn -q -pl order-service spring-boot:run
+mvn -q -pl payment-service spring-boot:run
+mvn -q -pl inventory-service spring-boot:run
+mvn -q -pl appointment-service spring-boot:run
+mvn -q -pl outbox-consumer spring-boot:run
+mvn -q -pl doctor-assistant-agent spring-boot:run
+```
+
+### Failure injection
+
+```bash
 LAB_FAIL_INVENTORY_DEDUCT=true mvn -q -pl inventory-service spring-boot:run
 LAB_FAIL_PAYMENT_PREPARE=true  mvn -q -pl payment-service spring-boot:run
 LAB_FAIL_PAYMENT_CONFIRM=true  mvn -q -pl payment-service spring-boot:run
 LAB_FAIL_OUTBOX_PUBLISH=true   mvn -q -pl outbox-consumer spring-boot:run
 ```
 
-There are no automated tests to run. Verification is done via curl against the live services (see README.md for examples).
+## Verification Sources
 
-## Module Architecture
+- Use `README.md` as the top-level operator guide.
+- Use `docs/` for detailed system docs and verification guides.
+- Use `sh/` for root-level scripted checks.
 
-```
-client → gateway(8080) → user-service(8084)
-                       → order-service(8081) → inventory-service(8083)
-                                             → payment-service(8082)
-                                             → outbox-consumer(8090) → RabbitMQ
-                       → appointment-service(8089) → payment-service(8082)
-                                                   → RabbitMQ (async notifications)
-```
+There are no reliable repo-wide automated tests that prove the whole system. For many changes, verification is done through module compilation, live service startup, logs, and direct HTTP calls.
 
-| Module | Role |
-|---|---|
-| `common` | Shared utilities: ApiResponse, tracing, auth token, Snowflake ID, exception handling |
-| `gateway` | Token validation filter, IP rate limiting (Redis), Sentinel circuit breaking, route to services via Nacos |
-| `user-service` | Register/login, HMAC token issuance, aggregates payment history via OpenFeign |
-| `order-service` | `@GlobalTransactional` (Seata) spanning inventory+payment; outbox write; Redis Lua seckill |
-| `payment-service` | Sharded by `user_id`; two-phase prepare/confirm; publishes `payment.confirmed` to RabbitMQ |
-| `inventory-service` | Optimistic-lock stock deduction with retry loop (5 attempts) |
-| `appointment-service` | Medical appointment booking; Redis Lua atomic slot reservation; dual-layer rate limiting (userId + scheduleId); async RabbitMQ notifications |
-| `outbox-consumer` | Polls `t_outbox` every 1 s, publishes to RabbitMQ, exponential backoff on failure (max 5 retries → DEAD) |
+## Architecture Notes
 
-## Key Patterns
+### Distributed systems governance
 
-### Cross-cutting (common module)
-- **`ApiResponse<T>`** — every endpoint returns `{success, code, message, traceId, data}`.
-- **`Trace` / `TraceIdFilter`** — MDC-propagated `traceId` injected into every request and response.
-- **`AuthTokenService`** — stateless HMAC-SHA256 token (2-part Base64, not JWT). TTL 2 hours.
-- **`SnowflakeIdGenerator`** — lock-free CAS, custom epoch 2024-01-01. Each service uses a different `workerId` (configured in `application.yml`).
-- **`GlobalExceptionHandler`** — maps all exceptions to `ApiResponse`.
+- `gateway` provides routing, token validation, and rate limiting.
+- `order-service` is the Seata initiator for the order flow.
+- `inventory-service` and `payment-service` are transaction participants.
+- `outbox-consumer` handles eventual consistency with RabbitMQ.
 
-### Gateway auth flow
-`AuthTokenGlobalFilter` (order=-90) validates the token, then injects `X-User-Id` / `X-Username` headers for downstream services. Public paths (`/api/user/register`, `/api/user/login`, `/actuator`) bypass validation.
+### Hospital appointment scenario
 
-### Distributed transaction (order-service)
-`OrderAppService.createOrder()` is annotated `@GlobalTransactional`. It calls inventory-service (`InventoryClient.deduct`) and payment-service (`PaymentClient.prepare`) via OpenFeign. Seata AT mode provides automatic rollback across all three services if anything fails. An `t_outbox` row is written in the same local transaction.
+- `appointment-service` uses Redis Lua for reservation logic.
+- Gateway-side rate limiting protects hot appointment flows.
 
-### Outbox status machine
-`NEW → SENT` (success) or `NEW → FAILED → ... → DEAD` (after 5 retries). The `outbox-consumer` polls in a scheduled task; no message broker needed for durability.
+### AI systems
 
-### Seckill (flash sale) — order-service v2 endpoint
-A Redis Lua script atomically: checks stock, deduplicates the buyer, decrements stock, appends to `seckill:stream:orders`. A scheduled consumer reads the stream and writes to the DB. DB-level guard: `t_seckill_order_guard` unique constraint on `(user_id, sku_id)`.
+- `ai-chat-service`, `user-profile-service`, and `vector-memory-service` are independent from the order flow.
+- `doctor-assistant-agent` is its own system with separate docs and tests.
 
-### Idempotency
-Every mutating operation uses `IdempotencyService.tryLock(key)` backed by Redis `SET NX` (1-hour TTL). Key formats: `idempotency:{requestId}` (orders), `idem:pay:prepare:{userId}:{orderNo}` (payments), `idem:stock:{orderNo}` (inventory).
-
-### Data sharding (ShardingSphere JDBC)
-- `t_order_{0,1}` — sharded by `order_no` hash mod 2.
-- `t_payment_{0,1}` — sharded by `user_id` hash mod 2 (query locality for user payment history).
-
-### Appointment booking flow (appointment-service)
-Four-step lifecycle: **query schedules → book slot → pay → cancel**.
-
-1. **Query schedules** — `GET /api/appointment/schedules` returns available slots with remaining capacity from `t_doctor_schedule`.
-2. **Book slot** — `POST /api/appointment/book` uses Redis Lua script to atomically: check slot availability, deduplicate user, decrement `available_slots`, write reservation to Redis hash. DB write happens after Redis success. Idempotency key: `idem:appt:book:{userId}:{scheduleId}`.
-3. **Pay** — `POST /api/appointment/{id}/pay` calls payment-service via OpenFeign, updates appointment status to `PAID`, publishes `appointment.paid` event to RabbitMQ for async notification.
-4. **Cancel** — `POST /api/appointment/{id}/cancel` refunds via payment-service, increments Redis slot counter, updates status to `CANCELLED`.
-
-**Dual-layer rate limiting** — Gateway applies per-user rate limit (10 req/min) AND per-schedule rate limit (100 req/min) using Redis sliding window. Both must pass for request to proceed.
-
-**Async notifications** — `AppointmentPaidEventHandler` listens to `appointment.paid` queue, sends confirmation message via external notification service (simulated). Failures are retried with exponential backoff (max 5 attempts).
-
-## Infrastructure Ports
+## Ports
 
 | Service | Port |
 |---|---|
+| gateway | 8080 |
+| order-service | 8081 |
+| payment-service | 8082 |
+| inventory-service | 8083 |
+| user-service | 8084 |
+| ai-chat-service | 8085 |
+| user-profile-service | 8086 |
+| vector-memory-service | 8087 |
+| doctor-assistant-agent | 8088 |
+| appointment-service | 8089 |
+| outbox-consumer | 8090 |
 | Nacos | 8848 |
 | Seata | 8091 |
-| Sentinel Dashboard | 8858 |
-| RabbitMQ management | 15672 |
+| Sentinel | 8858 |
+| RabbitMQ Management | 15672 |
 | Redis | 36379 |
 | MySQL | 3306 |

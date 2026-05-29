@@ -768,7 +768,7 @@ public class AppointmentHealthIndicator implements HealthIndicator {
 
 ### 9.1 测试脚本设计
 
-**脚本文件**：`test-appointment.sh`
+**脚本文件**：`sh/test/test-appointment.sh`
 
 #### 9.1.1 场景 1：正常流程
 
@@ -974,8 +974,8 @@ mvn -q -pl outbox-consumer spring-boot:run      # 终端4: 8090
 # 应该看到 appointment-service 已注册
 
 # 6. 执行测试脚本
-chmod +x test-appointment.sh
-./test-appointment.sh
+chmod +x sh/test/test-appointment.sh
+./sh/test/test-appointment.sh
 ```
 
 #### 9.2.2 停止服务
@@ -1325,7 +1325,7 @@ gateway/
 sql/
 └── init-appointment.sql                         # 数据库初始化脚本
 
-test-appointment.sh                              # 测试脚本
+sh/test/test-appointment.sh                      # 测试脚本
 ```
 
 ### 10.2 核心类清单
@@ -1369,7 +1369,7 @@ test-appointment.sh                              # 测试脚本
 - `init-appointment.sql` - 建表 + 测试数据
 
 **测试脚本**：
-- `test-appointment.sh` - 完整测试场景
+- `sh/test/test-appointment.sh` - 完整测试场景
 
 ---
 
@@ -1424,4 +1424,3 @@ test-appointment.sh                              # 测试脚本
 **设计完成日期**：2026-05-26
 
 **设计状态**：已批准，待实现
-

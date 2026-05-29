@@ -1,6 +1,6 @@
 package com.lx.governance.order;
 
-import com.lx.governance.common.filter.TraceIdFilter;
+import io.micrometer.tracing.Tracer;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
@@ -8,12 +8,14 @@ import org.springframework.cloud.openfeign.EnableFeignClients;
 import org.springframework.context.annotation.Bean;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
+import com.lx.governance.common.filter.TraceIdFilter;
+
 @SpringBootApplication(scanBasePackages = {
-    "com.lx.governance.order",
-    "com.lx.governance.common.auth",
-    "com.lx.governance.common.trace",
-    "com.lx.governance.common.web",
-    "com.lx.governance.common.api"
+        "com.lx.governance.order",
+        "com.lx.governance.common.auth",
+        "com.lx.governance.common.trace",
+        "com.lx.governance.common.web",
+        "com.lx.governance.common.api"
 })
 @EnableFeignClients
 @EnableScheduling
@@ -23,9 +25,9 @@ public class OrderServiceApplication {
     }
 
     @Bean
-    public FilterRegistrationBean<TraceIdFilter> traceFilter() {
+    public FilterRegistrationBean<TraceIdFilter> traceFilter(Tracer tracer) {
         FilterRegistrationBean<TraceIdFilter> bean = new FilterRegistrationBean<>();
-        bean.setFilter(new TraceIdFilter());
+        bean.setFilter(new TraceIdFilter(tracer));
         bean.addUrlPatterns("/*");
         bean.setOrder(-100);
         return bean;

@@ -1,6 +1,7 @@
 package com.lx.governance.user;
 
-import com.lx.governance.common.web.TraceIdFilter;
+import com.lx.governance.common.filter.TraceIdFilter;
+import io.micrometer.tracing.Tracer;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
@@ -21,9 +22,9 @@ public class UserServiceApplication {
     }
 
     @Bean
-    public FilterRegistrationBean<TraceIdFilter> traceFilter() {
+    public FilterRegistrationBean<TraceIdFilter> traceFilter(Tracer tracer) {
         FilterRegistrationBean<TraceIdFilter> bean = new FilterRegistrationBean<>();
-        bean.setFilter(new TraceIdFilter());
+        bean.setFilter(new TraceIdFilter(tracer));
         bean.addUrlPatterns("/*");
         bean.setOrder(-100);
         return bean;

@@ -1,11 +1,12 @@
 package com.lx.governance.payment;
 
+import io.micrometer.tracing.Tracer;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 
-import com.lx.governance.common.web.TraceIdFilter;
+import com.lx.governance.common.filter.TraceIdFilter;
 
 @SpringBootApplication(scanBasePackages = {
         "com.lx.governance.payment",
@@ -20,9 +21,9 @@ public class PaymentServiceApplication {
     }
 
     @Bean
-    public FilterRegistrationBean<TraceIdFilter> traceFilter() {
+    public FilterRegistrationBean<TraceIdFilter> traceFilter(Tracer tracer) {
         FilterRegistrationBean<TraceIdFilter> bean = new FilterRegistrationBean<>();
-        bean.setFilter(new TraceIdFilter());
+        bean.setFilter(new TraceIdFilter(tracer));
         bean.addUrlPatterns("/*");
         bean.setOrder(-100);
         return bean;

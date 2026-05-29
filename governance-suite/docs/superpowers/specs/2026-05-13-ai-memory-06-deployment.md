@@ -141,8 +141,8 @@ source .env
 
 ```bash
 # 使用启动脚本
-chmod +x start-ai-services.sh
-./start-ai-services.sh
+chmod +x sh/run/start-ai-services.sh
+./sh/run/start-ai-services.sh
 
 # 或手动启动（每个服务在独立终端）
 # 终端 1

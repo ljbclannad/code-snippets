@@ -78,6 +78,17 @@ public class ShardingSphereDataSourceConfig {
         orderTableRule.setTableShardingStrategy(
                 new StandardShardingStrategyConfiguration("order_no", "order-inline"));
 
+        // Single tables on the same logical datasource still need metadata entries
+        ShardingTableRuleConfiguration outboxTableRule = new ShardingTableRuleConfiguration(
+                "t_outbox",
+                "order_ds.t_outbox");
+        ShardingTableRuleConfiguration paymentEventConsumeTableRule = new ShardingTableRuleConfiguration(
+                "t_payment_event_consume",
+                "order_ds.t_payment_event_consume");
+        ShardingTableRuleConfiguration seckillOrderGuardTableRule = new ShardingTableRuleConfiguration(
+                "t_seckill_order_guard",
+                "order_ds.t_seckill_order_guard");
+
         Map<String, AlgorithmConfiguration> shardingAlgorithms = new HashMap<>();
         Properties inlineProps = new Properties();
         inlineProps.setProperty("algorithm-expression", "t_order_${Math.abs(order_no.hashCode()) % 2}");
@@ -85,6 +96,9 @@ public class ShardingSphereDataSourceConfig {
 
         ShardingRuleConfiguration shardingRule = new ShardingRuleConfiguration();
         shardingRule.getTables().add(orderTableRule);
+        shardingRule.getTables().add(outboxTableRule);
+        shardingRule.getTables().add(paymentEventConsumeTableRule);
+        shardingRule.getTables().add(seckillOrderGuardTableRule);
         shardingRule.setShardingAlgorithms(shardingAlgorithms);
 
         // SQL show
