@@ -7,7 +7,7 @@ spring:
 
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3306/order_db?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false
+    url: jdbc:mysql://localhost:3306/governance_db?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false
     username: root
     password: root
 
@@ -64,7 +64,7 @@ mybatis-plus:
 
 # Snowflake ID 配置
 snowflake:
-  worker-id: 5
+  worker-id: ${SNOWFLAKE_WORKER_ID:5}
 
 # 日志配置
 logging:
