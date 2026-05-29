@@ -118,3 +118,25 @@ app:
       enabled: true
       max-attempts: 30
       retry-interval-ms: 2000
+
+# 挂号接口限流配置
+appointment:
+  rate-limit:
+    enabled: true
+    target-path: /api/appointment/grab
+    # 热门科室限流配置
+    hot-dept:
+      replenish-rate: 20
+      burst-capacity: 40
+    # 普通科室限流配置
+    normal-dept:
+      replenish-rate: 10
+      burst-capacity: 20
+    # 用户级限流配置
+    user:
+      replenish-rate: 2
+      burst-capacity: 5
+    # 热门科室缓存配置
+    hot-dept-cache:
+      max-size: 1000
+      expire-after-write-seconds: 60
