@@ -1,6 +1,6 @@
 package com.lx.governance.order;
 
-import com.lx.governance.common.web.TraceIdFilter;
+import com.lx.governance.common.filter.TraceIdFilter;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;

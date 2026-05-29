@@ -11,6 +11,10 @@ public class RabbitMQConfig {
     public static final String QUEUE_NAME = "appointment.notification.queue";
     public static final String ROUTING_KEY = "appointment.paid";
 
+    // 死信队列配置
+    public static final String DLX_EXCHANGE = "dlx.exchange";
+    public static final String DLX_QUEUE = "dlx.queue";
+
     @Bean
     public TopicExchange appointmentExchange() {
         return new TopicExchange(EXCHANGE_NAME, true, false);
@@ -18,7 +22,11 @@ public class RabbitMQConfig {
 
     @Bean
     public Queue appointmentNotificationQueue() {
-        return new Queue(QUEUE_NAME, true);
+        // 配置死信队列和消息 TTL
+        return QueueBuilder.durable(QUEUE_NAME)
+            .withArgument("x-dead-letter-exchange", DLX_EXCHANGE)
+            .withArgument("x-message-ttl", 60000)  // 60秒超时
+            .build();
     }
 
     @Bean
@@ -27,5 +35,22 @@ public class RabbitMQConfig {
             .bind(appointmentNotificationQueue())
             .to(appointmentExchange())
             .with(ROUTING_KEY);
+    }
+
+    @Bean
+    public FanoutExchange dlxExchange() {
+        return new FanoutExchange(DLX_EXCHANGE, true, false);
+    }
+
+    @Bean
+    public Queue dlxQueue() {
+        return QueueBuilder.durable(DLX_QUEUE).build();
+    }
+
+    @Bean
+    public Binding dlxBinding() {
+        return BindingBuilder
+            .bind(dlxQueue())
+            .to(dlxExchange());
     }
 }
