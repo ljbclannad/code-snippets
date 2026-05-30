@@ -21,6 +21,9 @@ public class PendingTaskService {
     @Autowired
     private PendingTaskMapper taskMapper;
 
+    @Autowired
+    private AgentAuditService agentAuditService;
+
     /**
      * 保存待确认任务
      */
@@ -75,6 +78,7 @@ public class PendingTaskService {
         task.setReviewedAt(LocalDateTime.now());
 
         taskMapper.updateById(task);
+        agentAuditService.recordTaskReview(taskId, TaskStatus.APPROVED.name(), reviewComment);
         log.info("批准任务: taskId={}, tool={}", taskId, task.getToolName());
     }
 
@@ -93,6 +97,7 @@ public class PendingTaskService {
         task.setReviewedAt(LocalDateTime.now());
 
         taskMapper.updateById(task);
+        agentAuditService.recordTaskReview(taskId, TaskStatus.REJECTED.name(), reviewComment);
         log.info("拒绝任务: taskId={}, tool={}", taskId, task.getToolName());
     }
 

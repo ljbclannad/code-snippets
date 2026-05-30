@@ -4,6 +4,7 @@ import com.health.agent.metrics.ToolMetrics;
 import com.health.agent.model.ActionDecision;
 import com.health.agent.model.ActionResult;
 import com.health.agent.model.PendingTask;
+import com.health.agent.service.AgentAuditService;
 import com.health.agent.service.PendingTaskService;
 import com.health.agent.tool.Tool;
 import com.health.agent.tool.ToolInputValidator;
@@ -24,6 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -36,6 +38,9 @@ class ActionExecutorTest {
     @Mock
     private PendingTaskService pendingTaskService;
 
+    @Mock
+    private AgentAuditService agentAuditService;
+
     private ActionExecutor actionExecutor;
 
     @BeforeEach
@@ -43,6 +48,7 @@ class ActionExecutorTest {
         actionExecutor = new ActionExecutor();
         ReflectionTestUtils.setField(actionExecutor, "toolRegistry", toolRegistry);
         ReflectionTestUtils.setField(actionExecutor, "pendingTaskService", pendingTaskService);
+        ReflectionTestUtils.setField(actionExecutor, "agentAuditService", agentAuditService);
         ReflectionTestUtils.setField(
             actionExecutor,
             "toolMetrics",
@@ -55,14 +61,14 @@ class ActionExecutorTest {
     @Test
     void highRiskActionShouldPersistDoctorIdOnPendingTask() {
         Tool tool = Tool.builder()
-            .name("draft_prescription")
-            .description("起草处方建议")
+            .name("draft_weight_management_plan")
+            .description("起草减重管理方案建议")
             .riskLevel(ToolRiskLevel.HIGH)
             .build();
-        when(toolRegistry.getTool("draft_prescription")).thenReturn(tool);
+        when(toolRegistry.getTool("draft_weight_management_plan")).thenReturn(tool);
 
         ActionDecision action = ActionDecision.builder()
-            .toolName("draft_prescription")
+            .toolName("draft_weight_management_plan")
             .input(Map.of("customerId", "C001", "recommendations", new String[]{"A"}))
             .reason("需要医生审批")
             .build();
@@ -76,9 +82,10 @@ class ActionExecutorTest {
         PendingTask savedTask = taskCaptor.getValue();
         assertNotNull(savedTask.getDoctorId());
         assertEquals("D001", savedTask.getDoctorId());
-        assertEquals("draft_prescription", savedTask.getToolName());
+        assertEquals("draft_weight_management_plan", savedTask.getToolName());
         assertEquals("S001", savedTask.getAgentSessionId());
         assertEquals("C001", savedTask.getCustomerId());
+        verify(agentAuditService).recordPendingTaskCreated(savedTask, null);
     }
 
     @Test
@@ -105,6 +112,17 @@ class ActionExecutorTest {
 
         assertFalse(result.isSuccess());
         assertTrue(result.getErrorMessage().contains("INVALID_TOOL_INPUT"));
+        verify(agentAuditService).recordToolExecution(
+            org.mockito.ArgumentMatchers.eq("S001"),
+            org.mockito.ArgumentMatchers.eq("C001"),
+            org.mockito.ArgumentMatchers.eq("D001"),
+            org.mockito.ArgumentMatchers.isNull(),
+            org.mockito.ArgumentMatchers.eq("get_weight_history"),
+            contains("\"customerId\":\"C001\""),
+            org.mockito.ArgumentMatchers.isNull(),
+            org.mockito.ArgumentMatchers.eq("LOW"),
+            org.mockito.ArgumentMatchers.eq("INVALID_TOOL_INPUT")
+        );
     }
 
     @Test
@@ -137,5 +155,16 @@ class ActionExecutorTest {
 
         assertFalse(result.isSuccess());
         assertTrue(result.getErrorMessage().contains("TIMEOUT"));
+        verify(agentAuditService).recordToolExecution(
+            "S001",
+            "C001",
+            "D001",
+            null,
+            "get_patient_profile",
+            "{\"customerId\":\"C001\"}",
+            null,
+            "LOW",
+            "ERROR"
+        );
     }
 }

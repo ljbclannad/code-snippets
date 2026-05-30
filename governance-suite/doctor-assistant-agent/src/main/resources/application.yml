@@ -62,6 +62,14 @@ agent:
     max-tokens: 2000
     request-timeout: 5s
     max-retries: 2
+  weight-plateau:
+    window-days: 14
+    max-weight-change-kg: 0.5
+    recent-trend-days: 7
+    recent-downward-threshold-kg: 0.2
+  adherence:
+    analysis-window-days: 14
+    min-weight-records: 3
 
 # Milvus 向量数据库配置
 milvus:

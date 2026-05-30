@@ -1,4 +1,10 @@
-# 🎉 医生助手 ReAct Agent 项目创建完成！
+# 🎉 减重管理医生助手 ReAct Agent 项目创建完成！
+
+> 历史说明：本文档是项目早期阶段总结，部分工具名、模型说明和场景表述已经过时。
+> 当前建议优先阅读根目录：
+> - `README.md`
+> - `PRODUCT_OVERVIEW.md`
+> - `ENGINEERING_GUIDE.md`
 
 ## ✅ 项目概览
 

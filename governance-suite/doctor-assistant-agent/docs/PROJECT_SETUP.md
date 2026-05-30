@@ -1,4 +1,10 @@
-# 医生助手 ReAct Agent 项目 - 创建总结
+# 减重管理医生助手 ReAct Agent 项目 - 创建总结
+
+> 历史说明：本文档主要记录项目创建阶段内容，部分模块命名、模型说明和实施步骤已经过时。
+> 当前建议优先阅读根目录：
+> - `README.md`
+> - `PRODUCT_OVERVIEW.md`
+> - `ENGINEERING_GUIDE.md`
 
 ## ✅ 项目创建完成
 
@@ -15,7 +21,7 @@
 - ✅ `sql/schema.sql` - 完整的数据库设计
   - agent_session（会话表）
   - agent_pending_task（待确认任务表）
-  - agent_execution_log（执行日志表）
+  - agent_execution_log（执行日志表，含工具输入输出、审批状态、审批意见、最终结果）
   - patient_profile（患者档案表）
   - weight_record（体重记录表）
   - chat_message（聊天记录表）

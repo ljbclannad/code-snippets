@@ -3,6 +3,7 @@ package com.health.agent.engine;
 import com.alibaba.fastjson2.JSON;
 import com.health.agent.exception.AgentException;
 import com.health.agent.model.ActionDecision;
+import com.health.agent.model.StructuredFinalAnswer;
 import com.health.agent.model.ThoughtResult;
 import org.springframework.stereotype.Component;
 
@@ -23,7 +24,7 @@ public class ReActResponseParser {
 
         String thinking = payload.thinking != null ? payload.thinking.trim() : "";
         if (payload.finished) {
-            return ThoughtResult.finished(thinking, payload.finalAnswer.trim());
+            return ThoughtResult.finished(thinking, payload.finalAnswer);
         }
 
         ActionDecision action = ActionDecision.builder()
@@ -57,12 +58,12 @@ public class ReActResponseParser {
             if (payload.action != null) {
                 throw new AgentException("协议校验失败：finished=true 时不能包含 action");
             }
-            if (payload.finalAnswer == null || payload.finalAnswer.isBlank()) {
+            if (payload.finalAnswer == null || payload.finalAnswer.getSummary() == null || payload.finalAnswer.getSummary().isBlank()) {
                 throw new AgentException("协议校验失败：finished=true 时 finalAnswer 不能为空");
             }
             return;
         }
-        if (payload.finalAnswer != null && !payload.finalAnswer.isBlank()) {
+        if (payload.finalAnswer != null) {
             throw new AgentException("协议校验失败：finished=false 时不能包含 finalAnswer");
         }
         if (payload.action == null) {
@@ -99,7 +100,7 @@ public class ReActResponseParser {
         public String protocolVersion;
         public String thinking;
         public boolean finished;
-        public String finalAnswer;
+        public StructuredFinalAnswer finalAnswer;
         public ActionPayload action;
     }
 

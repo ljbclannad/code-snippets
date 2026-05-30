@@ -4,6 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.health.agent.exception.AgentException;
 import com.health.agent.metrics.ToolMetrics;
 import com.health.agent.model.*;
+import com.health.agent.service.AgentAuditService;
 import com.health.agent.service.PendingTaskService;
 import com.health.agent.tool.Tool;
 import com.health.agent.tool.ToolInputValidator;
@@ -40,6 +41,9 @@ public class ActionExecutor {
     private PendingTaskService pendingTaskService;
 
     @Autowired
+    private AgentAuditService agentAuditService;
+
+    @Autowired
     private ToolMetrics toolMetrics;
 
     @Autowired
@@ -72,6 +76,17 @@ public class ActionExecutor {
             normalizedInput = toolInputValidator.validateAndNormalize(tool, action.getInput());
         } catch (AgentException e) {
             toolMetrics.recordToolFailure(tool.getName(), "INVALID_TOOL_INPUT");
+            agentAuditService.recordToolExecution(
+                sessionId,
+                customerId,
+                doctorId,
+                null,
+                tool.getName(),
+                JSON.toJSONString(action.getInput()),
+                null,
+                tool.getRiskLevel().name(),
+                "INVALID_TOOL_INPUT"
+            );
             return ActionResult.error(e.getMessage());
         }
 
@@ -85,12 +100,11 @@ public class ActionExecutor {
         switch (tool.getRiskLevel()) {
             case LOW:
                 // 低风险：直接执行
-                return executeDirectly(tool, normalizedInput);
+                return executeDirectly(tool, normalizedInput, sessionId, customerId, doctorId, null);
 
             case MEDIUM:
                 // 中风险：执行但记录审计日志
-                ActionResult result = executeDirectly(tool, normalizedInput);
-                auditLog(customerId, normalizedAction, result);
+                ActionResult result = executeDirectly(tool, normalizedInput, sessionId, customerId, doctorId, null);
                 return result;
 
             case HIGH:
@@ -110,13 +124,20 @@ public class ActionExecutor {
         }
 
         Map<String, Object> normalizedInput = toolInputValidator.validateAndNormalize(tool, action.getInput());
-        return executeDirectly(tool, normalizedInput);
+        return executeDirectly(tool, normalizedInput, null, null, null, null);
     }
 
     /**
      * 直接执行工具
      */
-    private ActionResult executeDirectly(Tool tool, Map<String, Object> input) {
+    private ActionResult executeDirectly(
+        Tool tool,
+        Map<String, Object> input,
+        String sessionId,
+        String customerId,
+        String doctorId,
+        String goal
+    ) {
         long startTime = System.currentTimeMillis();
 
         try {
@@ -125,6 +146,17 @@ public class ActionExecutor {
             // 记录成功
             long duration = System.currentTimeMillis() - startTime;
             toolMetrics.recordToolSuccess(tool.getName(), duration);
+            agentAuditService.recordToolExecution(
+                sessionId,
+                customerId,
+                doctorId,
+                goal,
+                tool.getName(),
+                JSON.toJSONString(input),
+                JSON.toJSONString(output),
+                tool.getRiskLevel().name(),
+                "SUCCESS"
+            );
 
             return ActionResult.success(output);
         } catch (Exception e) {
@@ -132,6 +164,17 @@ public class ActionExecutor {
 
             // 记录失败
             toolMetrics.recordToolFailure(tool.getName(), e.getClass().getSimpleName());
+            agentAuditService.recordToolExecution(
+                sessionId,
+                customerId,
+                doctorId,
+                goal,
+                tool.getName(),
+                JSON.toJSONString(input),
+                null,
+                tool.getRiskLevel().name(),
+                "ERROR"
+            );
 
             return ActionResult.error(e.getMessage());
         }
@@ -181,19 +224,11 @@ public class ActionExecutor {
             .build();
 
         pendingTaskService.save(task);
+        agentAuditService.recordPendingTaskCreated(task, null);
 
         log.info("创建待确认任务: taskId={}, tool={}, customerId={}", task.getId(), tool.getName(), customerId);
 
         return ActionResult.pendingApproval(task);
-    }
-
-    /**
-     * 审计日志
-     */
-    private void auditLog(String customerId, ActionDecision action, ActionResult result) {
-        log.info("审计日志: customerId={}, action={}, success={}",
-            customerId, action.getToolName(), result.isSuccess());
-        // TODO: 记录到审计日志表
     }
 
     @PreDestroy

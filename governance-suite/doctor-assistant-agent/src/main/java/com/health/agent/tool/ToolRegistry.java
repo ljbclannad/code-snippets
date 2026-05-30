@@ -4,14 +4,14 @@ import com.alibaba.fastjson2.JSON;
 import com.health.agent.service.PatientService;
 import com.health.agent.service.FollowUpTaskService;
 import com.health.agent.service.HealthKnowledgeService;
+import com.health.agent.service.WeightPlateauService;
+import com.health.agent.service.AdherenceAnalysisService;
 import com.health.agent.model.PatientProfile;
 import com.health.agent.model.WeightRecord;
 import com.health.agent.model.ChatMessage;
 import com.health.agent.model.PrescriptionRecord;
 import com.health.agent.model.FollowUpTask;
 import com.health.agent.model.HealthKnowledge;
-import com.health.agent.vector.VectorSearchService;
-import com.health.agent.vector.CaseVector;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -33,13 +33,16 @@ public class ToolRegistry {
     private PatientService patientService;
 
     @Autowired
-    private VectorSearchService vectorSearchService;
-
-    @Autowired
     private FollowUpTaskService followUpTaskService;
 
     @Autowired
     private HealthKnowledgeService healthKnowledgeService;
+
+    @Autowired
+    private WeightPlateauService weightPlateauService;
+
+    @Autowired
+    private AdherenceAnalysisService adherenceAnalysisService;
 
     @PostConstruct
     public void registerTools() {
@@ -111,19 +114,30 @@ public class ToolRegistry {
             .build());
 
         register(Tool.builder()
-            .name("search_similar_cases")
-            .description("搜索相似病例")
+            .name("detect_weight_plateau")
+            .description("识别是否进入减重停滞期")
             .riskLevel(ToolRiskLevel.LOW)
             .inputSchema(Map.of(
-                "symptoms", Map.of("type", "array", "required", true, "itemType", "string", "minItems", 1, "maxItems", 10),
-                "limit", Map.of("type", "integer", "default", 5, "min", 1, "max", 10)
+                "weightRecords", Map.of("type", "array", "required", true, "minItems", 2, "maxItems", 180)
             ))
-            .executor(this::searchSimilarCases)
+            .executor(this::detectWeightPlateau)
+            .build());
+
+        register(Tool.builder()
+            .name("analyze_adherence_signals")
+            .description("分析饮食和运动依从性信号")
+            .riskLevel(ToolRiskLevel.LOW)
+            .inputSchema(Map.of(
+                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
+                "recentDays", Map.of("type", "integer", "default", 14, "min", 7, "max", 30),
+                "taskLimit", Map.of("type", "integer", "default", 10, "min", 1, "max", 30)
+            ))
+            .executor(this::analyzeAdherenceSignals)
             .build());
 
         register(Tool.builder()
             .name("get_health_knowledge")
-            .description("查询健康知识库")
+            .description("查询减重管理相关健康知识")
             .riskLevel(ToolRiskLevel.LOW)
             .inputSchema(Map.of(
                 "topic", Map.of("type", "string", "required", true, "maxLength", 100)
@@ -134,7 +148,7 @@ public class ToolRegistry {
         // 中风险工具：通知类
         register(Tool.builder()
             .name("send_reminder")
-            .description("给患者发送提醒消息")
+            .description("给患者发送减重管理提醒消息")
             .riskLevel(ToolRiskLevel.MEDIUM)
             .inputSchema(Map.of(
                 "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
@@ -145,7 +159,7 @@ public class ToolRegistry {
 
         register(Tool.builder()
             .name("create_follow_up_task")
-            .description("创建随访任务")
+            .description("创建减重随访任务")
             .riskLevel(ToolRiskLevel.MEDIUM)
             .inputSchema(Map.of(
                 "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
@@ -157,7 +171,7 @@ public class ToolRegistry {
 
         register(Tool.builder()
             .name("send_health_report")
-            .description("发送健康报告给患者")
+            .description("发送减重阶段报告给患者")
             .riskLevel(ToolRiskLevel.MEDIUM)
             .inputSchema(Map.of(
                 "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
@@ -168,27 +182,27 @@ public class ToolRegistry {
 
         // 高风险工具：医疗决策类
         register(Tool.builder()
-            .name("draft_prescription")
-            .description("起草处方建议（需要医生审核确认）")
+            .name("draft_weight_management_plan")
+            .description("起草减重管理方案建议（需要医生审核确认）")
             .riskLevel(ToolRiskLevel.HIGH)
             .inputSchema(Map.of(
                 "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
                 "recommendations", Map.of("type", "array", "required", true, "itemType", "string", "minItems", 1, "maxItems", 20),
                 "reason", Map.of("type", "string", "required", true, "maxLength", 500)
             ))
-            .executor(this::draftPrescription)
+            .executor(this::draftWeightManagementPlan)
             .build());
 
         register(Tool.builder()
-            .name("suggest_diagnosis")
-            .description("提出诊断建议（需要医生审核确认）")
+            .name("recommend_medical_review")
+            .description("建议转人工医学复核（需要医生审核确认）")
             .riskLevel(ToolRiskLevel.HIGH)
             .inputSchema(Map.of(
                 "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
-                "diagnosis", Map.of("type", "string", "required", true, "maxLength", 500),
+                "reviewReason", Map.of("type", "string", "required", true, "maxLength", 500),
                 "evidence", Map.of("type", "array", "required", true, "itemType", "string", "minItems", 1, "maxItems", 20)
             ))
-            .executor(this::suggestDiagnosis)
+            .executor(this::recommendMedicalReview)
             .build());
 
         log.info("工具注册完成，共注册 {} 个工具", tools.size());
@@ -336,50 +350,30 @@ public class ToolRegistry {
         return Map.of(
             "trend", trend,
             "change", Math.round(change * 10) / 10.0,
-            "totalRecords", records.size()
+            "totalRecords", records.size(),
+            "evidence", List.of(
+                "起始体重 %.1fkg，当前体重 %.1fkg".formatted(firstWeight, lastWeight),
+                "共分析 %d 条体重记录".formatted(records.size())
+            ),
+            "evidenceSources", List.of("WEIGHT_HISTORY")
         );
     }
 
-    private Object searchSimilarCases(Map<String, Object> input) {
-        List<String> symptoms = (List<String>) input.get("symptoms");
-        Integer limit = (Integer) input.getOrDefault("limit", 5);
-        log.info("搜索相似病例: symptoms={}, limit={}", symptoms, limit);
+    private Object detectWeightPlateau(Map<String, Object> input) {
+        List<Map<String, Object>> records = (List<Map<String, Object>>) input.get("weightRecords");
+        return weightPlateauService.detectPlateau(records);
+    }
 
-        // 检查向量检索是否可用
-        if (!vectorSearchService.isAvailable()) {
-            log.warn("向量检索服务不可用，返回 Mock 数据");
-            return List.of(
-                Map.of(
-                    "caseId", "MOCK_001",
-                    "description", "35岁女性，高血压，减重成功",
-                    "diagnosis", "高血压控制良好，体重管理成功",
-                    "similarity", 0.85
-                ),
-                Map.of(
-                    "caseId", "MOCK_002",
-                    "description", "40岁男性，糖尿病，血糖控制",
-                    "diagnosis", "糖尿病控制稳定",
-                    "similarity", 0.78
-                )
-            );
-        }
+    private Object analyzeAdherenceSignals(Map<String, Object> input) {
+        String customerId = (String) input.get("customerId");
+        Integer recentDays = (Integer) input.getOrDefault("recentDays", 14);
+        Integer taskLimit = (Integer) input.getOrDefault("taskLimit", 10);
 
-        // 构建查询文本
-        String query = "症状: " + String.join(", ", symptoms);
+        List<WeightRecord> weightRecords = patientService.getWeightHistory(customerId, recentDays);
+        List<ChatMessage> chatMessages = patientService.getChatHistory(customerId, 20);
+        List<FollowUpTask> tasks = followUpTaskService.getTasksByCustomerId(customerId, taskLimit);
 
-        // 向量检索
-        List<CaseVector> results = vectorSearchService.searchSimilarCases(query, limit);
-
-        // 转换为返回格式
-        return results.stream()
-            .map(cv -> Map.of(
-                "caseId", cv.getCaseId(),
-                "customerId", cv.getCustomerId(),
-                "description", cv.getDescription(),
-                "diagnosis", cv.getDiagnosis(),
-                "similarity", cv.getSimilarity()
-            ))
-            .collect(Collectors.toList());
+        return adherenceAnalysisService.analyze(customerId, weightRecords, chatMessages, tasks);
     }
 
     private Object getHealthKnowledge(Map<String, Object> input) {
@@ -463,16 +457,16 @@ public class ToolRegistry {
         return Map.of("success", true, "message", "报告已发送");
     }
 
-    private Object draftPrescription(Map<String, Object> input) {
+    private Object draftWeightManagementPlan(Map<String, Object> input) {
         // 高风险操作，不会被直接调用
         // 会被 ActionExecutor 拦截并创建待确认任务
-        log.warn("draftPrescription 不应该被直接调用");
+        log.warn("draftWeightManagementPlan 不应该被直接调用");
         return null;
     }
 
-    private Object suggestDiagnosis(Map<String, Object> input) {
+    private Object recommendMedicalReview(Map<String, Object> input) {
         // 高风险操作，不会被直接调用
-        log.warn("suggestDiagnosis 不应该被直接调用");
+        log.warn("recommendMedicalReview 不应该被直接调用");
         return null;
     }
 }

@@ -32,6 +32,11 @@ public class AgentResult {
     private String finalAnswer;
 
     /**
+     * 结构化最终答案
+     */
+    private StructuredFinalAnswer structuredFinalAnswer;
+
+    /**
      * 待确认任务（如果需要人工确认）
      */
     private PendingTask pendingTask;
@@ -54,11 +59,12 @@ public class AgentResult {
     /**
      * 创建成功结果
      */
-    public static AgentResult success(String sessionId, String answer, List<Step> history, int steps) {
+    public static AgentResult success(String sessionId, StructuredFinalAnswer answer, List<Step> history, int steps) {
         return AgentResult.builder()
                 .sessionId(sessionId)
                 .status(ResultStatus.SUCCESS)
-                .finalAnswer(answer)
+                .finalAnswer(answer != null ? answer.toTextSummary() : null)
+                .structuredFinalAnswer(answer)
                 .executionHistory(history)
                 .totalSteps(steps)
                 .build();
@@ -90,6 +96,18 @@ public class AgentResult {
                 .build();
     }
 
+    public static AgentResult error(String sessionId, String errorMessage, StructuredFinalAnswer answer, List<Step> history, int steps) {
+        return AgentResult.builder()
+                .sessionId(sessionId)
+                .status(ResultStatus.ERROR)
+                .errorMessage(errorMessage)
+                .finalAnswer(answer != null ? answer.toTextSummary() : null)
+                .structuredFinalAnswer(answer)
+                .executionHistory(history)
+                .totalSteps(steps)
+                .build();
+    }
+
     /**
      * 创建达到最大步数结果
      */
@@ -98,6 +116,18 @@ public class AgentResult {
                 .sessionId(sessionId)
                 .status(ResultStatus.MAX_STEPS)
                 .errorMessage("达到最大步数限制: " + maxSteps)
+                .executionHistory(history)
+                .totalSteps(maxSteps)
+                .build();
+    }
+
+    public static AgentResult maxStepsReached(String sessionId, StructuredFinalAnswer answer, List<Step> history, int maxSteps) {
+        return AgentResult.builder()
+                .sessionId(sessionId)
+                .status(ResultStatus.MAX_STEPS)
+                .errorMessage("达到最大步数限制: " + maxSteps)
+                .finalAnswer(answer != null ? answer.toTextSummary() : null)
+                .structuredFinalAnswer(answer)
                 .executionHistory(history)
                 .totalSteps(maxSteps)
                 .build();

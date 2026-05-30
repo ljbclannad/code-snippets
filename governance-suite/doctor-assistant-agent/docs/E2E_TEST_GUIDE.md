@@ -1,5 +1,11 @@
 # 端到端测试指南
 
+> 当前减重管理场景下，若示例中出现旧工具名，请以当前工具集为准：
+> - `draft_weight_management_plan`
+> - `recommend_medical_review`
+> - `detect_weight_plateau`
+> - `analyze_adherence_signals`
+
 ## 📋 概述
 
 本文档说明如何进行医生助手 ReAct Agent 的端到端测试。

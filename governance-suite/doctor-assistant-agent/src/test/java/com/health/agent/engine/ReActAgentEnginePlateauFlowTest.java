@@ -1,0 +1,149 @@
+package com.health.agent.engine;
+
+import com.health.agent.client.DeepSeekClient;
+import com.health.agent.metrics.AgentMetrics;
+import com.health.agent.model.ActionResult;
+import com.health.agent.model.AgentResult;
+import com.health.agent.model.AgentSession;
+import com.health.agent.safety.MedicalSafetyService;
+import com.health.agent.service.AgentAuditService;
+import com.health.agent.service.AgentSessionService;
+import com.health.agent.tool.Tool;
+import com.health.agent.tool.ToolRegistry;
+import com.health.agent.tool.ToolRiskLevel;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import java.util.List;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+@ExtendWith(MockitoExtension.class)
+class ReActAgentEnginePlateauFlowTest {
+
+    @Mock
+    private DeepSeekClient deepSeekClient;
+
+    @Mock
+    private ActionExecutor actionExecutor;
+
+    @Mock
+    private ToolRegistry toolRegistry;
+
+    @Mock
+    private AgentSessionService sessionService;
+
+    @Mock
+    private AgentAuditService agentAuditService;
+
+    private ReActAgentEngine engine;
+
+    @BeforeEach
+    void setUp() {
+        engine = new ReActAgentEngine();
+        ReflectionTestUtils.setField(engine, "deepSeekClient", deepSeekClient);
+        ReflectionTestUtils.setField(engine, "promptBuilder", new ReActPromptBuilder());
+        ReflectionTestUtils.setField(engine, "responseParser", new ReActResponseParser());
+        ReflectionTestUtils.setField(engine, "actionExecutor", actionExecutor);
+        ReflectionTestUtils.setField(engine, "toolRegistry", toolRegistry);
+        ReflectionTestUtils.setField(engine, "sessionService", sessionService);
+        ReflectionTestUtils.setField(engine, "agentMetrics", new AgentMetrics(new SimpleMeterRegistry()));
+        ReflectionTestUtils.setField(engine, "medicalSafetyService", new MedicalSafetyService());
+        ReflectionTestUtils.setField(engine, "agentAuditService", agentAuditService);
+        ReflectionTestUtils.setField(engine, "maxSteps", 4);
+        ReflectionTestUtils.setField(engine, "useMock", false);
+        ReflectionTestUtils.setField(engine, "protocolRepairAttempts", 1);
+    }
+
+    @Test
+    void shouldTriggerDetectWeightPlateauForPlateauGoal() {
+        AgentSession session = AgentSession.builder().id("1").build();
+        when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
+        when(toolRegistry.getAllTools()).thenReturn(List.of(
+            Tool.builder()
+                .name("detect_weight_plateau")
+                .description("识别是否进入减重停滞期")
+                .riskLevel(ToolRiskLevel.LOW)
+                .inputSchema(Map.of("weightRecords", Map.of("type", "array")))
+                .build()
+        ));
+
+        DeepSeekClient.DeepSeekResponse first = new DeepSeekClient.DeepSeekResponse();
+        first.setContent("""
+            {
+              "protocolVersion": "v1",
+              "thinking": "患者近两周减重停滞，我需要先判断是否进入平台期。",
+              "finished": false,
+              "action": {
+                "toolName": "detect_weight_plateau",
+                "input": {
+                  "weightRecords": [
+                    {"date": "2026-05-30", "weight": 80.0},
+                    {"date": "2026-05-28", "weight": 80.1},
+                    {"date": "2026-05-25", "weight": 79.9},
+                    {"date": "2026-05-22", "weight": 80.2},
+                    {"date": "2026-05-19", "weight": 80.1},
+                    {"date": "2026-05-16", "weight": 80.3}
+                  ]
+                },
+                "reason": "先识别是否进入减重停滞期"
+              }
+            }
+            """);
+        DeepSeekClient.DeepSeekResponse second = new DeepSeekClient.DeepSeekResponse();
+        second.setContent("""
+            {
+              "protocolVersion": "v1",
+              "thinking": "已经确认进入停滞期，可以给出随访建议。",
+              "finished": true,
+              "finalAnswer": {
+                "summary": "患者近两周已进入减重停滞期。",
+                "keyFindings": ["近14天体重变化小于0.5kg", "最近7天没有明显下降趋势"],
+                "riskLevel": "MEDIUM",
+                "recommendedActions": ["复核饮食记录", "加强运动执行", "安排一次随访沟通"],
+                "needsAttention": true,
+                "uncertainties": ["缺少完整饮食依从性记录"]
+              }
+            }
+            """);
+        when(deepSeekClient.chat(anyString(), anyList())).thenReturn(first, second);
+        when(actionExecutor.execute(any(), anyString(), anyString(), anyString())).thenReturn(
+            ActionResult.success(Map.of(
+                "isPlateau", true,
+                "recentTrend", "PLATEAU",
+                "reason", "近两周体重变化较小，且最近一周未出现明显下降趋势。"
+            ))
+        );
+
+        AgentResult result = engine.execute(
+            "患者最近两周体重几乎不下降，帮我判断是不是进入平台期并给出建议",
+            "C001",
+            "D001"
+        );
+
+        assertEquals("SUCCESS", result.getStatus().name());
+        assertEquals("MEDIUM", result.getStructuredFinalAnswer().getRiskLevel());
+        assertTrue(result.getFinalAnswer().contains("停滞期"));
+
+        ArgumentCaptor<com.health.agent.model.ActionDecision> actionCaptor =
+            ArgumentCaptor.forClass(com.health.agent.model.ActionDecision.class);
+        verify(actionExecutor).execute(actionCaptor.capture(), anyString(), anyString(), anyString());
+        assertEquals("detect_weight_plateau", actionCaptor.getValue().getToolName());
+
+        verify(sessionService).updateSession(anyString(), anyList(), anyList(), anyInt());
+    }
+}

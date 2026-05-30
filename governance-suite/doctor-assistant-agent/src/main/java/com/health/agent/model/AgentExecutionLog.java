@@ -26,6 +26,11 @@ public class AgentExecutionLog {
     private String sessionId;
 
     /**
+     * 待审批任务ID
+     */
+    private Long pendingTaskId;
+
+    /**
      * 患者ID
      */
     private String customerId;
@@ -64,6 +69,36 @@ public class AgentExecutionLog {
      * 最终答案
      */
     private String finalAnswer;
+
+    /**
+     * 工具名称
+     */
+    private String toolName;
+
+    /**
+     * 工具输入
+     */
+    private String toolInputJson;
+
+    /**
+     * 工具输出
+     */
+    private String toolOutputJson;
+
+    /**
+     * 审批状态
+     */
+    private String approvalStatus;
+
+    /**
+     * 审批意见
+     */
+    private String reviewComment;
+
+    /**
+     * 审批时间
+     */
+    private LocalDateTime reviewedAt;
 
     /**
      * 错误信息

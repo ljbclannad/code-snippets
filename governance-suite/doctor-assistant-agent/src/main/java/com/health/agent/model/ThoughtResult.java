@@ -30,6 +30,11 @@ public class ThoughtResult {
     private String finalAnswer;
 
     /**
+     * 结构化最终答案（finished=true时使用）
+     */
+    private StructuredFinalAnswer structuredFinalAnswer;
+
+    /**
      * 行动决策（finished=false时使用）
      */
     private ActionDecision action;
@@ -37,11 +42,12 @@ public class ThoughtResult {
     /**
      * 创建完成结果
      */
-    public static ThoughtResult finished(String thinking, String answer) {
+    public static ThoughtResult finished(String thinking, StructuredFinalAnswer answer) {
         return ThoughtResult.builder()
                 .thinking(thinking)
                 .finished(true)
-                .finalAnswer(answer)
+                .finalAnswer(answer != null ? answer.toTextSummary() : null)
+                .structuredFinalAnswer(answer)
                 .build();
     }
 

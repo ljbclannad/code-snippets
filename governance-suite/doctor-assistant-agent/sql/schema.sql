@@ -59,6 +59,7 @@ CREATE TABLE agent_pending_task (
 CREATE TABLE agent_execution_log (
     id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '日志ID',
     session_id VARCHAR(64) NOT NULL COMMENT '会话ID',
+    pending_task_id BIGINT COMMENT '待审批任务ID',
     customer_id VARCHAR(64) NOT NULL COMMENT '患者ID',
     doctor_id VARCHAR(64) NOT NULL COMMENT '医生ID',
     goal TEXT COMMENT '任务目标',
@@ -67,12 +68,21 @@ CREATE TABLE agent_execution_log (
     latency_ms BIGINT COMMENT '总耗时(ms)',
     result_status VARCHAR(16) COMMENT '结果状态',
     final_answer TEXT COMMENT '最终答案',
+    tool_name VARCHAR(64) COMMENT '工具名称',
+    tool_input_json JSON COMMENT '工具输入参数',
+    tool_output_json JSON COMMENT '工具输出结果',
+    approval_status VARCHAR(16) COMMENT '审批状态或风险等级',
+    review_comment TEXT COMMENT '审批意见',
+    reviewed_at DATETIME COMMENT '审批时间',
     error_message TEXT COMMENT '错误信息',
     execution_history_json JSON COMMENT '执行历史',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     INDEX idx_session (session_id),
+    INDEX idx_pending_task (pending_task_id),
     INDEX idx_customer (customer_id),
     INDEX idx_doctor (doctor_id),
+    INDEX idx_result_status (result_status),
+    INDEX idx_approval_status (approval_status),
     INDEX idx_created (created_at)
 ) COMMENT='Agent执行日志表';
 

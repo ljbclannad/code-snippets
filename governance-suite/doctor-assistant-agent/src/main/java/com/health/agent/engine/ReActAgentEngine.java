@@ -5,6 +5,9 @@ import com.health.agent.client.DeepSeekClient;
 import com.health.agent.exception.AgentException;
 import com.health.agent.metrics.AgentMetrics;
 import com.health.agent.model.*;
+import com.health.agent.safety.MedicalSafetyService;
+import com.health.agent.safety.SafetyAssessment;
+import com.health.agent.service.AgentAuditService;
 import com.health.agent.service.AgentSessionService;
 import com.health.agent.tool.ToolRegistry;
 import lombok.extern.slf4j.Slf4j;
@@ -43,6 +46,12 @@ public class ReActAgentEngine {
     @Autowired
     private AgentMetrics agentMetrics;
 
+    @Autowired
+    private MedicalSafetyService medicalSafetyService;
+
+    @Autowired
+    private AgentAuditService agentAuditService;
+
     @Value("${agent.max-steps:15}")
     private int maxSteps;
 
@@ -69,6 +78,19 @@ public class ReActAgentEngine {
         List<Step> history = new ArrayList<>();
         List<Message> messages = new ArrayList<>();
 
+        SafetyAssessment goalAssessment = medicalSafetyService.assessGoal(goal);
+        if (goalAssessment.isBlocked()) {
+            sessionService.completeSession(sessionId, history);
+            AgentResult result = AgentResult.success(
+                sessionId,
+                medicalSafetyService.buildSafetyStructuredAnswer(goalAssessment.message()),
+                history,
+                0
+            );
+            agentAuditService.recordSessionResult(sessionId, customerId, doctorId, goal, result, 0, System.currentTimeMillis() - startTime);
+            return result;
+        }
+
         // 构建 System Prompt
         String systemPrompt = promptBuilder.buildSystemPrompt(toolRegistry.getAllTools());
 
@@ -91,6 +113,11 @@ public class ReActAgentEngine {
 
                 // 3. 检查是否完成
                 if (thought.isFinished()) {
+                    StructuredFinalAnswer finalAnswer = thought.getStructuredFinalAnswer();
+                    SafetyAssessment finalAnswerAssessment = medicalSafetyService.assessFinalAnswer(
+                        finalAnswer,
+                        history
+                    );
                     log.info("Agent任务完成");
                     sessionService.completeSession(sessionId, history);
 
@@ -98,7 +125,24 @@ public class ReActAgentEngine {
                     long duration = System.currentTimeMillis() - startTime;
                     agentMetrics.recordExecutionSuccess(step + 1, duration);
 
-                    return AgentResult.success(sessionId, thought.getFinalAnswer(), history, step + 1);
+                    AgentResult result = AgentResult.success(
+                        sessionId,
+                        finalAnswerAssessment.isBlocked()
+                            ? medicalSafetyService.buildSafetyStructuredAnswer(finalAnswerAssessment.message())
+                            : finalAnswer,
+                        history,
+                        step + 1
+                    );
+                    agentAuditService.recordSessionResult(
+                        sessionId,
+                        customerId,
+                        doctorId,
+                        goal,
+                        result,
+                        step + 1,
+                        duration
+                    );
+                    return result;
                 }
 
                 // 4. 执行 Action
@@ -109,6 +153,14 @@ public class ReActAgentEngine {
                     action.getToolName(),
                     JSON.toJSONString(action.getInput())
                 );
+
+                SafetyAssessment actionAssessment = medicalSafetyService.assessAction(action, history);
+                if (actionAssessment.isBlocked()) {
+                    history.add(Step.observation(actionAssessment.message()));
+                    messages.add(Message.user("Observation: " + actionAssessment.message()));
+                    sessionService.updateSession(sessionId, history, messages, step + 1);
+                    continue;
+                }
 
                 ActionResult actionResult = actionExecutor.execute(
                     action,
@@ -125,12 +177,22 @@ public class ReActAgentEngine {
                     // 记录等待审批
                     agentMetrics.recordPendingApproval(action.getToolName());
 
-                    return AgentResult.pendingApproval(
+                    AgentResult result = AgentResult.pendingApproval(
                         sessionId,
                         actionResult.getTask(),
                         history,
                         step + 1
                     );
+                    agentAuditService.recordSessionResult(
+                        sessionId,
+                        customerId,
+                        doctorId,
+                        goal,
+                        result,
+                        step + 1,
+                        System.currentTimeMillis() - startTime
+                    );
+                    return result;
                 }
 
                 // 6. 记录 Observation
@@ -150,7 +212,24 @@ public class ReActAgentEngine {
                 // 记录失败
                 agentMetrics.recordExecutionFailure(e.getClass().getSimpleName());
 
-                return AgentResult.error(sessionId, e.getMessage(), history, step + 1);
+                StructuredFinalAnswer degraded = medicalSafetyService.buildDegradedStructuredAnswer(
+                    buildExecutionDegradedSummary(e),
+                    "MEDIUM",
+                    buildExecutionRuntimeEvidence(e),
+                    List.of("请人工接管当前会话", "补充近期关键数据后再尝试重新分析"),
+                    List.of("当前未获得可用的自动分析结果")
+                );
+                AgentResult result = AgentResult.error(sessionId, e.getMessage(), degraded, history, step + 1);
+                agentAuditService.recordSessionResult(
+                    sessionId,
+                    customerId,
+                    doctorId,
+                    goal,
+                    result,
+                    step + 1,
+                    System.currentTimeMillis() - startTime
+                );
+                return result;
             }
         }
 
@@ -160,7 +239,24 @@ public class ReActAgentEngine {
         // 记录达到最大步数
         agentMetrics.recordMaxStepsReached(maxSteps);
 
-        return AgentResult.maxStepsReached(sessionId, history, maxSteps);
+        StructuredFinalAnswer degraded = medicalSafetyService.buildDegradedStructuredAnswer(
+            "自动分析已达到最大步数，未能收敛到最终结论。",
+            "MEDIUM",
+            "达到最大步数限制",
+            List.of("请人工查看已有 Observation", "必要时缩小问题范围后重新发起分析"),
+            List.of("当前分析链路未完成")
+        );
+        AgentResult result = AgentResult.maxStepsReached(sessionId, degraded, history, maxSteps);
+        agentAuditService.recordSessionResult(
+            sessionId,
+            customerId,
+            doctorId,
+            goal,
+            result,
+            maxSteps,
+            System.currentTimeMillis() - startTime
+        );
+        return result;
     }
 
     /**
@@ -235,7 +331,14 @@ public class ReActAgentEngine {
         } catch (Exception e) {
             log.error("Agent恢复执行异常", e);
             sessionService.failSession(sessionId, e.getMessage());
-            return AgentResult.error(sessionId, e.getMessage(), new ArrayList<>(), 0);
+            StructuredFinalAnswer degraded = medicalSafetyService.buildDegradedStructuredAnswer(
+                "恢复执行失败，当前会话无法继续自动推进。",
+                "HIGH",
+                "恢复执行失败",
+                List.of("请人工复核当前待审批任务和会话状态", "必要时重新发起新的减重分析会话"),
+                List.of("自动恢复链路已中断", e.getMessage())
+            );
+            return AgentResult.error(sessionId, e.getMessage(), degraded, new ArrayList<>(), 0);
         }
     }
 
@@ -272,6 +375,11 @@ public class ReActAgentEngine {
 
                 // 3. 检查是否完成
                 if (thought.isFinished()) {
+                    StructuredFinalAnswer finalAnswer = thought.getStructuredFinalAnswer();
+                    SafetyAssessment finalAnswerAssessment = medicalSafetyService.assessFinalAnswer(
+                        finalAnswer,
+                        history
+                    );
                     log.info("Agent任务完成");
                     sessionService.completeSession(sessionId, history);
 
@@ -279,7 +387,24 @@ public class ReActAgentEngine {
                     long duration = System.currentTimeMillis() - startTime;
                     agentMetrics.recordExecutionSuccess(step + 1, duration);
 
-                    return AgentResult.success(sessionId, thought.getFinalAnswer(), history, step + 1);
+                    AgentResult result = AgentResult.success(
+                        sessionId,
+                        finalAnswerAssessment.isBlocked()
+                            ? medicalSafetyService.buildSafetyStructuredAnswer(finalAnswerAssessment.message())
+                            : finalAnswer,
+                        history,
+                        step + 1
+                    );
+                    agentAuditService.recordSessionResult(
+                        sessionId,
+                        customerId,
+                        doctorId,
+                        goal,
+                        result,
+                        step + 1,
+                        duration
+                    );
+                    return result;
                 }
 
                 // 4. 执行 Action
@@ -290,6 +415,14 @@ public class ReActAgentEngine {
                     action.getToolName(),
                     JSON.toJSONString(action.getInput())
                 );
+
+                SafetyAssessment actionAssessment = medicalSafetyService.assessAction(action, history);
+                if (actionAssessment.isBlocked()) {
+                    history.add(Step.observation(actionAssessment.message()));
+                    messages.add(Message.user("Observation: " + actionAssessment.message()));
+                    sessionService.updateSession(sessionId, history, messages, step + 1);
+                    continue;
+                }
 
                 ActionResult actionResult = actionExecutor.execute(
                     action,
@@ -306,12 +439,22 @@ public class ReActAgentEngine {
                     // 记录等待审批
                     agentMetrics.recordPendingApproval(action.getToolName());
 
-                    return AgentResult.pendingApproval(
+                    AgentResult result = AgentResult.pendingApproval(
                         sessionId,
                         actionResult.getTask(),
                         history,
                         step + 1
                     );
+                    agentAuditService.recordSessionResult(
+                        sessionId,
+                        customerId,
+                        doctorId,
+                        goal,
+                        result,
+                        step + 1,
+                        System.currentTimeMillis() - startTime
+                    );
+                    return result;
                 }
 
                 // 6. 记录 Observation
@@ -331,7 +474,24 @@ public class ReActAgentEngine {
                 // 记录失败
                 agentMetrics.recordExecutionFailure(e.getClass().getSimpleName());
 
-                return AgentResult.error(sessionId, e.getMessage(), history, step + 1);
+                StructuredFinalAnswer degraded = medicalSafetyService.buildDegradedStructuredAnswer(
+                    buildExecutionDegradedSummary(e),
+                    "MEDIUM",
+                    buildExecutionRuntimeEvidence(e),
+                    List.of("请人工接管当前会话", "补充近期关键数据后再尝试重新分析"),
+                    List.of("当前未获得可用的自动分析结果")
+                );
+                AgentResult result = AgentResult.error(sessionId, e.getMessage(), degraded, history, step + 1);
+                agentAuditService.recordSessionResult(
+                    sessionId,
+                    customerId,
+                    doctorId,
+                    goal,
+                    result,
+                    step + 1,
+                    System.currentTimeMillis() - startTime
+                );
+                return result;
             }
         }
 
@@ -341,7 +501,24 @@ public class ReActAgentEngine {
         // 记录达到最大步数
         agentMetrics.recordMaxStepsReached(maxSteps);
 
-        return AgentResult.maxStepsReached(sessionId, history, maxSteps);
+        StructuredFinalAnswer degraded = medicalSafetyService.buildDegradedStructuredAnswer(
+            "自动分析已达到最大步数，未能收敛到最终结论。",
+            "MEDIUM",
+            "达到最大步数限制",
+            List.of("请人工查看已有 Observation", "必要时缩小问题范围后重新发起分析"),
+            List.of("当前分析链路未完成")
+        );
+        AgentResult result = AgentResult.maxStepsReached(sessionId, degraded, history, maxSteps);
+        agentAuditService.recordSessionResult(
+            sessionId,
+            customerId,
+            doctorId,
+            goal,
+            result,
+            maxSteps,
+            System.currentTimeMillis() - startTime
+        );
+        return result;
     }
 
     /**
@@ -443,12 +620,36 @@ public class ReActAgentEngine {
                       "protocolVersion": "v1",
                       "thinking": "患者出现焦虑情绪，这可能影响了体重管理。结合高血压病史和减重进展，我现在有足够信息生成综合分析了。",
                       "finished": true,
-                      "finalAnswer": "患者35岁女性，当前减重进展总体良好，但近期存在焦虑情绪和短期体重反弹。建议继续当前减重计划，关注心理状态，并持续监测血压。"
+                      "finalAnswer": {
+                        "summary": "患者35岁女性，当前减重进展总体良好，但近期存在焦虑情绪和短期体重反弹。",
+                        "keyFindings": ["近30天体重总体下降", "近期存在焦虑情绪", "出现短期体重反弹"],
+                        "riskLevel": "MEDIUM",
+                        "recommendedActions": ["继续当前减重计划", "关注心理状态", "持续监测血压"],
+                        "needsAttention": true,
+                        "uncertainties": ["缺少更完整的饮食和运动执行记录"],
+                        "supportingEvidence": ["近30天体重总体下降", "聊天中出现焦虑描述"],
+                        "evidenceSources": ["WEIGHT_HISTORY", "CHAT_HISTORY"],
+                        "inferences": ["焦虑可能影响后续减重执行"]
+                      }
                     }
                     """;
         }
     }
 
     private record ParsedThought(String responseText, ThoughtResult thoughtResult) {
+    }
+
+    private String buildExecutionDegradedSummary(Exception exception) {
+        if (exception.getMessage() != null && exception.getMessage().contains("协议")) {
+            return "当前模型返回不符合协议，无法安全执行后续步骤。";
+        }
+        return "当前模型调用失败，无法完成自动分析。";
+    }
+
+    private String buildExecutionRuntimeEvidence(Exception exception) {
+        if (exception.getMessage() != null && exception.getMessage().contains("协议")) {
+            return "模型响应协议校验失败";
+        }
+        return "模型调用超时或重试耗尽";
     }
 }
