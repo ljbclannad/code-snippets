@@ -49,6 +49,7 @@ docker ps | grep -E "prometheus|grafana"
 - `payment-service` (8082)
 - `inventory-service` (8083)
 - `outbox-consumer` (8090)
+- `doctor-assistant-agent` (8088)
 
 **抓取间隔**：15 秒
 
@@ -60,6 +61,11 @@ docker ps | grep -E "prometheus|grafana"
 
 **预置仪表盘**：
 - `ai-chat-service.json` - AI 聊天服务监控
+- `doctor-assistant-agent.json` - 医生助手 Agent 监控
+
+**说明**：
+- `doctor-assistant-agent` 的 JVM、CPU、基础 Agent 指标会在服务启动后出现
+- 工具调用、向量检索这类按标签动态注册的指标，需要实际发生请求后才会出现在 Prometheus 和 Grafana 中
 
 ---
 

@@ -72,6 +72,15 @@ scrape_configs:
           application: 'outbox-consumer'
           service: 'outbox'
 
+  # Doctor Assistant Agent 监控
+  - job_name: 'doctor-assistant-agent'
+    metrics_path: '/actuator/prometheus'
+    static_configs:
+      - targets: ['host.docker.internal:8088']
+        labels:
+          application: 'doctor-assistant-agent'
+          service: 'agent'
+
   # Prometheus 自身监控
   - job_name: 'prometheus'
     static_configs:

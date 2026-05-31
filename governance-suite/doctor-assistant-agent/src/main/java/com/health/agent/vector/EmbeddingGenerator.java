@@ -1,6 +1,8 @@
 package com.health.agent.vector;
 
+import com.health.agent.metrics.VectorMetrics;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -18,6 +20,9 @@ import java.util.Random;
 @Component
 public class EmbeddingGenerator {
 
+    @Autowired
+    private VectorMetrics vectorMetrics;
+
     @Value("${milvus.dimension:768}")
     private int dimension;
 
@@ -30,13 +35,18 @@ public class EmbeddingGenerator {
      * 生成文本的向量表示
      */
     public List<Float> generateEmbedding(String text) {
+        long startTime = System.currentTimeMillis();
         if (useMock) {
-            return generateMockEmbedding(text);
-        } else {
-            // TODO: 集成真实的 Embedding 模型
-            // 例如：调用 OpenAI Embeddings API 或本地 BGE 模型
-            return generateMockEmbedding(text);
+            List<Float> embedding = generateMockEmbedding(text);
+            vectorMetrics.recordEmbeddingGeneration(System.currentTimeMillis() - startTime, true);
+            return embedding;
         }
+
+        // TODO: 集成真实的 Embedding 模型
+        // 例如：调用 OpenAI Embeddings API 或本地 BGE 模型
+        List<Float> embedding = generateMockEmbedding(text);
+        vectorMetrics.recordEmbeddingGeneration(System.currentTimeMillis() - startTime, false);
+        return embedding;
     }
 
     /**

@@ -55,6 +55,11 @@ agent:
   task-expire-hours: 24
   use-mock: false
   tool-timeout-millis: 3000
+  tool-executor:
+    core-pool-size: 8
+    max-pool-size: 16
+    queue-capacity: 64
+    keep-alive-millis: 60000
   protocol-repair-attempts: 1
   deepseek:
     model: deepseek-chat
@@ -102,6 +107,25 @@ management:
       exposure:
         include: health,info,prometheus,metrics
   metrics:
+    distribution:
+      percentiles-histogram:
+        "[http.server.requests]": true
+        "[agent.execution.duration]": true
+        "[tool.execution.duration]": true
+        "[vector.search.duration]": true
+        "[vector.embedding.duration]": true
+      percentiles:
+        "[http.server.requests]": [0.5, 0.95, 0.99]
+        "[agent.execution.duration]": [0.5, 0.95, 0.99]
+        "[tool.execution.duration]": [0.5, 0.95, 0.99]
+        "[vector.search.duration]": [0.5, 0.95, 0.99]
+        "[vector.embedding.duration]": [0.5, 0.95, 0.99]
+      slo:
+        "[http.server.requests]": [100ms, 300ms, 500ms, 1s, 2s, 5s]
+        "[agent.execution.duration]": [1s, 2s, 3s, 5s, 8s, 13s]
+        "[tool.execution.duration]": [50ms, 100ms, 200ms, 500ms, 1s, 2s, 3s]
+        "[vector.search.duration]": [50ms, 100ms, 200ms, 500ms, 1s, 2s, 3s]
+        "[vector.embedding.duration]": [50ms, 100ms, 200ms, 500ms, 1s, 2s, 3s]
     export:
       prometheus:
         enabled: true

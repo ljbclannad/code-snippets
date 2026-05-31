@@ -1,6 +1,7 @@
 package com.lx.governance.vectormemory.controller;
 
 import com.lx.governance.common.api.ApiResponse;
+import com.lx.governance.common.trace.Trace;
 import com.lx.governance.vectormemory.domain.DeadLetterMessage;
 import com.lx.governance.vectormemory.service.DeadLetterService;
 import lombok.RequiredArgsConstructor;
@@ -29,7 +30,7 @@ public class DeadLetterController {
     public ApiResponse<List<DeadLetterMessage>> getPendingMessages(
             @RequestParam(defaultValue = "100") int limit) {
         List<DeadLetterMessage> messages = deadLetterService.findPendingMessages(limit);
-        return ApiResponse.success(messages);
+        return ApiResponse.ok(messages, Trace.getOrCreate());
     }
 
     /**
@@ -39,9 +40,9 @@ public class DeadLetterController {
     public ApiResponse<Boolean> retryMessage(@PathVariable Long id) {
         boolean success = deadLetterService.retryDeadLetter(id);
         if (success) {
-            return ApiResponse.success(true);
+            return ApiResponse.ok(true, Trace.getOrCreate());
         } else {
-            return ApiResponse.error("重试失败");
+            return ApiResponse.fail("RETRY_FAILED", "重试失败", Trace.getOrCreate());
         }
     }
 
@@ -51,7 +52,7 @@ public class DeadLetterController {
     @PostMapping("/{id}/resolve")
     public ApiResponse<Void> resolveMessage(@PathVariable Long id) {
         deadLetterService.markAsResolved(id);
-        return ApiResponse.success(null);
+        return ApiResponse.ok(null, Trace.getOrCreate());
     }
 
     /**
@@ -64,6 +65,6 @@ public class DeadLetterController {
         stats.put("retrying", deadLetterService.countByStatus("RETRYING"));
         stats.put("resolved", deadLetterService.countByStatus("RESOLVED"));
         stats.put("failed", deadLetterService.countByStatus("FAILED"));
-        return ApiResponse.success(stats);
+        return ApiResponse.ok(stats, Trace.getOrCreate());
     }
 }

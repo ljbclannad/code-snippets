@@ -55,7 +55,10 @@ public class VectorSearchService {
 
         } catch (Exception e) {
             // 记录失败
-            vectorMetrics.recordSearchFailure(e.getClass().getSimpleName());
+            vectorMetrics.recordSearchFailure(
+                e.getClass().getSimpleName(),
+                System.currentTimeMillis() - startTime
+            );
             log.error("向量检索失败", e);
             return Collections.emptyList();
         }

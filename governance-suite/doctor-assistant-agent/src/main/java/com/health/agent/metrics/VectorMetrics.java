@@ -44,11 +44,7 @@ public class VectorMetrics {
             .register(meterRegistry)
             .increment();
 
-        // 检索耗时
-        Timer.builder("vector.search.duration")
-            .description("向量检索耗时")
-            .register(meterRegistry)
-            .record(durationMs, TimeUnit.MILLISECONDS);
+        recordSearchDuration("success", durationMs);
 
         // 结果数量分布
         meterRegistry.summary("vector.search.results")
@@ -61,11 +57,17 @@ public class VectorMetrics {
      * 记录向量检索失败
      */
     public void recordSearchFailure(String errorType) {
+        recordSearchFailure(errorType, 0L);
+    }
+
+    public void recordSearchFailure(String errorType, long durationMs) {
         Counter.builder("vector.search.failure")
             .tag("error_type", errorType)
             .description("向量检索失败次数")
             .register(meterRegistry)
             .increment();
+
+        recordSearchDuration("failure", durationMs);
 
         log.debug("向量检索失败: errorType={}", errorType);
     }
@@ -122,5 +124,17 @@ public class VectorMetrics {
             .description("向量检索缓存未命中次数")
             .register(meterRegistry)
             .increment();
+    }
+
+    private void recordSearchDuration(String outcome, long durationMs) {
+        if (durationMs < 0) {
+            return;
+        }
+
+        Timer.builder("vector.search.duration")
+            .tag("outcome", outcome)
+            .description("向量检索耗时")
+            .register(meterRegistry)
+            .record(durationMs, TimeUnit.MILLISECONDS);
     }
 }

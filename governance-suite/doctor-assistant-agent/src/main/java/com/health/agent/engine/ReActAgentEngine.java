@@ -210,7 +210,8 @@ public class ReActAgentEngine {
                 sessionService.failSession(sessionId, e.getMessage());
 
                 // 记录失败
-                agentMetrics.recordExecutionFailure(e.getClass().getSimpleName());
+                long duration = System.currentTimeMillis() - startTime;
+                agentMetrics.recordExecutionFailure(e.getClass().getSimpleName(), step + 1, duration);
 
                 StructuredFinalAnswer degraded = medicalSafetyService.buildDegradedStructuredAnswer(
                     buildExecutionDegradedSummary(e),
@@ -237,7 +238,7 @@ public class ReActAgentEngine {
         sessionService.failSession(sessionId, "达到最大步数限制");
 
         // 记录达到最大步数
-        agentMetrics.recordMaxStepsReached(maxSteps);
+        agentMetrics.recordMaxStepsReached(maxSteps, System.currentTimeMillis() - startTime);
 
         StructuredFinalAnswer degraded = medicalSafetyService.buildDegradedStructuredAnswer(
             "自动分析已达到最大步数，未能收敛到最终结论。",

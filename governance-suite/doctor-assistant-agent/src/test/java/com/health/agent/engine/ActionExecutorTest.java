@@ -10,6 +10,8 @@ import com.health.agent.tool.Tool;
 import com.health.agent.tool.ToolInputValidator;
 import com.health.agent.tool.ToolRegistry;
 import com.health.agent.tool.ToolRiskLevel;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -42,6 +44,7 @@ class ActionExecutorTest {
     private AgentAuditService agentAuditService;
 
     private ActionExecutor actionExecutor;
+    private MeterRegistry meterRegistry;
 
     @BeforeEach
     void setUp() {
@@ -49,13 +52,18 @@ class ActionExecutorTest {
         ReflectionTestUtils.setField(actionExecutor, "toolRegistry", toolRegistry);
         ReflectionTestUtils.setField(actionExecutor, "pendingTaskService", pendingTaskService);
         ReflectionTestUtils.setField(actionExecutor, "agentAuditService", agentAuditService);
+        meterRegistry = new SimpleMeterRegistry();
         ReflectionTestUtils.setField(
             actionExecutor,
             "toolMetrics",
-            new ToolMetrics(new SimpleMeterRegistry())
+            new ToolMetrics(meterRegistry)
         );
         ReflectionTestUtils.setField(actionExecutor, "toolInputValidator", new ToolInputValidator());
         ReflectionTestUtils.setField(actionExecutor, "toolTimeoutMillis", 100L);
+        ReflectionTestUtils.setField(actionExecutor, "toolExecutorCorePoolSize", 1);
+        ReflectionTestUtils.setField(actionExecutor, "toolExecutorMaxPoolSize", 1);
+        ReflectionTestUtils.setField(actionExecutor, "toolExecutorQueueCapacity", 1);
+        ReflectionTestUtils.setField(actionExecutor, "toolExecutorKeepAliveMillis", 1000L);
     }
 
     @Test
@@ -155,6 +163,17 @@ class ActionExecutorTest {
 
         assertFalse(result.isSuccess());
         assertTrue(result.getErrorMessage().contains("TIMEOUT"));
+        Timer failureTimer = meterRegistry.find("tool.execution.duration")
+            .tag("tool", "get_patient_profile")
+            .tag("outcome", "failure")
+            .timer();
+        assertNotNull(failureTimer);
+        assertEquals(1, failureTimer.count());
+        assertNotNull(
+            meterRegistry.find("tool.executor.queue.size")
+                .tag("executor", "agent-tool-executor")
+                .gauge()
+        );
         verify(agentAuditService).recordToolExecution(
             "S001",
             "C001",

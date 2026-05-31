@@ -10,6 +10,7 @@ import com.lx.governance.common.id.SnowflakeIdGenerator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.redis.connection.stream.*;
+import org.springframework.data.redis.core.StreamOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -58,11 +59,13 @@ public class StreamConsumerService {
     }
 
     @Scheduled(fixedDelay = 50)
+    @SuppressWarnings("unchecked")
     public void consumeStream() {
         try {
+            StreamOperations<String, String, String> streamOps = redisTemplate.opsForStream();
+
             // 1. 从 Stream 读取消息
-            List<MapRecord<String, Object, Object>> records = redisTemplate.opsForStream()
-                .read(
+            List<MapRecord<String, String, String>> records = streamOps.read(
                     Consumer.from(CONSUMER_GROUP, CONSUMER_NAME),
                     StreamReadOptions.empty().count(100).block(Duration.ofMillis(100)),
                     StreamOffset.create(STREAM_KEY, ReadOffset.lastConsumed())
@@ -73,13 +76,13 @@ public class StreamConsumerService {
             }
 
             // 2. 批量处理消息
-            for (MapRecord<String, Object, Object> record : records) {
+            for (MapRecord<String, String, String> record : records) {
                 try {
                     boolean shouldAck = processMessage(record);
 
                     if (shouldAck) {
                         // 3. 仅在成功处理或幂等重复时 ACK
-                        redisTemplate.opsForStream().acknowledge(
+                        streamOps.acknowledge(
                             STREAM_KEY,
                             CONSUMER_GROUP,
                             record.getId()
@@ -98,10 +101,10 @@ public class StreamConsumerService {
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public boolean processMessage(MapRecord<String, Object, Object> record) {
-        Long userId = Long.parseLong((String) record.getValue().get("userId"));
-        Long scheduleId = Long.parseLong((String) record.getValue().get("scheduleId"));
-        String requestId = (String) record.getValue().get("requestId");
+    public boolean processMessage(MapRecord<String, String, String> record) {
+        Long userId = Long.parseLong(record.getValue().get("userId"));
+        Long scheduleId = Long.parseLong(record.getValue().get("scheduleId"));
+        String requestId = record.getValue().get("requestId");
 
         // 1. 查询排班信息
         Schedule schedule = scheduleMapper.selectById(scheduleId);

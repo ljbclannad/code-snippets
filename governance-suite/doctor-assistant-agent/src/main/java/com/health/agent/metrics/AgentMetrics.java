@@ -24,9 +24,6 @@ public class AgentMetrics {
     private final Counter executionPendingApproval;
     private final Counter executionMaxSteps;
 
-    // 计时器
-    private final Timer executionDuration;
-
     public AgentMetrics(MeterRegistry meterRegistry) {
         this.meterRegistry = meterRegistry;
 
@@ -51,10 +48,6 @@ public class AgentMetrics {
             .description("Agent 达到最大步数次数")
             .register(meterRegistry);
 
-        // 初始化计时器
-        this.executionDuration = Timer.builder("agent.execution.duration")
-            .description("Agent 执行耗时")
-            .register(meterRegistry);
     }
 
     /**
@@ -69,11 +62,7 @@ public class AgentMetrics {
      */
     public void recordExecutionSuccess(int steps, long durationMs) {
         executionSuccess.increment();
-        executionDuration.record(durationMs, TimeUnit.MILLISECONDS);
-
-        // 记录步数分布
-        meterRegistry.summary("agent.execution.steps")
-            .record(steps);
+        recordExecutionSample("success", steps, durationMs);
 
         log.debug("Agent 执行成功: steps={}, duration={}ms", steps, durationMs);
     }
@@ -82,7 +71,12 @@ public class AgentMetrics {
      * 记录 Agent 执行失败
      */
     public void recordExecutionFailure(String errorType) {
+        recordExecutionFailure(errorType, 0, 0L);
+    }
+
+    public void recordExecutionFailure(String errorType, int steps, long durationMs) {
         executionFailure.increment();
+        recordExecutionSample("failure", steps, durationMs);
 
         // 按错误类型分类
         Counter.builder("agent.execution.failure.by_type")
@@ -112,7 +106,12 @@ public class AgentMetrics {
      * 记录 Agent 达到最大步数
      */
     public void recordMaxStepsReached(int maxSteps) {
+        recordMaxStepsReached(maxSteps, 0L);
+    }
+
+    public void recordMaxStepsReached(int maxSteps, long durationMs) {
         executionMaxSteps.increment();
+        recordExecutionSample("max_steps", maxSteps, durationMs);
 
         log.warn("Agent 达到最大步数: maxSteps={}", maxSteps);
     }
@@ -138,5 +137,20 @@ public class AgentMetrics {
             .description("按状态统计的会话数")
             .register(meterRegistry)
             .increment();
+    }
+
+    private void recordExecutionSample(String outcome, int steps, long durationMs) {
+        if (durationMs >= 0) {
+            Timer.builder("agent.execution.duration")
+                .tag("outcome", outcome)
+                .description("Agent 执行耗时")
+                .register(meterRegistry)
+                .record(durationMs, TimeUnit.MILLISECONDS);
+        }
+
+        if (steps > 0) {
+            meterRegistry.summary("agent.execution.steps")
+                .record(steps);
+        }
     }
 }

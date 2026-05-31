@@ -16,12 +16,13 @@ import org.springframework.stereotype.Service;
 
 import jakarta.annotation.PreDestroy;
 import java.time.LocalDateTime;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.Map;
@@ -52,7 +53,19 @@ public class ActionExecutor {
     @Value("${agent.tool-timeout-millis:3000}")
     private long toolTimeoutMillis;
 
-    private final ExecutorService toolExecutor = Executors.newCachedThreadPool(new ToolThreadFactory());
+    @Value("${agent.tool-executor.core-pool-size:8}")
+    private int toolExecutorCorePoolSize;
+
+    @Value("${agent.tool-executor.max-pool-size:16}")
+    private int toolExecutorMaxPoolSize;
+
+    @Value("${agent.tool-executor.queue-capacity:64}")
+    private int toolExecutorQueueCapacity;
+
+    @Value("${agent.tool-executor.keep-alive-millis:60000}")
+    private long toolExecutorKeepAliveMillis;
+
+    private volatile ThreadPoolExecutor toolExecutor;
 
     /**
      * 执行 Agent 决定的行动
@@ -163,7 +176,8 @@ public class ActionExecutor {
             log.error("工具执行失败: {}", tool.getName(), e);
 
             // 记录失败
-            toolMetrics.recordToolFailure(tool.getName(), e.getClass().getSimpleName());
+            long duration = System.currentTimeMillis() - startTime;
+            toolMetrics.recordToolFailure(tool.getName(), e.getClass().getSimpleName(), duration);
             agentAuditService.recordToolExecution(
                 sessionId,
                 customerId,
@@ -181,7 +195,7 @@ public class ActionExecutor {
     }
 
     private Object executeWithTimeout(Tool tool, Map<String, Object> input) throws Exception {
-        Future<Object> future = toolExecutor.submit(new ToolExecutionCallable(tool, input));
+        Future<Object> future = getToolExecutor().submit(new ToolExecutionCallable(tool, input));
         try {
             return future.get(toolTimeoutMillis, TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
@@ -198,6 +212,35 @@ public class ActionExecutor {
             Thread.currentThread().interrupt();
             throw new AgentException("工具执行被中断: " + tool.getName(), e);
         }
+    }
+
+    private ThreadPoolExecutor getToolExecutor() {
+        if (toolExecutor == null) {
+            synchronized (this) {
+                if (toolExecutor == null) {
+                    toolExecutor = createToolExecutor();
+                }
+            }
+        }
+        return toolExecutor;
+    }
+
+    private ThreadPoolExecutor createToolExecutor() {
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(
+            toolExecutorCorePoolSize,
+            toolExecutorMaxPoolSize,
+            toolExecutorKeepAliveMillis,
+            TimeUnit.MILLISECONDS,
+            new ArrayBlockingQueue<>(toolExecutorQueueCapacity),
+            new ToolThreadFactory(),
+            (runnable, threadPoolExecutor) -> {
+                toolMetrics.recordToolExecutorRejected("agent-tool-executor");
+                throw new RejectedExecutionException("工具执行线程池已饱和");
+            }
+        );
+        executor.allowCoreThreadTimeOut(true);
+        toolMetrics.bindToolExecutor("agent-tool-executor", executor);
+        return executor;
     }
 
     /**
@@ -233,7 +276,9 @@ public class ActionExecutor {
 
     @PreDestroy
     void shutdownExecutor() {
-        toolExecutor.shutdownNow();
+        if (toolExecutor != null) {
+            toolExecutor.shutdownNow();
+        }
     }
 
     private record ToolExecutionCallable(Tool tool, Map<String, Object> input) implements Callable<Object> {

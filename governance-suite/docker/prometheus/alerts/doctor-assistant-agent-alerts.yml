@@ -1,0 +1,74 @@
+groups:
+  - name: doctor-assistant-agent-alerts
+    rules:
+      - alert: DoctorAssistantHighHttpP95
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(http_server_requests_seconds_bucket{application="doctor-assistant-agent"}[5m]))) > 1.5
+        for: 5m
+        labels:
+          severity: warning
+          service: doctor-assistant-agent
+        annotations:
+          summary: "HTTP P95 响应时间升高"
+          description: "过去 5 分钟 doctor-assistant-agent 的 HTTP P95 响应时间超过 1.5 秒，建议检查是否进入限流区间。"
+
+      - alert: DoctorAssistantHighAgentFailureRate
+        expr: |
+          sum(rate(agent_execution_failure_total{application="doctor-assistant-agent"}[5m]))
+          /
+          clamp_min(sum(rate(agent_execution_total{application="doctor-assistant-agent"}[5m])), 0.001) > 0.15
+        for: 3m
+        labels:
+          severity: critical
+          service: doctor-assistant-agent
+        annotations:
+          summary: "Agent 失败率过高"
+          description: "过去 5 分钟 agent.execution.failure / agent.execution.total 超过 15%，应考虑降级或人工接管。"
+
+      - alert: DoctorAssistantToolTimeoutBurst
+        expr: |
+          sum(rate(tool_calls_failure_total{application="doctor-assistant-agent",error_type="AgentException"}[5m]))
+          /
+          clamp_min(sum(rate(tool_calls_total{application="doctor-assistant-agent"}[5m])), 0.001) > 0.10
+        for: 3m
+        labels:
+          severity: warning
+          service: doctor-assistant-agent
+        annotations:
+          summary: "工具调用超时/失败显著增加"
+          description: "工具失败率超过 10%，建议检查热点工具、下游依赖和超时配置。"
+
+      - alert: DoctorAssistantVectorSearchFailureRate
+        expr: |
+          sum(rate(vector_search_failure_total{application="doctor-assistant-agent"}[5m]))
+          /
+          clamp_min(sum(rate(vector_search_requests_total{application="doctor-assistant-agent"}[5m])), 0.001) > 0.20
+        for: 3m
+        labels:
+          severity: critical
+          service: doctor-assistant-agent
+        annotations:
+          summary: "向量检索失败率过高"
+          description: "向量检索失败率超过 20%，建议降级为无向量检索路径或返回保守结果。"
+
+      - alert: DoctorAssistantExecutorQueueBacklog
+        expr: |
+          max(tool_executor_queue_size{application="doctor-assistant-agent",executor="agent-tool-executor"}) > 48
+        for: 2m
+        labels:
+          severity: warning
+          service: doctor-assistant-agent
+        annotations:
+          summary: "工具执行线程池积压严重"
+          description: "工具执行线程池队列积压超过 48，说明热点请求可能已垄断执行资源。"
+
+      - alert: DoctorAssistantExecutorRejecting
+        expr: |
+          increase(tool_executor_rejected_total{application="doctor-assistant-agent",executor="agent-tool-executor"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: doctor-assistant-agent
+        annotations:
+          summary: "工具执行线程池开始拒绝请求"
+          description: "过去 5 分钟出现线程池拒绝，说明需要尽快限流、降级或扩容。"

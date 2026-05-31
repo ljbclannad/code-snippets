@@ -1,15 +1,23 @@
 package com.lx.governance.appointment.controller;
 
-import com.lx.governance.common.api.ApiResponse;
-import com.lx.governance.appointment.domain.DeadLetterMessage;
-import com.lx.governance.appointment.service.DeadLetterService;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.web.bind.annotation.*;
-
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.lx.governance.appointment.domain.DeadLetterMessage;
+import com.lx.governance.appointment.service.DeadLetterService;
+import com.lx.governance.common.api.ApiResponse;
+import com.lx.governance.common.trace.Trace;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * 死信消息管理接口
@@ -29,7 +37,7 @@ public class DeadLetterController {
     public ApiResponse<List<DeadLetterMessage>> getPendingMessages(
             @RequestParam(defaultValue = "100") int limit) {
         List<DeadLetterMessage> messages = deadLetterService.findPendingMessages(limit);
-        return ApiResponse.success(messages);
+        return ApiResponse.ok(messages, Trace.getOrCreate());
     }
 
     /**
@@ -39,9 +47,9 @@ public class DeadLetterController {
     public ApiResponse<Boolean> retryMessage(@PathVariable Long id) {
         boolean success = deadLetterService.retryDeadLetter(id);
         if (success) {
-            return ApiResponse.success(true);
+            return ApiResponse.ok(true, Trace.getOrCreate());
         } else {
-            return ApiResponse.error("重试失败");
+            return ApiResponse.fail("RETRY_FAILED", "重试失败", Trace.getOrCreate());
         }
     }
 
@@ -51,7 +59,7 @@ public class DeadLetterController {
     @PostMapping("/{id}/resolve")
     public ApiResponse<Void> resolveMessage(@PathVariable Long id) {
         deadLetterService.markAsResolved(id);
-        return ApiResponse.success(null);
+        return ApiResponse.ok(null, Trace.getOrCreate());
     }
 
     /**
@@ -63,7 +71,7 @@ public class DeadLetterController {
         stats.put("pending", deadLetterService.countByStatus("PENDING"));
         stats.put("retrying", deadLetterService.countByStatus("RETRYING"));
         stats.put("resolved", deadLetterService.countByStatus("RESOLVED"));
-        stats.put("failed", deadLetterService.countByStatus("FAILED"));
-        return ApiResponse.success(stats);
+       stats.put("failed", deadLetterService.countByStatus("FAILED"));
+        return ApiResponse.ok(stats, Trace.getOrCreate());
     }
 }

@@ -26,5 +26,6 @@ order-service.log
 *.backup
 *.bak
 
-# Superpowers plans (local working artifacts)
-docs/superpowers/plans/
+# docs
+docs/
+

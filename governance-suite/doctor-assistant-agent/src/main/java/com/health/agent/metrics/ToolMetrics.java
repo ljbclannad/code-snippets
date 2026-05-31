@@ -2,11 +2,15 @@ package com.health.agent.metrics;
 
 import com.health.agent.tool.ToolRiskLevel;
 import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -17,6 +21,7 @@ import java.util.concurrent.TimeUnit;
 public class ToolMetrics {
 
     private final MeterRegistry meterRegistry;
+    private final Set<String> boundExecutors = ConcurrentHashMap.newKeySet();
 
     public ToolMetrics(MeterRegistry meterRegistry) {
         this.meterRegistry = meterRegistry;
@@ -49,11 +54,7 @@ public class ToolMetrics {
             .increment();
 
         // 执行耗时
-        Timer.builder("tool.execution.duration")
-            .tag("tool", toolName)
-            .description("工具执行耗时")
-            .register(meterRegistry)
-            .record(durationMs, TimeUnit.MILLISECONDS);
+        recordToolDuration(toolName, "success", durationMs);
 
         log.debug("工具执行成功: tool={}, duration={}ms", toolName, durationMs);
     }
@@ -62,6 +63,10 @@ public class ToolMetrics {
      * 记录工具执行失败
      */
     public void recordToolFailure(String toolName, String errorType) {
+        recordToolFailure(toolName, errorType, 0L);
+    }
+
+    public void recordToolFailure(String toolName, String errorType, long durationMs) {
         // 失败次数
         Counter.builder("tool.calls.failure")
             .tag("tool", toolName)
@@ -69,6 +74,8 @@ public class ToolMetrics {
             .description("工具执行失败次数")
             .register(meterRegistry)
             .increment();
+
+        recordToolDuration(toolName, "failure", durationMs);
 
         log.debug("工具执行失败: tool={}, errorType={}", toolName, errorType);
     }
@@ -106,5 +113,53 @@ public class ToolMetrics {
             .description("工具调用频率统计")
             .register(meterRegistry)
             .increment();
+    }
+
+    public void bindToolExecutor(String executorName, ThreadPoolExecutor executor) {
+        if (!boundExecutors.add(executorName)) {
+            return;
+        }
+
+        Gauge.builder("tool.executor.active", executor, ThreadPoolExecutor::getActiveCount)
+            .tag("executor", executorName)
+            .description("工具执行线程池活跃线程数")
+            .register(meterRegistry);
+        Gauge.builder("tool.executor.pool.size", executor, ThreadPoolExecutor::getPoolSize)
+            .tag("executor", executorName)
+            .description("工具执行线程池当前大小")
+            .register(meterRegistry);
+        Gauge.builder("tool.executor.queue.size", executor, threadPoolExecutor -> threadPoolExecutor.getQueue().size())
+            .tag("executor", executorName)
+            .description("工具执行线程池队列积压数")
+            .register(meterRegistry);
+        Gauge.builder("tool.executor.queue.remaining", executor, threadPoolExecutor -> threadPoolExecutor.getQueue().remainingCapacity())
+            .tag("executor", executorName)
+            .description("工具执行线程池队列剩余容量")
+            .register(meterRegistry);
+        Gauge.builder("tool.executor.max.pool.size", executor, ThreadPoolExecutor::getMaximumPoolSize)
+            .tag("executor", executorName)
+            .description("工具执行线程池最大线程数")
+            .register(meterRegistry);
+    }
+
+    public void recordToolExecutorRejected(String executorName) {
+        Counter.builder("tool.executor.rejected")
+            .tag("executor", executorName)
+            .description("工具执行线程池拒绝次数")
+            .register(meterRegistry)
+            .increment();
+    }
+
+    private void recordToolDuration(String toolName, String outcome, long durationMs) {
+        if (durationMs < 0) {
+            return;
+        }
+
+        Timer.builder("tool.execution.duration")
+            .tag("tool", toolName)
+            .tag("outcome", outcome)
+            .description("工具执行耗时")
+            .register(meterRegistry)
+            .record(durationMs, TimeUnit.MILLISECONDS);
     }
 }

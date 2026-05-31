@@ -1,5 +1,7 @@
 # Docker 部署指南
 
+> 监控约定：`doctor-assistant-agent` 只暴露 `/actuator/prometheus` 指标，Prometheus 与 Grafana 统一由仓库根目录 `docker-compose.yml`、`docker/prometheus`、`docker/grafana` 管理。本目录不再维护独立监控编排。
+
 ## 概述
 
 本项目提供完整的 Docker Compose 配置，支持一键启动所有依赖服务和应用。
@@ -22,12 +24,7 @@
 │            │     :8088       │                          │
 │            └────────┬────────┘                          │
 │                     │                                   │
-│       ┌─────────────┴─────────────┐                     │
-│       │                           │                     │
-│  ┌────▼──────┐            ┌──────▼─────┐               │
-│  │Prometheus │            │  Grafana   │ (可选)        │
-│  │   :9090   │            │   :3000    │               │
-│  └───────────┘            └────────────┘               │
+│             指标暴露到根目录统一监控栈                  │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -67,16 +64,13 @@ docker-compose --profile with-milvus up -d
 - Milvus Admin: http://localhost:9091
 - MinIO: http://localhost:9001
 
-### 3. 启动监控（可选）
+### 3. 启动统一监控（仓库根目录）
 
-启动 Prometheus 和 Grafana：
+在仓库根目录启动 Prometheus 和 Grafana：
 
 ```bash
-# 使用启动脚本
-./start.sh start-monitor
-
-# 或使用 docker-compose
-docker-compose --profile with-monitoring up -d
+cd ..
+docker compose up -d prometheus grafana
 ```
 
 **监控地址：**
@@ -121,9 +115,6 @@ MILVUS_ENABLED=false
 
 # 启动完整服务（包括 Milvus）
 ./start.sh start-full
-
-# 启动监控服务
-./start.sh start-monitor
 
 # 停止所有服务
 ./start.sh stop
@@ -227,26 +218,20 @@ curl http://localhost:8088/actuator/prometheus
 
 ## 监控配置
 
-### Prometheus
+### Prometheus 与 Grafana
 
-**配置文件：** `monitoring/prometheus.yml`
+**统一配置位置：**
+- 根目录 Prometheus: `docker/prometheus/prometheus.yml`
+- 根目录告警规则: `docker/prometheus/alerts`
+- 根目录 Grafana Dashboard: `docker/grafana/provisioning/dashboards`
 
 **抓取配置：**
-- 应用指标: `doctor-assistant-agent:8088/actuator/prometheus`
-- 抓取间隔: 15秒
+- 应用指标: `host.docker.internal:8088/actuator/prometheus`
+- 抓取作业: `doctor-assistant-agent`
 
-**访问地址：** http://localhost:9090
-
-### Grafana
-
-**默认账号：**
-- 用户名: admin
-- 密码: admin
-
-**数据源：**
-- Prometheus: http://prometheus:9090
-
-**访问地址：** http://localhost:3000
+**访问地址：**
+- Prometheus: http://localhost:9090
+- Grafana: http://localhost:3000
 
 ### 关键指标
 
@@ -280,8 +265,6 @@ curl http://localhost:8088/actuator/prometheus
 | `milvus-etcd-data` | Milvus 元数据 | ~50MB |
 | `milvus-minio-data` | Milvus 对象存储 | ~500MB |
 | `app-logs` | 应用日志 | ~100MB |
-| `prometheus-data` | Prometheus 数据 | ~500MB |
-| `grafana-data` | Grafana 配置 | ~50MB |
 
 ### 备份数据
 

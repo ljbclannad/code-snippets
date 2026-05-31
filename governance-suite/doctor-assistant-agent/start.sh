@@ -78,19 +78,6 @@ start_with_milvus() {
     print_info "Milvus Admin: http://localhost:9091"
 }
 
-# 启动监控服务
-start_with_monitoring() {
-    print_info "启动监控服务（Prometheus + Grafana）..."
-    docker-compose --profile with-monitoring up -d
-
-    print_info "等待服务就绪..."
-    sleep 10
-
-    print_info "监控服务已启动"
-    print_info "Prometheus: http://localhost:9090"
-    print_info "Grafana: http://localhost:3000 (admin/admin)"
-}
-
 # 启动应用
 start_app() {
     print_info "启动 Doctor Assistant Agent 应用..."
@@ -114,7 +101,7 @@ start_app() {
 # 停止所有服务
 stop_all() {
     print_info "停止所有服务..."
-    docker-compose --profile with-milvus --profile with-monitoring down
+    docker-compose --profile with-milvus down
     print_info "所有服务已停止"
 }
 
@@ -132,7 +119,6 @@ show_help() {
     echo "命令:"
     echo "  start           启动基础服务（MySQL + Redis + 应用）"
     echo "  start-full      启动完整服务（包括 Milvus）"
-    echo "  start-monitor   启动监控服务（Prometheus + Grafana）"
     echo "  stop            停止所有服务"
     echo "  restart         重启应用"
     echo "  logs            查看应用日志"
@@ -142,6 +128,10 @@ show_help() {
     echo "环境变量:"
     echo "  DEEPSEEK_API_KEY    DeepSeek API Key（可选，未设置时使用 Mock 模式）"
     echo "  MILVUS_ENABLED      是否启用 Milvus（默认: false）"
+    echo ""
+    echo "监控:"
+    echo "  Prometheus/Grafana 统一由仓库根目录 docker-compose.yml 管理"
+    echo "  请在仓库根目录执行: docker compose up -d prometheus grafana"
     echo ""
 }
 
@@ -172,9 +162,6 @@ main() {
         start-full)
             start_with_milvus
             start_app
-            ;;
-        start-monitor)
-            start_with_monitoring
             ;;
         stop)
             stop_all

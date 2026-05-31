@@ -1,5 +1,17 @@
 package com.lx.governance.aichat.integration;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
+
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.test.context.ActiveProfiles;
+
 import com.lx.governance.aichat.client.DeepSeekClient;
 import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.ChatResponse;
@@ -10,17 +22,6 @@ import com.lx.governance.aichat.repository.ChatHistorySearchRepository;
 import com.lx.governance.aichat.service.AiChatService;
 import com.lx.governance.aichat.service.ChatHistorySearchService;
 import com.lx.governance.aichat.service.SessionContextService;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.test.context.ActiveProfiles;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.when;
 
 /**
  * SessionContext端到端集成测试
@@ -58,7 +59,7 @@ class SessionContextIntegrationTest {
     }
 
     @Test
-    void testEndToEndChatFlow_WithSessionContext() {
+    void testEndToEndChatFlow_WithSessionContext() throws Exception {
         // 1. 准备测试数据
         String conversationId = "test-conv-001";
         String customerId = "customer-001";
@@ -78,7 +79,7 @@ class SessionContextIntegrationTest {
         when(deepSeekClient.chat(any(), any(), any(), any())).thenReturn(mockResponse);
 
         // 3. 第一次对话 - 创建会话上下文
-        ChatResponse response1 = aiChatService.handleChatRequest(request);
+        ChatResponse response1 = aiChatService.handleChatRequest(request).get();
 
         assertThat(response1).isNotNull();
         assertThat(response1.getSuccess()).isTrue();
@@ -103,7 +104,7 @@ class SessionContextIntegrationTest {
         mockResponse2.setConversationId(conversationId);
         when(deepSeekClient.chat(any(), any(), any(), any())).thenReturn(mockResponse2);
 
-        ChatResponse response2 = aiChatService.handleChatRequest(request);
+        ChatResponse response2 = aiChatService.handleChatRequest(request).get();
 
         assertThat(response2).isNotNull();
         assertThat(response2.getSuccess()).isTrue();
