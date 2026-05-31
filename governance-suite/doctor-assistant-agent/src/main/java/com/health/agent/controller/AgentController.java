@@ -14,9 +14,12 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -62,12 +65,12 @@ public class AgentController {
                 mediaType = "application/json",
                 schema = @Schema(implementation = AgentExecuteRequest.class),
                 examples = @ExampleObject(
-                    name = "健康咨询示例",
+                    name = "减重管理分析示例",
                     value = """
                         {
-                          "goal": "患者最近体重增加明显，帮我分析一下原因并给出建议",
-                          "customerId": "1001",
-                          "doctorId": "2001"
+                          "goal": "患者最近两周体重不下降，帮我判断是否进入平台期并给出下一步建议",
+                          "customerId": "C001",
+                          "doctorId": "D001"
                         }
                         """
                 )
@@ -80,8 +83,29 @@ public class AgentController {
         @ApiResponse(responseCode = "400", description = "请求参数错误"),
         @ApiResponse(responseCode = "500", description = "服务器内部错误")
     })
-    @PostMapping("/execute")
-    public ResponseEntity<AgentResult> execute(@RequestBody AgentExecuteRequest request) {
+    /**
+     * 发起一个新的减重管理 Agent 会话。
+     *
+     * <p>这是医生侧的主入口。调用后系统会围绕目标语义自动执行 ReAct 多步分析，
+     * 可能查询患者档案、体重历史、聊天记录、停滞期信号与依从性信号，并在必要时创建高风险待审批任务。</p>
+     *
+     * <p>该接口的典型返回包括：</p>
+     * <ul>
+     *   <li>成功：返回结构化减重管理分析结果</li>
+     *   <li>待审批：返回高风险动作对应的待确认任务</li>
+     *   <li>降级/失败：返回结构化保守结果和人工接管建议</li>
+     * </ul>
+     *
+     * @param request 执行请求，包含目标、患者 ID 和医生 ID
+     * @return Agent 执行结果
+     */
+    @ResponseStatus(HttpStatus.OK)
+    @PostMapping(
+        value = "/execute",
+        consumes = MediaType.APPLICATION_JSON_VALUE,
+        produces = MediaType.APPLICATION_JSON_VALUE
+    )
+    public ResponseEntity<AgentResult> execute(@Valid @RequestBody AgentExecuteRequest request) {
         log.info("收到Agent执行请求: goal={}, customerId={}",
             request.getGoal(), request.getCustomerId());
 

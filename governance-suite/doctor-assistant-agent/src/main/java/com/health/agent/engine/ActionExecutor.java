@@ -71,6 +71,7 @@ public class ActionExecutor {
      * 执行 Agent 决定的行动
      */
     public ActionResult execute(ActionDecision action, String customerId, String doctorId, String sessionId) {
+        // 先把 toolName 映射到真实工具定义，避免模型输出了不存在的工具还继续往下执行。
         Tool tool = toolRegistry.getTool(action.getToolName());
 
         if (tool == null) {
@@ -79,15 +80,18 @@ public class ActionExecutor {
 
         log.info("执行工具: {}, 风险等级: {}", tool.getName(), tool.getRiskLevel());
 
-        // 记录工具调用
+        // 统一记录调用指标，目的是后续能按工具和风险等级观察热点、失败率和使用分布。
         toolMetrics.recordToolCall(tool.getName(), tool.getRiskLevel());
         toolMetrics.recordToolCallByRiskLevel(tool.getRiskLevel());
         toolMetrics.recordToolPopularity(tool.getName());
 
         Map<String, Object> normalizedInput;
         try {
+            // 在真正执行前做 schema 级输入校验和归一化，目的是把模型生成的参数收敛成可控格式，
+            // 同时尽早拦住缺字段、类型错误、越界值这类问题，避免把脏数据传给具体工具实现。
             normalizedInput = toolInputValidator.validateAndNormalize(tool, action.getInput());
         } catch (AgentException e) {
+            // 输入非法也要走失败指标和审计，目的是让“模型选对了工具但参数不合法”这类问题可观测、可追踪。
             toolMetrics.recordToolFailure(tool.getName(), "INVALID_TOOL_INPUT");
             agentAuditService.recordToolExecution(
                 sessionId,
@@ -103,29 +107,33 @@ public class ActionExecutor {
             return ActionResult.error(e.getMessage());
         }
 
+        // 后续一律使用归一化后的 Action，目的是确保审计、审批和实际执行看到的是同一份标准化输入。
         ActionDecision normalizedAction = ActionDecision.builder()
             .toolName(action.getToolName())
             .input(normalizedInput)
             .reason(action.getReason())
             .build();
 
-        // 根据风险等级决定执行策略
+        // 按风险等级分流执行策略，目的是把“能直接执行”和“必须人工介入”的路径在这里明确切开，
+        // 避免高风险动作绕过审批链，也避免低风险动作被不必要地阻塞。
         switch (tool.getRiskLevel()) {
             case LOW:
-                // 低风险：直接执行
+                // 低风险工具直接执行，目标是减少医生端操作负担，让只读查询和低风险分析快速返回。
                 return executeDirectly(tool, normalizedInput, sessionId, customerId, doctorId, null);
 
             case MEDIUM:
-                // 中风险：执行但记录审计日志
+                // 中风险工具允许执行，但仍要留下完整审计，目的是既保持效率，又保留事后复盘能力。
                 ActionResult result = executeDirectly(tool, normalizedInput, sessionId, customerId, doctorId, null);
                 return result;
 
             case HIGH:
-                // 高风险：创建待确认任务，暂停 Agent
+                // 高风险工具不直接执行，而是转成待审批任务，目的是把减重方案调整和医学复核
+                // 这类高影响动作显式交还给医生确认。
                 toolMetrics.recordToolNeedsApproval(tool.getName());
                 return createPendingTask(customerId, doctorId, sessionId, tool, normalizedAction);
 
             default:
+                // 防御性分支，目的是在风险枚举出现异常值时安全失败，而不是落到未定义行为。
                 return ActionResult.error("未知风险等级");
         }
     }
