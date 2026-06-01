@@ -12,6 +12,8 @@ import com.health.agent.model.ChatMessage;
 import com.health.agent.model.PrescriptionRecord;
 import com.health.agent.model.FollowUpTask;
 import com.health.agent.model.HealthKnowledge;
+import com.health.agent.model.ToolEvidence;
+import com.health.agent.model.ToolExecutionOutput;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -229,10 +231,21 @@ public class ToolRegistry {
 
         PatientProfile profile = patientService.getProfile(customerId);
         if (profile == null) {
-            return Map.of("error", "患者档案不存在");
+            return ToolExecutionOutput.builder()
+                .data(Map.of("error", "患者档案不存在"))
+                .summary("未找到患者档案")
+                .stateUpdates(Map.of("patient_profile", Map.of("error", "患者档案不存在")))
+                .evidence(List.of(
+                    ToolEvidence.builder()
+                        .source("PATIENT_PROFILE")
+                        .summary("患者档案不存在")
+                        .payload(Map.of("customerId", customerId))
+                        .build()
+                ))
+                .build();
         }
 
-        return Map.of(
+        Map<String, Object> data = Map.of(
             "customerId", profile.getCustomerId(),
             "name", profile.getName(),
             "age", profile.getAge(),
@@ -243,6 +256,18 @@ public class ToolRegistry {
             "chronicDiseases", parseStringList(profile.getChronicDiseases()),
             "bmi", profile.getBmi()
         );
+        return ToolExecutionOutput.builder()
+            .data(data)
+            .summary("已获取患者基础档案")
+            .stateUpdates(Map.of("patient_profile", data))
+            .evidence(List.of(
+                ToolEvidence.builder()
+                    .source("PATIENT_PROFILE")
+                    .summary("已获取患者基础档案")
+                    .payload(data)
+                    .build()
+            ))
+            .build();
     }
 
     private List<String> parseStringList(String json) {
@@ -264,13 +289,27 @@ public class ToolRegistry {
 
         List<WeightRecord> records = patientService.getWeightHistory(customerId, days);
 
-        return records.stream()
-            .map(record -> Map.of(
-                "date", record.getRecordDate().toString(),
-                "weight", record.getWeight(),
-                "bmi", record.getBmi() != null ? record.getBmi() : 0.0
-            ))
+        List<Map<String, Object>> data = records.stream()
+            .map(record -> {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("date", record.getRecordDate().toString());
+                row.put("weight", record.getWeight());
+                row.put("bmi", record.getBmi() != null ? record.getBmi() : 0.0);
+                return row;
+            })
             .collect(Collectors.toList());
+        return ToolExecutionOutput.builder()
+            .data(data)
+            .summary("已获取近%d天体重记录".formatted(days))
+            .stateUpdates(Map.of("weight_history", data))
+            .evidence(List.of(
+                ToolEvidence.builder()
+                    .source("WEIGHT_HISTORY")
+                    .summary("已获取近%d天体重记录".formatted(days))
+                    .payload(data)
+                    .build()
+            ))
+            .build();
     }
 
     private Object getChatHistory(Map<String, Object> input) {
@@ -280,13 +319,27 @@ public class ToolRegistry {
 
         List<ChatMessage> messages = patientService.getChatHistory(customerId, limit);
 
-        return messages.stream()
-            .map(msg -> Map.of(
-                "date", msg.getCreatedAt().toLocalDate().toString(),
-                "message", msg.getMessage(),
-                "sender", msg.getSender()
-            ))
+        List<Map<String, Object>> data = messages.stream()
+            .map(msg -> {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("date", msg.getCreatedAt().toLocalDate().toString());
+                row.put("message", msg.getMessage());
+                row.put("sender", msg.getSender());
+                return row;
+            })
             .collect(Collectors.toList());
+        return ToolExecutionOutput.builder()
+            .data(data)
+            .summary("已获取最近%d条聊天记录".formatted(limit))
+            .stateUpdates(Map.of("chat_history", data))
+            .evidence(List.of(
+                ToolEvidence.builder()
+                    .source("CHAT_HISTORY")
+                    .summary("已获取最近%d条聊天记录".formatted(limit))
+                    .payload(data)
+                    .build()
+            ))
+            .build();
     }
 
     private Object getPrescriptionHistory(Map<String, Object> input) {
@@ -296,14 +349,28 @@ public class ToolRegistry {
 
         List<PrescriptionRecord> prescriptions = patientService.getPrescriptionHistory(customerId, limit);
 
-        return prescriptions.stream()
-            .map(p -> Map.of(
-                "date", p.getCreatedAt().toLocalDate().toString(),
-                "medication", p.getMedication(),
-                "dosage", p.getDosage() != null ? p.getDosage() : "",
-                "duration", p.getDuration() != null ? p.getDuration() : ""
-            ))
+        List<Map<String, Object>> data = prescriptions.stream()
+            .map(p -> {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("date", p.getCreatedAt().toLocalDate().toString());
+                row.put("medication", p.getMedication());
+                row.put("dosage", p.getDosage() != null ? p.getDosage() : "");
+                row.put("duration", p.getDuration() != null ? p.getDuration() : "");
+                return row;
+            })
             .collect(Collectors.toList());
+        return ToolExecutionOutput.builder()
+            .data(data)
+            .summary("已获取最近%d条处方记录".formatted(limit))
+            .stateUpdates(Map.of("prescription_history", data))
+            .evidence(List.of(
+                ToolEvidence.builder()
+                    .source("PRESCRIPTION_HISTORY")
+                    .summary("已获取最近%d条处方记录".formatted(limit))
+                    .payload(data)
+                    .build()
+            ))
+            .build();
     }
 
     private Object calculateBmi(Map<String, Object> input) {
@@ -323,14 +390,37 @@ public class ToolRegistry {
             category = "肥胖";
         }
 
-        return Map.of("bmi", Math.round(bmi * 10) / 10.0, "category", category);
+        Map<String, Object> data = Map.of("bmi", Math.round(bmi * 10) / 10.0, "category", category);
+        return ToolExecutionOutput.builder()
+            .data(data)
+            .summary("已完成BMI计算")
+            .stateUpdates(Map.of("bmi_assessment", data))
+            .evidence(List.of(
+                ToolEvidence.builder()
+                    .source("CALCULATION")
+                    .summary("已完成BMI计算")
+                    .payload(data)
+                    .build()
+            ))
+            .build();
     }
 
     private Object analyzeWeightTrend(Map<String, Object> input) {
         List<Map<String, Object>> records = (List<Map<String, Object>>) input.get("weightRecords");
 
         if (records.isEmpty()) {
-            return Map.of("trend", "无数据");
+            return ToolExecutionOutput.builder()
+                .data(Map.of("trend", "无数据"))
+                .summary("体重记录为空，无法分析趋势")
+                .stateUpdates(Map.of("weight_trend_analysis", Map.of("trend", "无数据")))
+                .evidence(List.of(
+                    ToolEvidence.builder()
+                        .source("WEIGHT_HISTORY")
+                        .summary("体重记录为空，无法分析趋势")
+                        .payload(Map.of("trend", "无数据"))
+                        .build()
+                ))
+                .build();
         }
 
         // 简单趋势分析
@@ -347,7 +437,7 @@ public class ToolRegistry {
             trend = "下降";
         }
 
-        return Map.of(
+        Map<String, Object> data = Map.of(
             "trend", trend,
             "change", Math.round(change * 10) / 10.0,
             "totalRecords", records.size(),
@@ -357,11 +447,35 @@ public class ToolRegistry {
             ),
             "evidenceSources", List.of("WEIGHT_HISTORY")
         );
+        return ToolExecutionOutput.builder()
+            .data(data)
+            .summary("已完成体重趋势分析")
+            .stateUpdates(Map.of("weight_trend_analysis", data))
+            .evidence(List.of(
+                ToolEvidence.builder()
+                    .source("WEIGHT_HISTORY")
+                    .summary("已完成体重趋势分析")
+                    .payload(data)
+                    .build()
+            ))
+            .build();
     }
 
     private Object detectWeightPlateau(Map<String, Object> input) {
         List<Map<String, Object>> records = (List<Map<String, Object>>) input.get("weightRecords");
-        return weightPlateauService.detectPlateau(records);
+        Map<String, Object> data = weightPlateauService.detectPlateau(records);
+        return ToolExecutionOutput.builder()
+            .data(data)
+            .summary("已完成平台期判断")
+            .stateUpdates(Map.of("plateau_assessment", data))
+            .evidence(List.of(
+                ToolEvidence.builder()
+                    .source("WEIGHT_HISTORY")
+                    .summary("已完成平台期判断")
+                    .payload(data)
+                    .build()
+            ))
+            .build();
     }
 
     private Object analyzeAdherenceSignals(Map<String, Object> input) {
@@ -373,7 +487,19 @@ public class ToolRegistry {
         List<ChatMessage> chatMessages = patientService.getChatHistory(customerId, 20);
         List<FollowUpTask> tasks = followUpTaskService.getTasksByCustomerId(customerId, taskLimit);
 
-        return adherenceAnalysisService.analyze(customerId, weightRecords, chatMessages, tasks);
+        Map<String, Object> data = adherenceAnalysisService.analyze(customerId, weightRecords, chatMessages, tasks);
+        return ToolExecutionOutput.builder()
+            .data(data)
+            .summary("已完成依从性分析")
+            .stateUpdates(Map.of("adherence_analysis", data))
+            .evidence(List.of(
+                ToolEvidence.builder()
+                    .source("CHAT_HISTORY")
+                    .summary("已完成依从性分析")
+                    .payload(data)
+                    .build()
+            ))
+            .build();
     }
 
     private Object getHealthKnowledge(Map<String, Object> input) {
@@ -389,21 +515,47 @@ public class ToolRegistry {
         }
 
         if (knowledgeList.isEmpty()) {
-            return Map.of(
+            Map<String, Object> data = Map.of(
                 "topic", topic,
                 "found", false,
                 "message", "未找到相关健康知识，建议咨询专业医生"
             );
+            return ToolExecutionOutput.builder()
+                .data(data)
+                .summary("未找到相关健康知识")
+                .stateUpdates(Map.of("health_knowledge", data))
+                .evidence(List.of(
+                    ToolEvidence.builder()
+                        .source("HEALTH_KNOWLEDGE")
+                        .summary("未找到相关健康知识")
+                        .payload(data)
+                        .build()
+                ))
+                .build();
         }
 
-        return knowledgeList.stream()
-            .map(k -> Map.of(
-                "title", k.getTitle(),
-                "category", k.getCategory(),
-                "content", k.getContent(),
-                "source", k.getSource() != null ? k.getSource() : ""
-            ))
+        List<Map<String, Object>> data = knowledgeList.stream()
+            .map(k -> {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("title", k.getTitle());
+                row.put("category", k.getCategory());
+                row.put("content", k.getContent());
+                row.put("source", k.getSource() != null ? k.getSource() : "");
+                return row;
+            })
             .collect(Collectors.toList());
+        return ToolExecutionOutput.builder()
+            .data(data)
+            .summary("已检索到相关健康知识")
+            .stateUpdates(Map.of("health_knowledge", data))
+            .evidence(List.of(
+                ToolEvidence.builder()
+                    .source("HEALTH_KNOWLEDGE")
+                    .summary("已检索到相关健康知识")
+                    .payload(data)
+                    .build()
+            ))
+            .build();
     }
 
     private Object sendReminder(Map<String, Object> input) {
@@ -412,7 +564,19 @@ public class ToolRegistry {
         log.info("发送提醒: customerId={}, message={}", customerId, message);
 
         // TODO: 发送消息
-        return Map.of("success", true, "message", "提醒已发送");
+        Map<String, Object> data = Map.of("success", true, "message", "提醒已发送");
+        return ToolExecutionOutput.builder()
+            .data(data)
+            .summary("已发送提醒消息")
+            .stateUpdates(Map.of("reminder_result", data))
+            .evidence(List.of(
+                ToolEvidence.builder()
+                    .source("FOLLOW_UP_TASK")
+                    .summary("已发送提醒消息")
+                    .payload(Map.of("customerId", customerId, "message", message))
+                    .build()
+            ))
+            .build();
     }
 
     private Object createFollowUpTask(Map<String, Object> input) {
@@ -433,18 +597,42 @@ public class ToolRegistry {
                 "AGENT"
             );
 
-            return Map.of(
+            Map<String, Object> data = Map.of(
                 "success", true,
                 "taskId", task.getTaskId(),
                 "dueDate", task.getDueDate().toString(),
                 "message", "随访任务创建成功"
             );
+            return ToolExecutionOutput.builder()
+                .data(data)
+                .summary("已创建随访任务")
+                .stateUpdates(Map.of("follow_up_tasks", List.of(data)))
+                .evidence(List.of(
+                    ToolEvidence.builder()
+                        .source("FOLLOW_UP_TASK")
+                        .summary("已创建随访任务")
+                        .payload(data)
+                        .build()
+                ))
+                .build();
         } catch (Exception e) {
             log.error("创建随访任务失败", e);
-            return Map.of(
+            Map<String, Object> data = Map.of(
                 "success", false,
                 "message", "创建任务失败: " + e.getMessage()
             );
+            return ToolExecutionOutput.builder()
+                .data(data)
+                .summary("创建随访任务失败")
+                .stateUpdates(Map.of("follow_up_task_error", data))
+                .evidence(List.of(
+                    ToolEvidence.builder()
+                        .source("FOLLOW_UP_TASK")
+                        .summary("创建随访任务失败")
+                        .payload(data)
+                        .build()
+                ))
+                .build();
         }
     }
 
@@ -454,19 +642,37 @@ public class ToolRegistry {
         log.info("发送健康报告: customerId={}", customerId);
 
         // TODO: 发送报告
-        return Map.of("success", true, "message", "报告已发送");
+        Map<String, Object> data = Map.of("success", true, "message", "报告已发送");
+        return ToolExecutionOutput.builder()
+            .data(data)
+            .summary("已发送健康报告")
+            .stateUpdates(Map.of("health_report_result", data))
+            .evidence(List.of(
+                ToolEvidence.builder()
+                    .source("FOLLOW_UP_TASK")
+                    .summary("已发送健康报告")
+                    .payload(Map.of("customerId", customerId))
+                    .build()
+            ))
+            .build();
     }
 
     private Object draftWeightManagementPlan(Map<String, Object> input) {
         // 高风险操作，不会被直接调用
         // 会被 ActionExecutor 拦截并创建待确认任务
         log.warn("draftWeightManagementPlan 不应该被直接调用");
-        return null;
+        return ToolExecutionOutput.builder()
+            .data(Map.of("blocked", true))
+            .summary("高风险工具不允许直接执行")
+            .build();
     }
 
     private Object recommendMedicalReview(Map<String, Object> input) {
         // 高风险操作，不会被直接调用
         log.warn("recommendMedicalReview 不应该被直接调用");
-        return null;
+        return ToolExecutionOutput.builder()
+            .data(Map.of("blocked", true))
+            .summary("高风险工具不允许直接执行")
+            .build();
     }
 }

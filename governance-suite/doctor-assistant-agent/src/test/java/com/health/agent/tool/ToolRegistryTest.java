@@ -1,8 +1,15 @@
 package com.health.agent.tool;
 
+import com.health.agent.model.ChatMessage;
+import com.health.agent.model.FollowUpTask;
+import com.health.agent.model.PatientProfile;
+import com.health.agent.model.ToolExecutionOutput;
+import com.health.agent.model.WeightRecord;
 import com.health.agent.service.FollowUpTaskService;
 import com.health.agent.service.HealthKnowledgeService;
 import com.health.agent.service.PatientService;
+import com.health.agent.service.AdherenceAnalysisService;
+import com.health.agent.service.WeightPlateauService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -10,11 +17,18 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class ToolRegistryTest {
@@ -28,14 +42,29 @@ class ToolRegistryTest {
     @Mock
     private HealthKnowledgeService healthKnowledgeService;
 
+    private WeightPlateauService weightPlateauService;
+    private AdherenceAnalysisService adherenceAnalysisService;
+
     private ToolRegistry toolRegistry;
 
     @BeforeEach
     void setUp() {
+        weightPlateauService = new WeightPlateauService();
+        ReflectionTestUtils.setField(weightPlateauService, "windowDays", 14);
+        ReflectionTestUtils.setField(weightPlateauService, "maxWeightChangeKg", 0.5d);
+        ReflectionTestUtils.setField(weightPlateauService, "recentTrendDays", 7);
+        ReflectionTestUtils.setField(weightPlateauService, "recentDownwardThresholdKg", 0.2d);
+
+        adherenceAnalysisService = new AdherenceAnalysisService();
+        ReflectionTestUtils.setField(adherenceAnalysisService, "analysisWindowDays", 14);
+        ReflectionTestUtils.setField(adherenceAnalysisService, "minWeightRecords", 3);
+
         toolRegistry = new ToolRegistry();
         ReflectionTestUtils.setField(toolRegistry, "patientService", patientService);
         ReflectionTestUtils.setField(toolRegistry, "followUpTaskService", followUpTaskService);
         ReflectionTestUtils.setField(toolRegistry, "healthKnowledgeService", healthKnowledgeService);
+        ReflectionTestUtils.setField(toolRegistry, "weightPlateauService", weightPlateauService);
+        ReflectionTestUtils.setField(toolRegistry, "adherenceAnalysisService", adherenceAnalysisService);
         toolRegistry.registerTools();
     }
 
@@ -70,5 +99,63 @@ class ToolRegistryTest {
         assertFalse(toolNames.contains("search_similar_cases"));
         assertFalse(toolNames.contains("draft_prescription"));
         assertFalse(toolNames.contains("suggest_diagnosis"));
+    }
+
+    @Test
+    void shouldReturnStructuredToolExecutionOutputForCoreLowRiskTools() {
+        PatientProfile profile = PatientProfile.builder()
+            .customerId("C001")
+            .name("张三")
+            .age(35)
+            .gender("女")
+            .height(165.0)
+            .currentWeight(62.0)
+            .targetWeight(55.0)
+            .bmi(22.8)
+            .chronicDiseases("[\"高血压\"]")
+            .build();
+        when(patientService.getProfile("C001")).thenReturn(profile);
+
+        WeightRecord w1 = WeightRecord.builder().recordDate(LocalDate.now().minusDays(14)).weight(80.0).bmi(29.4).build();
+        WeightRecord w2 = WeightRecord.builder().recordDate(LocalDate.now().minusDays(7)).weight(80.1).bmi(29.4).build();
+        WeightRecord w3 = WeightRecord.builder().recordDate(LocalDate.now()).weight(80.0).bmi(29.4).build();
+        when(patientService.getWeightHistory("C001", 30)).thenReturn(List.of(w1, w2, w3));
+        when(patientService.getWeightHistory("C001", 14)).thenReturn(List.of(w1, w2, w3));
+
+        ChatMessage chat = ChatMessage.builder()
+            .sender("USER")
+            .message("我最近有在快走，也在控制饮食")
+            .createdAt(LocalDateTime.now())
+            .build();
+        when(patientService.getChatHistory("C001", 20)).thenReturn(List.of(chat));
+        when(followUpTaskService.getTasksByCustomerId("C001", 10)).thenReturn(List.of());
+
+        ToolExecutionOutput profileOutput = assertInstanceOf(
+            ToolExecutionOutput.class,
+            toolRegistry.getTool("get_patient_profile").getExecutor().execute(Map.of("customerId", "C001"))
+        );
+        assertTrue(profileOutput.getStateUpdates().containsKey("patient_profile"));
+
+        ToolExecutionOutput weightOutput = assertInstanceOf(
+            ToolExecutionOutput.class,
+            toolRegistry.getTool("get_weight_history").getExecutor().execute(Map.of("customerId", "C001", "days", 30))
+        );
+        assertTrue(weightOutput.getStateUpdates().containsKey("weight_history"));
+
+        ToolExecutionOutput plateauOutput = assertInstanceOf(
+            ToolExecutionOutput.class,
+            toolRegistry.getTool("detect_weight_plateau").getExecutor().execute(Map.of("weightRecords", List.of(
+                Map.of("date", LocalDate.now().minusDays(14).toString(), "weight", 80.0),
+                Map.of("date", LocalDate.now().minusDays(7).toString(), "weight", 80.1),
+                Map.of("date", LocalDate.now().toString(), "weight", 80.0)
+            )))
+        );
+        assertTrue(plateauOutput.getStateUpdates().containsKey("plateau_assessment"));
+
+        ToolExecutionOutput adherenceOutput = assertInstanceOf(
+            ToolExecutionOutput.class,
+            toolRegistry.getTool("analyze_adherence_signals").getExecutor().execute(Map.of("customerId", "C001"))
+        );
+        assertTrue(adherenceOutput.getStateUpdates().containsKey("adherence_analysis"));
     }
 }

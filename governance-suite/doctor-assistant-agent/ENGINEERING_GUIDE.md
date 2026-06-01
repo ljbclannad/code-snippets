@@ -30,13 +30,24 @@ doctor-assistant-agent/
 ### 引擎层
 
 - `ReActAgentEngine`
-  - 负责主循环、恢复执行、结果收敛、失败出口和降级
+  - 负责主循环、子代理协调、恢复执行、结果收敛、失败出口和降级
 - `ReActPromptBuilder`
-  - 构建 ReAct 协议提示词
+  - 构建 ReAct 协议提示词和子代理角色 Prompt
 - `ReActResponseParser`
   - 解析严格 JSON 协议响应
 - `ActionExecutor`
-  - 执行工具、处理风险分级、落审计
+  - 执行工具、统一标准化工具输出、处理风险分级、落审计
+- `SubAgentCoordinator`
+  - 基于目标和显式状态选择当前真实子代理
+
+### 子代理层
+
+- `DataCollectionAgent`
+  - 优先补齐患者档案、体重历史、聊天、处方和任务等基础事实
+- `WeightAnalysisAgent`
+  - 基于上下文完成平台期、趋势、依从性和风险信号分析
+- `CarePlanningAgent`
+  - 基于事实和分析结果生成建议动作、随访计划和审批请求
 
 ### 安全层
 
@@ -72,24 +83,128 @@ doctor-assistant-agent/
 
 ## 3. ReAct 执行链路
 
+当前项目已经从最早的“单 ReAct + Observation 文本传递”演进为 4 层架构：
+
+1. 显式状态系统
+2. 标准化工具输出
+3. 真实子代理协调
+4. 多角色协作流式展示
+
+### 3.1 显式状态系统
+
+当前上下文不再只靠 `messages/history` 维持，而是引入了正式的 `AgentContext`：
+
+- `AgentContext`
+  - 当前会话的结构化工作内存
+- `ContextEntry`
+  - 状态槽位
+- `EvidenceRecord`
+  - 证据记录
+
+当前典型状态槽位包括：
+
+- `patient_profile`
+- `weight_history`
+- `chat_history`
+- `prescription_history`
+- `follow_up_tasks`
+- `weight_trend_analysis`
+- `plateau_assessment`
+- `adherence_analysis`
+- `health_knowledge`
+- `last_tool_result`
+- `current_sub_agent`
+
+`AgentContext` 会在工具执行后持续更新，并通过 `context_json` 持久化到 `agent_session`。
+
+### 3.2 标准化工具输出
+
+所有工具当前统一输出 `ToolExecutionOutput`，核心字段：
+
+- `data`
+- `summary`
+- `stateUpdates`
+- `evidence`
+
+执行器 `ActionExecutor` 的职责不再只是跑工具，还负责：
+
+1. 标准化旧输出
+2. 把工具结果统一成状态更新协议
+3. 让引擎始终消费同一种结果结构
+
+当前 `ReActAgentEngine` 会优先消费：
+
+- `stateUpdates`
+- `evidence`
+
+只有在工具结果不是标准结构时才走兼容 fallback。
+
+### 3.3 真实子代理协调
+
+当前不再是纯单 Agent 推理，而是由协调器在每一轮选择真实角色：
+
+- `DataCollectionAgent`
+- `WeightAnalysisAgent`
+- `CarePlanningAgent`
+
+协调策略由 `SubAgentCoordinator` 根据：
+
+- `goal`
+- `AgentContext.slots`
+
+共同判断。
+
+当前策略大致是：
+
+- 上下文缺基础事实时优先 `DataCollectionAgent`
+- 已有基础事实但缺分析结果时优先 `WeightAnalysisAgent`
+- 已有分析结果后转 `CarePlanningAgent`
+
+### 3.4 多角色流式协作展示
+
+当前 SSE 事件已不只是：
+
+- `thinking_delta`
+- `thought`
+- `action`
+- `observation`
+
+还补充了协作边界事件：
+
+- `subagent_started`
+- `subagent_finished`
+- `context_updated`
+
+这样前端可以看到：
+
+1. 当前是哪一个子代理在工作
+2. 子代理何时切换
+3. 显式状态何时更新
+
+### 3.5 当前主链路
+
 主链路：
 
 1. 创建会话
 2. 目标预检
-3. 构建 prompt
-4. 调用模型获取 `Thought + Action` 或 `Thought + FinalAnswer`
-5. 解析响应
-6. 执行工具
-7. 记录 Observation
-8. 满足结束条件时生成结构化结果
-9. 落审计和会话状态
+3. 初始化 `AgentContext`
+4. 选择当前子代理
+5. 构建带角色和显式状态的 prompt
+6. 调用模型获取 `Thought + Action` 或 `Thought + FinalAnswer`
+7. 解析响应
+8. 执行工具并获取 `ToolExecutionOutput`
+9. 将 `stateUpdates/evidence` 写入 `AgentContext`
+10. 记录 Observation
+11. 满足结束条件时生成结构化结果
+12. 落审计和会话状态
 
 恢复链路：
 
 1. 读取暂停会话
 2. 校验任务状态
 3. 执行已批准高风险动作
-4. 继续 ReAct 循环
+4. 恢复 `AgentContext`
+5. 继续带子代理协调的 ReAct 循环
 
 ---
 
@@ -121,9 +236,9 @@ doctor-assistant-agent/
 ### 风险执行策略
 
 - `LOW`
-  - 直接执行
+  - 直接执行，输出标准 `ToolExecutionOutput`
 - `MEDIUM`
-  - 执行并写审计
+  - 执行并写审计，输出标准 `ToolExecutionOutput`
 - `HIGH`
   - 不直接执行，创建待审批任务
 
@@ -227,7 +342,46 @@ doctor-assistant-agent/
 
 ---
 
-## 9. 降级策略实现
+## 9. 流式事件模型
+
+当前主接口 `/api/agent/execute` 与 `/api/agent/resume` 返回 `text/event-stream`。
+
+### 文本增量事件
+
+- `thinking_delta`
+
+### 结构化执行事件
+
+- `thought`
+- `action`
+- `observation`
+- `pending_approval`
+- `final_answer`
+- `error`
+- `done`
+
+### 多角色协作事件
+
+- `subagent_started`
+- `subagent_finished`
+- `context_updated`
+
+当前一条典型流会看到：
+
+1. `subagent_started`
+2. `thinking_delta`
+3. `thought`
+4. `action`
+5. `context_updated`
+6. `observation`
+7. `subagent_finished`
+8. 下一角色 `subagent_started`
+9. 最终 `final_answer`
+10. `done`
+
+---
+
+## 10. 降级策略实现
 
 当前降级场景：
 
@@ -248,7 +402,7 @@ doctor-assistant-agent/
 
 ---
 
-## 10. 关键配置项
+## 11. 关键配置项
 
 ### Agent 基础配置
 

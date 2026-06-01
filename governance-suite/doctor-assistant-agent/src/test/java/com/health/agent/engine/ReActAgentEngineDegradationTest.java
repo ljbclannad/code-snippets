@@ -78,7 +78,6 @@ class ReActAgentEngineDegradationTest {
         AgentSession session = AgentSession.builder().id("1").build();
         when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
         when(toolRegistry.getAllTools()).thenReturn(List.of());
-        when(promptBuilder.buildSystemPrompt(anyList())).thenReturn("system");
         when(promptBuilder.buildUserPrompt(anyString(), anyString())).thenReturn("user");
         when(deepSeekClient.chat(anyString(), anyList())).thenThrow(new RuntimeException("DeepSeek API 调用超时: PT5S"));
 
@@ -96,7 +95,6 @@ class ReActAgentEngineDegradationTest {
         AgentSession session = AgentSession.builder().id("1").build();
         when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
         when(toolRegistry.getAllTools()).thenReturn(List.of());
-        when(promptBuilder.buildSystemPrompt(anyList())).thenReturn("system");
         when(promptBuilder.buildUserPrompt(anyString(), anyString())).thenReturn("user");
         when(promptBuilder.buildProtocolRepairPrompt(anyString())).thenReturn("repair");
 
@@ -121,7 +119,6 @@ class ReActAgentEngineDegradationTest {
         AgentSession session = AgentSession.builder().id("1").build();
         when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
         when(toolRegistry.getAllTools()).thenReturn(List.of());
-        when(promptBuilder.buildSystemPrompt(anyList())).thenReturn("system");
         when(promptBuilder.buildUserPrompt(anyString(), anyString())).thenReturn("user");
 
         DeepSeekClient.DeepSeekResponse step1 = new DeepSeekClient.DeepSeekResponse();

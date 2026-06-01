@@ -57,6 +57,11 @@ public class AgentSession {
     private String messagesJson;
 
     /**
+     * 显式状态上下文（JSON）
+     */
+    private String contextJson;
+
+    /**
      * 当前步数
      */
     private Integer currentStep;

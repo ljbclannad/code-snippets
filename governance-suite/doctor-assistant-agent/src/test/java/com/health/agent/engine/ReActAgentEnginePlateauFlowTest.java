@@ -2,9 +2,15 @@ package com.health.agent.engine;
 
 import com.health.agent.client.DeepSeekClient;
 import com.health.agent.metrics.AgentMetrics;
+import com.health.agent.engine.subagent.CarePlanningSubAgent;
+import com.health.agent.engine.subagent.DataCollectionSubAgent;
+import com.health.agent.engine.subagent.SubAgentCoordinator;
+import com.health.agent.engine.subagent.WeightAnalysisSubAgent;
 import com.health.agent.model.ActionResult;
+import com.health.agent.model.AgentContext;
 import com.health.agent.model.AgentResult;
 import com.health.agent.model.AgentSession;
+import com.health.agent.model.ToolExecutionOutput;
 import com.health.agent.safety.MedicalSafetyService;
 import com.health.agent.service.AgentAuditService;
 import com.health.agent.service.AgentSessionService;
@@ -64,6 +70,11 @@ class ReActAgentEnginePlateauFlowTest {
         ReflectionTestUtils.setField(engine, "agentMetrics", new AgentMetrics(new SimpleMeterRegistry()));
         ReflectionTestUtils.setField(engine, "medicalSafetyService", new MedicalSafetyService());
         ReflectionTestUtils.setField(engine, "agentAuditService", agentAuditService);
+        SubAgentCoordinator coordinator = new SubAgentCoordinator();
+        ReflectionTestUtils.setField(coordinator, "dataCollectionSubAgent", new DataCollectionSubAgent());
+        ReflectionTestUtils.setField(coordinator, "weightAnalysisSubAgent", new WeightAnalysisSubAgent());
+        ReflectionTestUtils.setField(coordinator, "carePlanningSubAgent", new CarePlanningSubAgent());
+        ReflectionTestUtils.setField(engine, "subAgentCoordinator", coordinator);
         ReflectionTestUtils.setField(engine, "maxSteps", 4);
         ReflectionTestUtils.setField(engine, "useMock", false);
         ReflectionTestUtils.setField(engine, "protocolRepairAttempts", 1);
@@ -122,11 +133,22 @@ class ReActAgentEnginePlateauFlowTest {
             """);
         when(deepSeekClient.chat(anyString(), anyList())).thenReturn(first, second);
         when(actionExecutor.execute(any(), anyString(), anyString(), anyString())).thenReturn(
-            ActionResult.success(Map.of(
-                "isPlateau", true,
-                "recentTrend", "PLATEAU",
-                "reason", "近两周体重变化较小，且最近一周未出现明显下降趋势。"
-            ))
+            ActionResult.success(ToolExecutionOutput.builder()
+                .data(Map.of(
+                    "isPlateau", true,
+                    "recentTrend", "PLATEAU",
+                    "reason", "近两周体重变化较小，且最近一周未出现明显下降趋势。"
+                ))
+                .summary("已完成平台期判断")
+                .stateUpdates(Map.of(
+                    "plateau_assessment", Map.of(
+                        "isPlateau", true,
+                        "recentTrend", "PLATEAU",
+                        "reason", "近两周体重变化较小，且最近一周未出现明显下降趋势。"
+                    )
+                ))
+                .build()
+            )
         );
 
         AgentResult result = engine.execute(
@@ -144,6 +166,13 @@ class ReActAgentEnginePlateauFlowTest {
         verify(actionExecutor).execute(actionCaptor.capture(), anyString(), anyString(), anyString());
         assertEquals("detect_weight_plateau", actionCaptor.getValue().getToolName());
 
-        verify(sessionService).updateSession(anyString(), anyList(), anyList(), anyInt());
+        ArgumentCaptor<AgentContext> contextCaptor = ArgumentCaptor.forClass(AgentContext.class);
+        verify(sessionService).updateSession(anyString(), anyList(), anyList(), contextCaptor.capture(), anyInt());
+        assertTrue(contextCaptor.getValue().getSlots().containsKey("plateau_assessment"));
+
+        ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
+        verify(deepSeekClient, org.mockito.Mockito.times(2)).chat(promptCaptor.capture(), anyList());
+        assertTrue(promptCaptor.getAllValues().get(0).contains("DataCollectionAgent"));
+        assertTrue(promptCaptor.getAllValues().get(1).contains("CarePlanningAgent"));
     }
 }

@@ -25,6 +25,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -162,7 +163,8 @@ public class ActionExecutor {
         long startTime = System.currentTimeMillis();
 
         try {
-            Object output = executeWithTimeout(tool, input);
+            Object rawOutput = executeWithTimeout(tool, input);
+            ToolExecutionOutput output = standardizeToolOutput(tool, rawOutput);
 
             // 记录成功
             long duration = System.currentTimeMillis() - startTime;
@@ -220,6 +222,44 @@ public class ActionExecutor {
             Thread.currentThread().interrupt();
             throw new AgentException("工具执行被中断: " + tool.getName(), e);
         }
+    }
+
+    private ToolExecutionOutput standardizeToolOutput(Tool tool, Object rawOutput) {
+        if (rawOutput instanceof ToolExecutionOutput standardized) {
+            return standardized;
+        }
+
+        Map<String, Object> stateUpdates = new java.util.LinkedHashMap<>();
+        String slotKey = resolveContextSlot(tool.getName());
+        stateUpdates.put(slotKey, rawOutput);
+
+        return ToolExecutionOutput.builder()
+            .data(rawOutput)
+            .summary(tool.getDescription())
+            .stateUpdates(stateUpdates)
+            .evidence(List.of(
+                ToolEvidence.builder()
+                    .source("TOOL_OUTPUT")
+                    .summary(tool.getDescription())
+                    .payload(rawOutput)
+                    .build()
+            ))
+            .build();
+    }
+
+    private String resolveContextSlot(String toolName) {
+        return switch (toolName) {
+            case "get_patient_profile" -> "patient_profile";
+            case "get_weight_history" -> "weight_history";
+            case "get_chat_history" -> "chat_history";
+            case "get_prescription_history" -> "prescription_history";
+            case "get_follow_up_tasks", "create_follow_up_task" -> "follow_up_tasks";
+            case "analyze_weight_trend" -> "weight_trend_analysis";
+            case "detect_weight_plateau" -> "plateau_assessment";
+            case "analyze_adherence_signals" -> "adherence_analysis";
+            case "get_health_knowledge" -> "health_knowledge";
+            default -> toolName;
+        };
     }
 
     private ThreadPoolExecutor getToolExecutor() {

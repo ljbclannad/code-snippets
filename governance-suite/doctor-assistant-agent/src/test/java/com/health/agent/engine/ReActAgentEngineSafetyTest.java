@@ -3,6 +3,7 @@ package com.health.agent.engine;
 import com.health.agent.client.DeepSeekClient;
 import com.health.agent.metrics.AgentMetrics;
 import com.health.agent.model.ActionDecision;
+import com.health.agent.model.AgentContext;
 import com.health.agent.model.AgentResult;
 import com.health.agent.model.AgentSession;
 import com.health.agent.model.Message;
@@ -91,7 +92,7 @@ class ReActAgentEngineSafetyTest {
         assertTrue(result.getFinalAnswer().contains("立即线下就医"));
         assertEquals("HIGH", result.getStructuredFinalAnswer().getRiskLevel());
         verify(deepSeekClient, never()).chat(anyString(), anyList());
-        verify(sessionService).completeSession("1", List.of());
+        verify(sessionService).completeSession(anyString(), anyList(), any(AgentContext.class));
     }
 
     @Test
@@ -99,7 +100,6 @@ class ReActAgentEngineSafetyTest {
         AgentSession session = AgentSession.builder().id("1").build();
         when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
         when(toolRegistry.getAllTools()).thenReturn(List.of());
-        when(promptBuilder.buildSystemPrompt(anyList())).thenReturn("system");
         when(promptBuilder.buildUserPrompt(anyString(), anyString())).thenReturn("user");
 
         DeepSeekClient.DeepSeekResponse firstResponse = new DeepSeekClient.DeepSeekResponse();
@@ -134,6 +134,6 @@ class ReActAgentEngineSafetyTest {
         assertEquals("MEDIUM", result.getStructuredFinalAnswer().getRiskLevel());
         assertTrue(result.getFinalAnswer().contains("问题摘要"));
         verify(actionExecutor, never()).execute(any(), anyString(), anyString(), anyString());
-        verify(sessionService).updateSession(anyString(), anyList(), anyList(), anyInt());
+        verify(sessionService).updateSession(anyString(), anyList(), anyList(), any(AgentContext.class), anyInt());
     }
 }

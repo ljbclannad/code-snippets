@@ -1,6 +1,7 @@
 package com.health.agent.engine;
 
 import com.alibaba.fastjson2.JSON;
+import com.health.agent.engine.subagent.AgentSubAgent;
 import com.health.agent.model.Message;
 import com.health.agent.model.Step;
 import com.health.agent.tool.Tool;
@@ -119,6 +120,18 @@ public class ReActPromptBuilder {
 
             现在开始执行任务。
             """, formatToolDescriptions(availableTools));
+    }
+
+    public String buildSubAgentSystemPrompt(AgentSubAgent subAgent, List<Tool> availableTools) {
+        return buildSystemPrompt(availableTools) + """
+
+            ## 当前子代理角色
+
+            你当前扮演：%s
+            角色职责：%s
+
+            你仍然必须遵守上方的 JSON 协议与安全约束，但应优先按照当前角色职责行动。
+            """.formatted(subAgent.name(), subAgent.responsibility());
     }
 
     /**

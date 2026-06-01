@@ -1,6 +1,10 @@
 package com.health.agent.engine;
 
 import com.health.agent.client.DeepSeekClient;
+import com.health.agent.engine.subagent.CarePlanningSubAgent;
+import com.health.agent.engine.subagent.DataCollectionSubAgent;
+import com.health.agent.engine.subagent.SubAgentCoordinator;
+import com.health.agent.engine.subagent.WeightAnalysisSubAgent;
 import com.health.agent.metrics.AgentMetrics;
 import com.health.agent.model.ActionResult;
 import com.health.agent.model.AgentSession;
@@ -66,6 +70,11 @@ class ReActAgentEngineStreamTest {
         ReflectionTestUtils.setField(engine, "agentMetrics", new AgentMetrics(new SimpleMeterRegistry()));
         ReflectionTestUtils.setField(engine, "medicalSafetyService", new MedicalSafetyService());
         ReflectionTestUtils.setField(engine, "agentAuditService", agentAuditService);
+        SubAgentCoordinator coordinator = new SubAgentCoordinator();
+        ReflectionTestUtils.setField(coordinator, "dataCollectionSubAgent", new DataCollectionSubAgent());
+        ReflectionTestUtils.setField(coordinator, "weightAnalysisSubAgent", new WeightAnalysisSubAgent());
+        ReflectionTestUtils.setField(coordinator, "carePlanningSubAgent", new CarePlanningSubAgent());
+        ReflectionTestUtils.setField(engine, "subAgentCoordinator", coordinator);
         ReflectionTestUtils.setField(engine, "maxSteps", 4);
         ReflectionTestUtils.setField(engine, "useMock", false);
         ReflectionTestUtils.setField(engine, "protocolRepairAttempts", 1);
@@ -144,23 +153,30 @@ class ReActAgentEngineStreamTest {
 
         assertEquals(
             List.of(
+                AgentStreamEventType.SUBAGENT_STARTED,
                 AgentStreamEventType.THINKING_DELTA,
                 AgentStreamEventType.THOUGHT,
                 AgentStreamEventType.ACTION,
+                AgentStreamEventType.CONTEXT_UPDATED,
                 AgentStreamEventType.OBSERVATION,
+                AgentStreamEventType.SUBAGENT_FINISHED,
+                AgentStreamEventType.SUBAGENT_STARTED,
                 AgentStreamEventType.THINKING_DELTA,
                 AgentStreamEventType.THOUGHT,
                 AgentStreamEventType.FINAL_ANSWER,
+                AgentStreamEventType.SUBAGENT_FINISHED,
                 AgentStreamEventType.DONE
             ),
             events.stream().map(AgentStreamEvent::getType).toList()
         );
         assertEquals("1", events.get(0).getSessionId());
-        assertInstanceOf(String.class, events.get(0).getData());
+        assertInstanceOf(Map.class, events.get(0).getData());
         assertInstanceOf(String.class, events.get(1).getData());
-        assertInstanceOf(Map.class, events.get(2).getData());
-        assertInstanceOf(String.class, events.get(3).getData());
-        assertTrue(events.get(6).getData().toString().contains("summary"));
+        assertInstanceOf(String.class, events.get(2).getData());
+        assertInstanceOf(Map.class, events.get(3).getData());
+        assertInstanceOf(Map.class, events.get(4).getData());
+        assertInstanceOf(String.class, events.get(5).getData());
+        assertTrue(events.get(10).getData().toString().contains("summary"));
     }
 
     @Test
@@ -207,14 +223,16 @@ class ReActAgentEngineStreamTest {
 
         assertEquals(
             List.of(
+                AgentStreamEventType.SUBAGENT_STARTED,
                 AgentStreamEventType.THINKING_DELTA,
                 AgentStreamEventType.THOUGHT,
                 AgentStreamEventType.ACTION,
                 AgentStreamEventType.PENDING_APPROVAL,
+                AgentStreamEventType.SUBAGENT_FINISHED,
                 AgentStreamEventType.DONE
             ),
             events.stream().map(AgentStreamEvent::getType).toList()
         );
-        assertInstanceOf(PendingTask.class, events.get(3).getData());
+        assertInstanceOf(PendingTask.class, events.get(4).getData());
     }
 }

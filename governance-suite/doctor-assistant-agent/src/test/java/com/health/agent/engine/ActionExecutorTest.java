@@ -4,6 +4,7 @@ import com.health.agent.metrics.ToolMetrics;
 import com.health.agent.model.ActionDecision;
 import com.health.agent.model.ActionResult;
 import com.health.agent.model.PendingTask;
+import com.health.agent.model.ToolExecutionOutput;
 import com.health.agent.service.AgentAuditService;
 import com.health.agent.service.PendingTaskService;
 import com.health.agent.tool.Tool;
@@ -26,6 +27,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.verify;
@@ -185,5 +187,32 @@ class ActionExecutorTest {
             "LOW",
             "ERROR"
         );
+    }
+
+    @Test
+    void lowRiskActionShouldWrapRawToolOutputIntoStandardExecutionOutput() {
+        Tool tool = Tool.builder()
+            .name("get_patient_profile")
+            .description("查询患者档案")
+            .riskLevel(ToolRiskLevel.LOW)
+            .inputSchema(Map.of(
+                "customerId", Map.of("type", "string", "required", true)
+            ))
+            .executor(input -> Map.of("customerId", "C001", "name", "张三"))
+            .build();
+        when(toolRegistry.getTool("get_patient_profile")).thenReturn(tool);
+
+        ActionDecision action = ActionDecision.builder()
+            .toolName("get_patient_profile")
+            .input(Map.of("customerId", "C001"))
+            .reason("获取患者档案")
+            .build();
+
+        ActionResult result = actionExecutor.execute(action, "C001", "D001", "S001");
+
+        assertTrue(result.isSuccess());
+        ToolExecutionOutput output = assertInstanceOf(ToolExecutionOutput.class, result.getOutput());
+        assertEquals("查询患者档案", output.getSummary());
+        assertTrue(output.getStateUpdates().containsKey("patient_profile"));
     }
 }

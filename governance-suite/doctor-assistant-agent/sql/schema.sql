@@ -18,6 +18,7 @@ CREATE TABLE agent_session (
     status VARCHAR(16) NOT NULL COMMENT '状态：RUNNING/PAUSED/COMPLETED/FAILED',
     history_json JSON COMMENT '执行历史（Step列表）',
     messages_json JSON COMMENT '对话消息（Message列表）',
+    context_json JSON COMMENT '显式状态上下文',
     current_step INT DEFAULT 0 COMMENT '当前步数',
     final_answer TEXT COMMENT '最终答案',
     error_message TEXT COMMENT '错误信息',

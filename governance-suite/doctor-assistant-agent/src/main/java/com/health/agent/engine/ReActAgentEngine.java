@@ -11,14 +11,18 @@ import org.springframework.stereotype.Service;
 
 import com.alibaba.fastjson2.JSON;
 import com.health.agent.client.DeepSeekClient;
+import com.health.agent.engine.subagent.AgentSubAgent;
+import com.health.agent.engine.subagent.SubAgentCoordinator;
 import com.health.agent.exception.AgentException;
 import com.health.agent.metrics.AgentMetrics;
 import com.health.agent.model.ActionDecision;
 import com.health.agent.model.ActionResult;
+import com.health.agent.model.AgentContext;
 import com.health.agent.model.AgentResult;
 import com.health.agent.model.AgentSession;
 import com.health.agent.model.AgentStreamEvent;
 import com.health.agent.model.AgentStreamEventType;
+import com.health.agent.model.ContextEntry;
 import com.health.agent.model.Message;
 import com.health.agent.model.PendingTask;
 import com.health.agent.model.SessionStatus;
@@ -26,6 +30,8 @@ import com.health.agent.model.Step;
 import com.health.agent.model.StructuredFinalAnswer;
 import com.health.agent.model.TaskStatus;
 import com.health.agent.model.ThoughtResult;
+import com.health.agent.model.ToolEvidence;
+import com.health.agent.model.ToolExecutionOutput;
 import com.health.agent.safety.MedicalSafetyService;
 import com.health.agent.safety.SafetyAssessment;
 import com.health.agent.service.AgentAuditService;
@@ -68,6 +74,9 @@ public class ReActAgentEngine {
     @Autowired
     private AgentAuditService agentAuditService;
 
+    @Autowired
+    private SubAgentCoordinator subAgentCoordinator;
+
     @Value("${agent.max-steps:15}")
     private int maxSteps;
 
@@ -93,11 +102,13 @@ public class ReActAgentEngine {
 
         List<Step> history = new ArrayList<>();
         List<Message> messages = new ArrayList<>();
+        AgentContext context = AgentContext.initialize(customerId, doctorId, goal);
 
         // 通过关键词处理边界与安全
         SafetyAssessment goalAssessment = medicalSafetyService.assessGoal(goal);
         if (goalAssessment.isBlocked()) {
-            sessionService.completeSession(sessionId, history);
+            context.addEvidence("goal_assessment", "SAFETY_RULE", goalAssessment.message(), Map.of("goal", goal));
+            sessionService.completeSession(sessionId, history, context);
             AgentResult result = AgentResult.success(
                     sessionId,
                     medicalSafetyService.buildSafetyStructuredAnswer(goalAssessment.message()),
@@ -108,9 +119,6 @@ public class ReActAgentEngine {
             return result;
         }
 
-        // 构建 System Prompt
-        String systemPrompt = promptBuilder.buildSystemPrompt(toolRegistry.getAllTools());
-
         // 构建初始 User Prompt
         String userPrompt = promptBuilder.buildUserPrompt(goal, customerId);
         messages.add(Message.user(userPrompt));
@@ -119,8 +127,11 @@ public class ReActAgentEngine {
             log.info("Agent执行第{}步", step + 1);
 
             try {
+                AgentSubAgent subAgent = selectSubAgent(goal, context);
+                switchSubAgent(sessionId, step + 1, context, subAgent, null);
+                String systemPrompt = promptBuilder.buildSubAgentSystemPrompt(subAgent, toolRegistry.getAllTools());
                 // 1. 调用 DeepSeek API 获取 Thought 和 Action
-                ParsedThought parsedThought = requestThoughtResult(systemPrompt, messages, step, customerId);
+                ParsedThought parsedThought = requestThoughtResult(systemPrompt, messages, step, customerId, context);
                 log.info("Agent响应: {}", parsedThought.responseText());
 
                 // 记录 Thought
@@ -135,7 +146,7 @@ public class ReActAgentEngine {
                             finalAnswer,
                             history);
                     log.info("Agent任务完成");
-                    sessionService.completeSession(sessionId, history);
+                    sessionService.completeSession(sessionId, history, context);
 
                     // 记录成功
                     long duration = System.currentTimeMillis() - startTime;
@@ -148,6 +159,7 @@ public class ReActAgentEngine {
                                     : finalAnswer,
                             history,
                             step + 1);
+                    emitSubAgentFinished(sessionId, step + 1, context, null);
                     agentAuditService.recordSessionResult(
                             sessionId,
                             customerId,
@@ -171,7 +183,9 @@ public class ReActAgentEngine {
                 if (actionAssessment.isBlocked()) {
                     history.add(Step.observation(actionAssessment.message()));
                     messages.add(Message.user("Observation: " + actionAssessment.message()));
-                    sessionService.updateSession(sessionId, history, messages, step + 1);
+                    context.addEvidence(action.getToolName(), "SAFETY_RULE", actionAssessment.message(),
+                            action.getInput());
+                    sessionService.updateSession(sessionId, history, messages, context, step + 1);
                     continue;
                 }
 
@@ -184,7 +198,7 @@ public class ReActAgentEngine {
                 // 5. 检查是否需要人工确认
                 if (actionResult.isNeedsApproval()) {
                     log.info("行动需要医生确认，Agent暂停");
-                    sessionService.pauseSession(sessionId, history, messages);
+                    sessionService.pauseSession(sessionId, history, messages, context);
 
                     // 记录等待审批
                     agentMetrics.recordPendingApproval(action.getToolName());
@@ -194,6 +208,7 @@ public class ReActAgentEngine {
                             actionResult.getTask(),
                             history,
                             step + 1);
+                    emitSubAgentFinished(sessionId, step + 1, context, null);
                     agentAuditService.recordSessionResult(
                             sessionId,
                             customerId,
@@ -209,11 +224,13 @@ public class ReActAgentEngine {
                 String observation = formatObservation(actionResult);
                 history.add(Step.observation(observation));
                 messages.add(Message.user("Observation: " + observation));
+                updateContextAfterAction(context, action, actionResult, observation);
+                emitContextUpdated(sessionId, step + 1, context, action.getToolName(), null);
 
                 log.info("Agent观察结果: {}", observation);
 
                 // 7. 更新会话状态
-                sessionService.updateSession(sessionId, history, messages, step + 1);
+                sessionService.updateSession(sessionId, history, messages, context, step + 1);
 
             } catch (Exception e) {
                 log.error("Agent执行异常", e);
@@ -230,6 +247,7 @@ public class ReActAgentEngine {
                         List.of("请人工接管当前会话", "补充近期关键数据后再尝试重新分析"),
                         List.of("当前未获得可用的自动分析结果"));
                 AgentResult result = AgentResult.error(sessionId, e.getMessage(), degraded, history, step + 1);
+                emitSubAgentFinished(sessionId, step + 1, context, null);
                 agentAuditService.recordSessionResult(
                         sessionId,
                         customerId,
@@ -255,6 +273,7 @@ public class ReActAgentEngine {
                 List.of("请人工查看已有 Observation", "必要时缩小问题范围后重新发起分析"),
                 List.of("当前分析链路未完成"));
         AgentResult result = AgentResult.maxStepsReached(sessionId, degraded, history, maxSteps);
+        emitSubAgentFinished(sessionId, maxSteps, context, null);
         agentAuditService.recordSessionResult(
                 sessionId,
                 customerId,
@@ -281,10 +300,12 @@ public class ReActAgentEngine {
 
         List<Step> history = new ArrayList<>();
         List<Message> messages = new ArrayList<>();
+        AgentContext context = AgentContext.initialize(customerId, doctorId, goal);
 
         SafetyAssessment goalAssessment = medicalSafetyService.assessGoal(goal);
         if (goalAssessment.isBlocked()) {
-            sessionService.completeSession(sessionId, history);
+            context.addEvidence("goal_assessment", "SAFETY_RULE", goalAssessment.message(), Map.of("goal", goal));
+            sessionService.completeSession(sessionId, history, context);
             AgentResult result = AgentResult.success(
                     sessionId,
                     medicalSafetyService.buildSafetyStructuredAnswer(goalAssessment.message()),
@@ -297,7 +318,6 @@ public class ReActAgentEngine {
             return result;
         }
 
-        String systemPrompt = promptBuilder.buildSystemPrompt(toolRegistry.getAllTools());
         String userPrompt = promptBuilder.buildUserPrompt(goal, customerId);
         messages.add(Message.user(userPrompt));
 
@@ -305,8 +325,11 @@ public class ReActAgentEngine {
             log.info("Agent执行第{}步", step + 1);
 
             try {
+                AgentSubAgent subAgent = selectSubAgent(goal, context);
+                switchSubAgent(sessionId, step + 1, context, subAgent, eventSink);
+                String systemPrompt = promptBuilder.buildSubAgentSystemPrompt(subAgent, toolRegistry.getAllTools());
                 ParsedThought parsedThought = requestThoughtResultStream(
-                        systemPrompt, messages, step, customerId, sessionId, eventSink, step + 1);
+                        systemPrompt, messages, step, customerId, sessionId, eventSink, step + 1, context);
                 log.info("Agent响应: {}", parsedThought.responseText());
 
                 ThoughtResult thought = parsedThought.thoughtResult();
@@ -320,7 +343,7 @@ public class ReActAgentEngine {
                             finalAnswer,
                             history);
                     log.info("Agent任务完成");
-                    sessionService.completeSession(sessionId, history);
+                    sessionService.completeSession(sessionId, history, context);
 
                     long duration = System.currentTimeMillis() - startTime;
                     agentMetrics.recordExecutionSuccess(step + 1, duration);
@@ -334,6 +357,7 @@ public class ReActAgentEngine {
                             step + 1);
                     emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.FINAL_ANSWER,
                             result.getStructuredFinalAnswer());
+                    emitSubAgentFinished(sessionId, step + 1, context, eventSink);
                     emitDone(eventSink, sessionId, step + 1, result.getStatus().name());
                     agentAuditService.recordSessionResult(
                             sessionId,
@@ -360,7 +384,9 @@ public class ReActAgentEngine {
                     messages.add(Message.user("Observation: " + actionAssessment.message()));
                     emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.OBSERVATION,
                             actionAssessment.message());
-                    sessionService.updateSession(sessionId, history, messages, step + 1);
+                    context.addEvidence(action.getToolName(), "SAFETY_RULE", actionAssessment.message(),
+                            action.getInput());
+                    sessionService.updateSession(sessionId, history, messages, context, step + 1);
                     continue;
                 }
 
@@ -372,7 +398,7 @@ public class ReActAgentEngine {
 
                 if (actionResult.isNeedsApproval()) {
                     log.info("行动需要医生确认，Agent暂停");
-                    sessionService.pauseSession(sessionId, history, messages);
+                    sessionService.pauseSession(sessionId, history, messages, context);
                     agentMetrics.recordPendingApproval(action.getToolName());
 
                     AgentResult result = AgentResult.pendingApproval(
@@ -382,6 +408,7 @@ public class ReActAgentEngine {
                             step + 1);
                     emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.PENDING_APPROVAL,
                             actionResult.getTask());
+                    emitSubAgentFinished(sessionId, step + 1, context, eventSink);
                     emitDone(eventSink, sessionId, step + 1, result.getStatus().name());
                     agentAuditService.recordSessionResult(
                             sessionId,
@@ -397,10 +424,12 @@ public class ReActAgentEngine {
                 String observation = formatObservation(actionResult);
                 history.add(Step.observation(observation));
                 messages.add(Message.user("Observation: " + observation));
+                updateContextAfterAction(context, action, actionResult, observation);
+                emitContextUpdated(sessionId, step + 1, context, action.getToolName(), eventSink);
                 emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.OBSERVATION, observation);
 
                 log.info("Agent观察结果: {}", observation);
-                sessionService.updateSession(sessionId, history, messages, step + 1);
+                sessionService.updateSession(sessionId, history, messages, context, step + 1);
 
             } catch (Exception e) {
                 log.error("Agent执行异常", e);
@@ -418,6 +447,7 @@ public class ReActAgentEngine {
                 AgentResult result = AgentResult.error(sessionId, e.getMessage(), degraded, history, step + 1);
                 emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.ERROR,
                         Map.of("message", e.getMessage(), "structuredFinalAnswer", degraded));
+                emitSubAgentFinished(sessionId, step + 1, context, eventSink);
                 emitDone(eventSink, sessionId, step + 1, result.getStatus().name());
                 agentAuditService.recordSessionResult(
                         sessionId,
@@ -443,6 +473,7 @@ public class ReActAgentEngine {
                 List.of("当前分析链路未完成"));
         AgentResult result = AgentResult.maxStepsReached(sessionId, degraded, history, maxSteps);
         emitEvent(eventSink, sessionId, maxSteps, AgentStreamEventType.FINAL_ANSWER, degraded);
+        emitSubAgentFinished(sessionId, maxSteps, context, eventSink);
         emitDone(eventSink, sessionId, maxSteps, result.getStatus().name());
         agentAuditService.recordSessionResult(
                 sessionId,
@@ -491,6 +522,8 @@ public class ReActAgentEngine {
             // 4. 恢复执行历史和消息
             List<Step> history = JSON.parseArray(session.getHistoryJson(), Step.class);
             List<Message> messages = JSON.parseArray(session.getMessagesJson(), Message.class);
+            AgentContext context = parseContext(session.getContextJson(), session.getCustomerId(),
+                    session.getDoctorId(), session.getGoal());
             int currentStep = session.getCurrentStep() != null ? session.getCurrentStep() : 0;
 
             log.info("恢复会话状态: sessionId={}, currentStep={}, historySize={}",
@@ -507,6 +540,7 @@ public class ReActAgentEngine {
             String observation = formatObservation(actionResult);
             history.add(Step.observation(observation));
             messages.add(Message.user("Observation: " + observation));
+            updateContextAfterAction(context, action, actionResult, observation);
 
             log.info("行动执行完成: {}", observation);
 
@@ -521,7 +555,8 @@ public class ReActAgentEngine {
                     session.getDoctorId(),
                     history,
                     messages,
-                    currentStep + 1);
+                    currentStep + 1,
+                    context);
 
         } catch (Exception e) {
             log.error("Agent恢复执行异常", e);
@@ -565,6 +600,7 @@ public class ReActAgentEngine {
 
             List<Step> history = JSON.parseArray(session.getHistoryJson(), Step.class);
             List<Message> messages = JSON.parseArray(session.getMessagesJson(), Message.class);
+            AgentContext context = parseContext(session.getContextJson(), session.getCustomerId(), session.getDoctorId(), session.getGoal());
             int currentStep = session.getCurrentStep() != null ? session.getCurrentStep() : 0;
 
             ActionDecision action = JSON.parseObject(task.getInputJson(), ActionDecision.class);
@@ -586,7 +622,8 @@ public class ReActAgentEngine {
                     messages,
                     currentStep + 1,
                     startTime,
-                    eventSink);
+                    eventSink,
+                    context);
         } catch (Exception e) {
             log.error("Agent恢复执行异常", e);
             sessionService.failSession(sessionId, e.getMessage());
@@ -614,19 +651,20 @@ public class ReActAgentEngine {
             String doctorId,
             List<Step> history,
             List<Message> messages,
-            int startStep) {
+            int startStep,
+            AgentContext context) {
         long startTime = System.currentTimeMillis();
         log.info("继续ReAct循环: sessionId={}, startStep={}", sessionId, startStep);
-
-        // 构建 System Prompt
-        String systemPrompt = promptBuilder.buildSystemPrompt(toolRegistry.getAllTools());
 
         for (int step = startStep; step < maxSteps; step++) {
             log.info("Agent执行第{}步", step + 1);
 
             try {
+                AgentSubAgent subAgent = selectSubAgent(goal, context);
+                switchSubAgent(sessionId, step + 1, context, subAgent, null);
+                String systemPrompt = promptBuilder.buildSubAgentSystemPrompt(subAgent, toolRegistry.getAllTools());
                 // 1. 调用 DeepSeek API 获取 Thought 和 Action
-                ParsedThought parsedThought = requestThoughtResult(systemPrompt, messages, step, customerId);
+                ParsedThought parsedThought = requestThoughtResult(systemPrompt, messages, step, customerId, context);
                 log.info("Agent响应: {}", parsedThought.responseText());
 
                 // 记录 Thought
@@ -641,7 +679,7 @@ public class ReActAgentEngine {
                             finalAnswer,
                             history);
                     log.info("Agent任务完成");
-                    sessionService.completeSession(sessionId, history);
+                    sessionService.completeSession(sessionId, history, context);
 
                     // 记录成功
                     long duration = System.currentTimeMillis() - startTime;
@@ -654,6 +692,7 @@ public class ReActAgentEngine {
                                     : finalAnswer,
                             history,
                             step + 1);
+                    emitSubAgentFinished(sessionId, step + 1, context, null);
                     agentAuditService.recordSessionResult(
                             sessionId,
                             customerId,
@@ -677,7 +716,9 @@ public class ReActAgentEngine {
                 if (actionAssessment.isBlocked()) {
                     history.add(Step.observation(actionAssessment.message()));
                     messages.add(Message.user("Observation: " + actionAssessment.message()));
-                    sessionService.updateSession(sessionId, history, messages, step + 1);
+                    context.addEvidence(action.getToolName(), "SAFETY_RULE", actionAssessment.message(),
+                            action.getInput());
+                    sessionService.updateSession(sessionId, history, messages, context, step + 1);
                     continue;
                 }
 
@@ -690,7 +731,7 @@ public class ReActAgentEngine {
                 // 5. 检查是否需要人工确认
                 if (actionResult.isNeedsApproval()) {
                     log.info("行动需要医生确认，Agent暂停");
-                    sessionService.pauseSession(sessionId, history, messages);
+                    sessionService.pauseSession(sessionId, history, messages, context);
 
                     // 记录等待审批
                     agentMetrics.recordPendingApproval(action.getToolName());
@@ -700,6 +741,7 @@ public class ReActAgentEngine {
                             actionResult.getTask(),
                             history,
                             step + 1);
+                    emitSubAgentFinished(sessionId, step + 1, context, null);
                     agentAuditService.recordSessionResult(
                             sessionId,
                             customerId,
@@ -715,11 +757,13 @@ public class ReActAgentEngine {
                 String observation = formatObservation(actionResult);
                 history.add(Step.observation(observation));
                 messages.add(Message.user("Observation: " + observation));
+                updateContextAfterAction(context, action, actionResult, observation);
+                emitContextUpdated(sessionId, step + 1, context, action.getToolName(), null);
 
                 log.info("Agent观察结果: {}", observation);
 
                 // 7. 更新会话状态
-                sessionService.updateSession(sessionId, history, messages, step + 1);
+                sessionService.updateSession(sessionId, history, messages, context, step + 1);
 
             } catch (Exception e) {
                 log.error("Agent执行异常", e);
@@ -735,6 +779,7 @@ public class ReActAgentEngine {
                         List.of("请人工接管当前会话", "补充近期关键数据后再尝试重新分析"),
                         List.of("当前未获得可用的自动分析结果"));
                 AgentResult result = AgentResult.error(sessionId, e.getMessage(), degraded, history, step + 1);
+                emitSubAgentFinished(sessionId, step + 1, context, null);
                 agentAuditService.recordSessionResult(
                         sessionId,
                         customerId,
@@ -760,6 +805,7 @@ public class ReActAgentEngine {
                 List.of("请人工查看已有 Observation", "必要时缩小问题范围后重新发起分析"),
                 List.of("当前分析链路未完成"));
         AgentResult result = AgentResult.maxStepsReached(sessionId, degraded, history, maxSteps);
+        emitSubAgentFinished(sessionId, maxSteps, context, null);
         agentAuditService.recordSessionResult(
                 sessionId,
                 customerId,
@@ -780,16 +826,19 @@ public class ReActAgentEngine {
             List<Message> messages,
             int startStep,
             long startTime,
-            Consumer<AgentStreamEvent> eventSink) {
+            Consumer<AgentStreamEvent> eventSink,
+            AgentContext context) {
         log.info("继续流式ReAct循环: sessionId={}, startStep={}", sessionId, startStep);
-
-        String systemPrompt = promptBuilder.buildSystemPrompt(toolRegistry.getAllTools());
 
         for (int step = startStep; step < maxSteps; step++) {
             log.info("Agent执行第{}步", step + 1);
 
             try {
-                ParsedThought parsedThought = requestThoughtResult(systemPrompt, messages, step, customerId);
+                AgentSubAgent subAgent = selectSubAgent(goal, context);
+                switchSubAgent(sessionId, step + 1, context, subAgent, eventSink);
+                String systemPrompt = promptBuilder.buildSubAgentSystemPrompt(subAgent, toolRegistry.getAllTools());
+                ParsedThought parsedThought = requestThoughtResultStream(
+                        systemPrompt, messages, step, customerId, sessionId, eventSink, step + 1, context);
                 log.info("Agent响应: {}", parsedThought.responseText());
 
                 ThoughtResult thought = parsedThought.thoughtResult();
@@ -803,7 +852,7 @@ public class ReActAgentEngine {
                             finalAnswer,
                             history);
                     log.info("Agent任务完成");
-                    sessionService.completeSession(sessionId, history);
+                    sessionService.completeSession(sessionId, history, context);
 
                     long duration = System.currentTimeMillis() - startTime;
                     agentMetrics.recordExecutionSuccess(step + 1, duration);
@@ -817,6 +866,7 @@ public class ReActAgentEngine {
                             step + 1);
                     emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.FINAL_ANSWER,
                             result.getStructuredFinalAnswer());
+                    emitSubAgentFinished(sessionId, step + 1, context, eventSink);
                     emitDone(eventSink, sessionId, step + 1, result.getStatus().name());
                     agentAuditService.recordSessionResult(
                             sessionId,
@@ -843,7 +893,10 @@ public class ReActAgentEngine {
                     messages.add(Message.user("Observation: " + actionAssessment.message()));
                     emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.OBSERVATION,
                             actionAssessment.message());
-                    sessionService.updateSession(sessionId, history, messages, step + 1);
+                    context.addEvidence(action.getToolName(), "SAFETY_RULE", actionAssessment.message(),
+                            action.getInput());
+                    emitContextUpdated(sessionId, step + 1, context, action.getToolName(), eventSink);
+                    sessionService.updateSession(sessionId, history, messages, context, step + 1);
                     continue;
                 }
 
@@ -855,7 +908,7 @@ public class ReActAgentEngine {
 
                 if (actionResult.isNeedsApproval()) {
                     log.info("行动需要医生确认，Agent暂停");
-                    sessionService.pauseSession(sessionId, history, messages);
+                    sessionService.pauseSession(sessionId, history, messages, context);
                     agentMetrics.recordPendingApproval(action.getToolName());
 
                     AgentResult result = AgentResult.pendingApproval(
@@ -865,6 +918,7 @@ public class ReActAgentEngine {
                             step + 1);
                     emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.PENDING_APPROVAL,
                             actionResult.getTask());
+                    emitSubAgentFinished(sessionId, step + 1, context, eventSink);
                     emitDone(eventSink, sessionId, step + 1, result.getStatus().name());
                     agentAuditService.recordSessionResult(
                             sessionId,
@@ -880,10 +934,11 @@ public class ReActAgentEngine {
                 String observation = formatObservation(actionResult);
                 history.add(Step.observation(observation));
                 messages.add(Message.user("Observation: " + observation));
+                updateContextAfterAction(context, action, actionResult, observation);
                 emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.OBSERVATION, observation);
 
                 log.info("Agent观察结果: {}", observation);
-                sessionService.updateSession(sessionId, history, messages, step + 1);
+                sessionService.updateSession(sessionId, history, messages, context, step + 1);
             } catch (Exception e) {
                 log.error("Agent执行异常", e);
                 sessionService.failSession(sessionId, e.getMessage());
@@ -900,6 +955,7 @@ public class ReActAgentEngine {
                 AgentResult result = AgentResult.error(sessionId, e.getMessage(), degraded, history, step + 1);
                 emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.ERROR,
                         Map.of("message", e.getMessage(), "structuredFinalAnswer", degraded));
+                emitSubAgentFinished(sessionId, step + 1, context, eventSink);
                 emitDone(eventSink, sessionId, step + 1, result.getStatus().name());
                 agentAuditService.recordSessionResult(
                         sessionId,
@@ -925,6 +981,7 @@ public class ReActAgentEngine {
                 List.of("当前分析链路未完成"));
         AgentResult result = AgentResult.maxStepsReached(sessionId, degraded, history, maxSteps);
         emitEvent(eventSink, sessionId, maxSteps, AgentStreamEventType.FINAL_ANSWER, degraded);
+        emitSubAgentFinished(sessionId, maxSteps, context, eventSink);
         emitDone(eventSink, sessionId, maxSteps, result.getStatus().name());
         agentAuditService.recordSessionResult(
                 sessionId,
@@ -952,13 +1009,15 @@ public class ReActAgentEngine {
             String systemPrompt,
             List<Message> messages,
             int step,
-            String customerId) {
+            String customerId,
+            AgentContext context) {
         if (useMock) {
             String mockResponse = mockDeepSeekResponse(step, customerId);
             return new ParsedThought(mockResponse, responseParser.parse(mockResponse));
         }
 
-        String responseText = deepSeekClient.chat(systemPrompt, messages).getContent();
+        String promptWithContext = buildSystemPromptWithContext(systemPrompt, context);
+        String responseText = deepSeekClient.chat(promptWithContext, messages).getContent();
         try {
             return new ParsedThought(responseText, responseParser.parse(responseText));
         } catch (AgentException parseException) {
@@ -969,7 +1028,7 @@ public class ReActAgentEngine {
 
             AgentException lastException = parseException;
             for (int attempt = 0; attempt < protocolRepairAttempts; attempt++) {
-                String repairedResponse = deepSeekClient.chat(systemPrompt, repairMessages).getContent();
+                String repairedResponse = deepSeekClient.chat(promptWithContext, repairMessages).getContent();
                 try {
                     return new ParsedThought(repairedResponse, responseParser.parse(repairedResponse));
                 } catch (AgentException repairException) {
@@ -990,14 +1049,16 @@ public class ReActAgentEngine {
             String customerId,
             String sessionId,
             Consumer<AgentStreamEvent> eventSink,
-            int eventStep) {
+            int eventStep,
+            AgentContext context) {
         if (useMock) {
             String mockResponse = mockDeepSeekResponse(step, customerId);
             emitEvent(eventSink, sessionId, eventStep, AgentStreamEventType.THINKING_DELTA, mockResponse);
             return new ParsedThought(mockResponse, responseParser.parse(mockResponse));
         }
 
-        String responseText = deepSeekClient.chatStream(systemPrompt, messages,
+        String promptWithContext = buildSystemPromptWithContext(systemPrompt, context);
+        String responseText = deepSeekClient.chatStream(promptWithContext, messages,
                 delta -> emitEvent(eventSink, sessionId, eventStep, AgentStreamEventType.THINKING_DELTA, delta))
                 .getContent();
         try {
@@ -1010,7 +1071,7 @@ public class ReActAgentEngine {
 
             AgentException lastException = parseException;
             for (int attempt = 0; attempt < protocolRepairAttempts; attempt++) {
-                String repairedResponse = deepSeekClient.chatStream(systemPrompt, repairMessages,
+                String repairedResponse = deepSeekClient.chatStream(promptWithContext, repairMessages,
                         delta -> emitEvent(eventSink, sessionId, eventStep, AgentStreamEventType.THINKING_DELTA, delta))
                         .getContent();
                 try {
@@ -1024,6 +1085,174 @@ public class ReActAgentEngine {
             }
             throw lastException;
         }
+    }
+
+    private String buildSystemPromptWithContext(String baseSystemPrompt, AgentContext context) {
+        if (context == null) {
+            return baseSystemPrompt;
+        }
+        return baseSystemPrompt + """
+
+                ## Current Structured Context
+                %s
+                """.formatted(context.toPromptSection());
+    }
+
+    private AgentSubAgent selectSubAgent(String goal, AgentContext context) {
+        if (subAgentCoordinator == null) {
+            return new AgentSubAgent() {
+                @Override
+                public String name() {
+                    return "DefaultAgent";
+                }
+
+                @Override
+                public String responsibility() {
+                    return "执行默认单Agent推理。";
+                }
+            };
+        }
+        return subAgentCoordinator.select(goal, context);
+    }
+
+    private void switchSubAgent(
+            String sessionId,
+            int step,
+            AgentContext context,
+            AgentSubAgent nextSubAgent,
+            Consumer<AgentStreamEvent> eventSink) {
+        String previous = currentSubAgentName(context);
+        String next = nextSubAgent.name();
+        if (previous != null && !previous.equals(next)) {
+            emitEvent(eventSink, sessionId, step, AgentStreamEventType.SUBAGENT_FINISHED, Map.of("name", previous));
+        }
+        if (!next.equals(previous)) {
+            emitEvent(eventSink, sessionId, step, AgentStreamEventType.SUBAGENT_STARTED, Map.of(
+                    "name", next,
+                    "responsibility", nextSubAgent.responsibility()
+            ));
+        }
+        context.putSlot("current_sub_agent", next, "coordinator");
+    }
+
+    private void emitSubAgentFinished(
+            String sessionId,
+            int step,
+            AgentContext context,
+            Consumer<AgentStreamEvent> eventSink) {
+        String current = currentSubAgentName(context);
+        if (current == null) {
+            return;
+        }
+        emitEvent(eventSink, sessionId, step, AgentStreamEventType.SUBAGENT_FINISHED, Map.of("name", current));
+        context.putSlot("current_sub_agent", null, "coordinator");
+    }
+
+    private void emitContextUpdated(
+            String sessionId,
+            int step,
+            AgentContext context,
+            String reason,
+            Consumer<AgentStreamEvent> eventSink) {
+        emitEvent(eventSink, sessionId, step, AgentStreamEventType.CONTEXT_UPDATED, Map.of(
+                "reason", reason,
+                "slots", context.getSlots().keySet()
+        ));
+    }
+
+    private String currentSubAgentName(AgentContext context) {
+        if (context == null || context.getSlots() == null) {
+            return null;
+        }
+        ContextEntry entry = context.getSlots().get("current_sub_agent");
+        if (entry == null || entry.getValue() == null) {
+            return null;
+        }
+        return String.valueOf(entry.getValue());
+    }
+
+    private AgentContext parseContext(String contextJson, String customerId, String doctorId, String goal) {
+        if (contextJson == null || contextJson.isBlank()) {
+            return AgentContext.initialize(customerId, doctorId, goal);
+        }
+        try {
+            AgentContext context = JSON.parseObject(contextJson, AgentContext.class);
+            if (context == null) {
+                return AgentContext.initialize(customerId, doctorId, goal);
+            }
+            if (context.getCustomerId() == null) {
+                context.setCustomerId(customerId);
+            }
+            if (context.getDoctorId() == null) {
+                context.setDoctorId(doctorId);
+            }
+            if (context.getGoal() == null) {
+                context.setGoal(goal);
+            }
+            if (context.getSlots() == null) {
+                context.setSlots(new java.util.LinkedHashMap<>());
+            }
+            if (context.getEvidenceRecords() == null) {
+                context.setEvidenceRecords(new ArrayList<>());
+            }
+            return context;
+        } catch (Exception e) {
+            log.warn("解析AgentContext失败，回退为空上下文: {}", e.getMessage());
+            return AgentContext.initialize(customerId, doctorId, goal);
+        }
+    }
+
+    private void updateContextAfterAction(
+            AgentContext context,
+            ActionDecision action,
+            ActionResult actionResult,
+            String observation) {
+        if (context == null || action == null) {
+            return;
+        }
+
+        Object payload = actionResult != null ? actionResult.getOutput() : observation;
+        if (payload instanceof ToolExecutionOutput toolOutput) {
+            if (toolOutput.getStateUpdates() != null) {
+                toolOutput.getStateUpdates().forEach((key, value) ->
+                    context.putSlot(key, value, action.getToolName())
+                );
+            }
+            if (toolOutput.getEvidence() != null) {
+                for (ToolEvidence evidence : toolOutput.getEvidence()) {
+                    context.addEvidence(
+                        action.getToolName(),
+                        evidence.getSource(),
+                        evidence.getSummary(),
+                        evidence.getPayload()
+                    );
+                }
+            }
+        } else {
+            String slotKey = resolveContextSlot(action.getToolName());
+            context.putSlot(slotKey, payload, action.getToolName());
+            context.addEvidence(action.getToolName(), "TOOL_OUTPUT", observation, payload);
+        }
+        context.putSlot("last_tool_result", Map.of(
+                "toolName", action.getToolName(),
+                "input", action.getInput(),
+                "observation", observation
+        ), action.getToolName());
+    }
+
+    private String resolveContextSlot(String toolName) {
+        return switch (toolName) {
+            case "get_patient_profile" -> "patient_profile";
+            case "get_weight_history" -> "weight_history";
+            case "get_chat_history" -> "chat_history";
+            case "get_prescription_history" -> "prescription_history";
+            case "get_follow_up_tasks", "create_follow_up_task" -> "follow_up_tasks";
+            case "analyze_weight_trend" -> "weight_trend_analysis";
+            case "detect_weight_plateau" -> "plateau_assessment";
+            case "analyze_adherence_signals" -> "adherence_analysis";
+            case "get_health_knowledge" -> "health_knowledge";
+            default -> toolName;
+        };
     }
 
     /**

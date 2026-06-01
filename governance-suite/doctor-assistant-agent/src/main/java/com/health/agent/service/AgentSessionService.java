@@ -4,6 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.health.agent.mapper.AgentSessionMapper;
 import com.health.agent.mapper.PendingTaskMapper;
+import com.health.agent.model.AgentContext;
 import com.health.agent.model.AgentSession;
 import com.health.agent.model.Message;
 import com.health.agent.model.PendingTask;
@@ -33,6 +34,7 @@ public class AgentSessionService {
      * 创建会话
      */
     public AgentSession createSession(String customerId, String doctorId, String goal) {
+        AgentContext context = AgentContext.initialize(customerId, doctorId, goal);
         AgentSession session = AgentSession.builder()
             .customerId(customerId)
             .doctorId(doctorId)
@@ -40,6 +42,7 @@ public class AgentSessionService {
             .status(SessionStatus.RUNNING.name())
             .historyJson("[]")
             .messagesJson("[]")
+            .contextJson(JSON.toJSONString(context))
             .currentStep(0)
             .createdAt(LocalDateTime.now())
             .updatedAt(LocalDateTime.now())
@@ -55,6 +58,16 @@ public class AgentSessionService {
      * 更新会话状态（包含消息）
      */
     public void updateSession(String sessionId, List<Step> history, List<Message> messages, int currentStep) {
+        updateSession(sessionId, history, messages, AgentContext.empty(), currentStep);
+    }
+
+    public void updateSession(
+        String sessionId,
+        List<Step> history,
+        List<Message> messages,
+        AgentContext context,
+        int currentStep
+    ) {
         AgentSession session = getById(sessionId);
         if (session == null) {
             log.warn("会话不存在: {}", sessionId);
@@ -63,6 +76,9 @@ public class AgentSessionService {
 
         session.setHistoryJson(JSON.toJSONString(history));
         session.setMessagesJson(JSON.toJSONString(messages));
+        if (context != null) {
+            session.setContextJson(JSON.toJSONString(context));
+        }
         session.setCurrentStep(currentStep);
         session.setUpdatedAt(LocalDateTime.now());
 
@@ -74,6 +90,10 @@ public class AgentSessionService {
      * 暂停会话（等待人工确认）
      */
     public void pauseSession(String sessionId, List<Step> history, List<Message> messages) {
+        pauseSession(sessionId, history, messages, AgentContext.empty());
+    }
+
+    public void pauseSession(String sessionId, List<Step> history, List<Message> messages, AgentContext context) {
         AgentSession session = getById(sessionId);
         if (session == null) {
             log.warn("会话不存在: {}", sessionId);
@@ -83,6 +103,9 @@ public class AgentSessionService {
         session.setStatus(SessionStatus.PAUSED.name());
         session.setHistoryJson(JSON.toJSONString(history));
         session.setMessagesJson(JSON.toJSONString(messages));
+        if (context != null) {
+            session.setContextJson(JSON.toJSONString(context));
+        }
         session.setUpdatedAt(LocalDateTime.now());
 
         sessionMapper.updateById(session);
@@ -110,6 +133,10 @@ public class AgentSessionService {
      * 完成会话
      */
     public void completeSession(String sessionId, List<Step> history) {
+        completeSession(sessionId, history, null);
+    }
+
+    public void completeSession(String sessionId, List<Step> history, AgentContext context) {
         AgentSession session = getById(sessionId);
         if (session == null) {
             log.warn("会话不存在: {}", sessionId);
@@ -118,6 +145,9 @@ public class AgentSessionService {
 
         session.setStatus(SessionStatus.COMPLETED.name());
         session.setHistoryJson(JSON.toJSONString(history));
+        if (context != null) {
+            session.setContextJson(JSON.toJSONString(context));
+        }
         session.setCompletedAt(LocalDateTime.now());
         session.setUpdatedAt(LocalDateTime.now());
 
