@@ -14,6 +14,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.annotation.PreDestroy;
 import jakarta.validation.Valid;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
@@ -22,8 +23,13 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 
 /**
  * Agent API 控制器
@@ -33,6 +39,11 @@ import java.util.List;
 @RequestMapping("/api/agent")
 @Tag(name = "Agent 执行", description = "ReAct Agent 执行和会话管理接口")
 public class AgentController {
+
+    private final ExecutorService streamExecutor = Executors.newFixedThreadPool(
+        8,
+        new AgentStreamThreadFactory()
+    );
 
     @Autowired
     private ReActAgentEngine agentEngine;
@@ -103,19 +114,20 @@ public class AgentController {
     @PostMapping(
         value = "/execute",
         consumes = MediaType.APPLICATION_JSON_VALUE,
-        produces = MediaType.APPLICATION_JSON_VALUE
+        produces = MediaType.TEXT_EVENT_STREAM_VALUE
     )
-    public ResponseEntity<AgentResult> execute(@Valid @RequestBody AgentExecuteRequest request) {
+    public SseEmitter execute(@Valid @RequestBody AgentExecuteRequest request) {
         log.info("收到Agent执行请求: goal={}, customerId={}",
             request.getGoal(), request.getCustomerId());
 
-        AgentResult result = agentEngine.execute(
+        SseEmitter emitter = new SseEmitter(0L);
+        CompletableFuture.runAsync(() -> streamToEmitter(emitter, () -> agentEngine.executeStream(
             request.getGoal(),
             request.getCustomerId(),
-            request.getDoctorId()
-        );
-
-        return ResponseEntity.ok(result);
+            request.getDoctorId(),
+            event -> sendEvent(emitter, event.getType().name().toLowerCase(), event)
+        )), streamExecutor);
+        return emitter;
     }
 
     @Operation(
@@ -154,17 +166,18 @@ public class AgentController {
         @ApiResponse(responseCode = "404", description = "会话或任务不存在"),
         @ApiResponse(responseCode = "400", description = "会话状态不正确或任务未审批")
     })
-    @PostMapping("/resume")
-    public ResponseEntity<AgentResult> resume(@RequestBody AgentResumeRequest request) {
+    @PostMapping(value = "/resume", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter resume(@RequestBody AgentResumeRequest request) {
         log.info("恢复Agent执行: sessionId={}, taskId={}",
             request.getSessionId(), request.getApprovedTaskId());
 
-        AgentResult result = agentEngine.resume(
+        SseEmitter emitter = new SseEmitter(0L);
+        CompletableFuture.runAsync(() -> streamToEmitter(emitter, () -> agentEngine.resumeStream(
             request.getSessionId(),
-            request.getApprovedTaskId()
-        );
-
-        return ResponseEntity.ok(result);
+            request.getApprovedTaskId(),
+            event -> sendEvent(emitter, event.getType().name().toLowerCase(), event)
+        )), streamExecutor);
+        return emitter;
     }
 
     @Operation(
@@ -258,6 +271,40 @@ public class AgentController {
         }
 
         return ResponseEntity.ok(task);
+    }
+
+    private void streamToEmitter(SseEmitter emitter, Runnable streamTask) {
+        try {
+            streamTask.run();
+            emitter.complete();
+        } catch (Exception e) {
+            log.error("Agent流式输出异常", e);
+            emitter.completeWithError(e);
+        }
+    }
+
+    private void sendEvent(SseEmitter emitter, String eventName, Object payload) {
+        try {
+            emitter.send(SseEmitter.event().name(eventName).data(payload));
+        } catch (Exception e) {
+            throw new RuntimeException("发送SSE事件失败", e);
+        }
+    }
+
+    @PreDestroy
+    void shutdownStreamExecutor() {
+        streamExecutor.shutdownNow();
+    }
+
+    private static class AgentStreamThreadFactory implements ThreadFactory {
+        private int index = 0;
+
+        @Override
+        public synchronized Thread newThread(Runnable runnable) {
+            Thread thread = new Thread(runnable, "agent-stream-" + index++);
+            thread.setDaemon(true);
+            return thread;
+        }
     }
 
     @Operation(

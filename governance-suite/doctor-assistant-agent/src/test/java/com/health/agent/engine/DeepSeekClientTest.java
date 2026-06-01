@@ -17,6 +17,7 @@ import org.springframework.ai.chat.model.MessageAggregator;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -27,6 +28,7 @@ import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import reactor.core.publisher.Flux;
 
 @ExtendWith(MockitoExtension.class)
 class DeepSeekClientTest {
@@ -73,6 +75,26 @@ class DeepSeekClientTest {
         ));
 
         assertTrue(exception.getMessage().contains("超时"));
+    }
+
+    @Test
+    void shouldStreamDeltasAndAggregateFullResponse() {
+        when(chatModel.stream(any(Prompt.class))).thenReturn(Flux.just(
+            successResponse("我需要"),
+            successResponse("先查看"),
+            successResponse("患者体重记录")
+        ));
+
+        List<String> deltas = new ArrayList<>();
+        DeepSeekClient.DeepSeekResponse response = deepSeekClient.chatStream(
+            "system",
+            List.of(Message.user("hello")),
+            deltas::add
+        );
+
+        assertEquals(List.of("我需要", "先查看", "患者体重记录"), deltas);
+        assertEquals("我需要先查看患者体重记录", response.getContent());
+        verify(chatModel).stream(any(Prompt.class));
     }
 
     private ChatResponse successResponse(String content) {

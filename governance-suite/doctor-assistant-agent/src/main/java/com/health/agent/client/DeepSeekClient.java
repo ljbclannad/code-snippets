@@ -17,6 +17,7 @@ import jakarta.annotation.PreDestroy;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -24,6 +25,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import reactor.core.publisher.Flux;
 
 /**
  * DeepSeek API 客户端
@@ -89,6 +91,36 @@ public class DeepSeekClient {
             : new RuntimeException("DeepSeek API 调用失败: 未知错误");
     }
 
+    public DeepSeekResponse chatStream(
+        String systemPrompt,
+        List<Message> messages,
+        Consumer<String> deltaSink
+    ) {
+        long startTime = System.currentTimeMillis();
+
+        log.info("调用 DeepSeek Stream API, 消息数量: {}", messages.size());
+        Prompt prompt = buildPrompt(systemPrompt, messages);
+
+        RuntimeException lastException = null;
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                return executeStream(prompt, deltaSink, startTime);
+            } catch (RuntimeException e) {
+                lastException = e;
+                log.warn("DeepSeek Stream API 第{}次调用失败: {}", attempt, e.getMessage());
+                if (attempt == maxRetries) {
+                    break;
+                }
+            }
+        }
+
+        long duration = System.currentTimeMillis() - startTime;
+        log.error("DeepSeek Stream API 调用失败, 耗时: {}ms", duration, lastException);
+        throw lastException != null
+            ? lastException
+            : new RuntimeException("DeepSeek Stream API 调用失败: 未知错误");
+    }
+
     private Prompt buildPrompt(String systemPrompt, List<Message> messages) {
         List<org.springframework.ai.chat.messages.Message> aiMessages = new ArrayList<>();
         aiMessages.add(new SystemMessage(systemPrompt));
@@ -128,8 +160,41 @@ public class DeepSeekClient {
         }
     }
 
+    private DeepSeekResponse executeStream(Prompt prompt, Consumer<String> deltaSink, long startTime) {
+        StringBuilder contentBuilder = new StringBuilder();
+        List<ChatResponse> responses;
+        try {
+            Flux<ChatResponse> responseFlux = chatModel.stream(prompt)
+                .timeout(requestTimeout)
+                .doOnNext(response -> {
+                    String delta = extractContent(response);
+                    if (!delta.isEmpty()) {
+                        contentBuilder.append(delta);
+                        if (deltaSink != null) {
+                            deltaSink.accept(delta);
+                        }
+                    }
+                });
+            responses = responseFlux.collectList().block();
+        } catch (RuntimeException e) {
+            throw unwrapStreamException(e);
+        }
+
+        if (responses == null || responses.isEmpty()) {
+            DeepSeekResponse response = new DeepSeekResponse();
+            response.setContent(contentBuilder.toString());
+            response.setDuration(System.currentTimeMillis() - startTime);
+            return response;
+        }
+
+        ChatResponse lastResponse = responses.get(responses.size() - 1);
+        DeepSeekResponse response = buildResponse(lastResponse, startTime);
+        response.setContent(contentBuilder.toString());
+        return response;
+    }
+
     private DeepSeekResponse buildResponse(ChatResponse response, long startTime) {
-        String content = response.getResult().getOutput().getContent();
+        String content = extractContent(response);
         var metadata = response.getMetadata();
         var usage = metadata != null ? metadata.getUsage() : null;
         if (usage == null) {
@@ -152,6 +217,25 @@ public class DeepSeekClient {
         }
         deepSeekResponse.setDuration(duration);
         return deepSeekResponse;
+    }
+
+    private String extractContent(ChatResponse response) {
+        if (response == null || response.getResult() == null || response.getResult().getOutput() == null) {
+            return "";
+        }
+        String content = response.getResult().getOutput().getContent();
+        return content != null ? content : "";
+    }
+
+    private RuntimeException unwrapStreamException(RuntimeException exception) {
+        Throwable cause = exception.getCause();
+        if (cause instanceof TimeoutException) {
+            throw new RuntimeException("DeepSeek API 调用超时: " + requestTimeout, cause);
+        }
+        if (cause instanceof RuntimeException runtimeException) {
+            return runtimeException;
+        }
+        return exception;
     }
 
     @PreDestroy

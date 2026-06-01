@@ -12,6 +12,7 @@
 
 - [产品导向说明](./PRODUCT_OVERVIEW.md)
 - [工程导向说明](./ENGINEERING_GUIDE.md)
+- [流式链路架构说明](./AGENT_STREAMING_ARCHITECTURE.md)
 
 ## 快速开始
 

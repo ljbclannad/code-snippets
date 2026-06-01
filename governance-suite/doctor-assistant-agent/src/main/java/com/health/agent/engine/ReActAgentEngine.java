@@ -2,6 +2,8 @@ package com.health.agent.engine;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Consumer;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -15,6 +17,8 @@ import com.health.agent.model.ActionDecision;
 import com.health.agent.model.ActionResult;
 import com.health.agent.model.AgentResult;
 import com.health.agent.model.AgentSession;
+import com.health.agent.model.AgentStreamEvent;
+import com.health.agent.model.AgentStreamEventType;
 import com.health.agent.model.Message;
 import com.health.agent.model.PendingTask;
 import com.health.agent.model.SessionStatus;
@@ -262,6 +266,195 @@ public class ReActAgentEngine {
         return result;
     }
 
+    public AgentResult executeStream(
+            String goal,
+            String customerId,
+            String doctorId,
+            Consumer<AgentStreamEvent> eventSink) {
+        long startTime = System.currentTimeMillis();
+        log.info("Agent开始流式执行任务: goal={}, customerId={}", goal, customerId);
+
+        agentMetrics.recordExecutionStart();
+
+        AgentSession session = sessionService.createSession(customerId, doctorId, goal);
+        String sessionId = String.valueOf(session.getId());
+
+        List<Step> history = new ArrayList<>();
+        List<Message> messages = new ArrayList<>();
+
+        SafetyAssessment goalAssessment = medicalSafetyService.assessGoal(goal);
+        if (goalAssessment.isBlocked()) {
+            sessionService.completeSession(sessionId, history);
+            AgentResult result = AgentResult.success(
+                    sessionId,
+                    medicalSafetyService.buildSafetyStructuredAnswer(goalAssessment.message()),
+                    history,
+                    0);
+            emitEvent(eventSink, sessionId, 0, AgentStreamEventType.FINAL_ANSWER, result.getStructuredFinalAnswer());
+            emitDone(eventSink, sessionId, 0, result.getStatus().name());
+            agentAuditService.recordSessionResult(sessionId, customerId, doctorId, goal, result, 0,
+                    System.currentTimeMillis() - startTime);
+            return result;
+        }
+
+        String systemPrompt = promptBuilder.buildSystemPrompt(toolRegistry.getAllTools());
+        String userPrompt = promptBuilder.buildUserPrompt(goal, customerId);
+        messages.add(Message.user(userPrompt));
+
+        for (int step = 0; step < maxSteps; step++) {
+            log.info("Agent执行第{}步", step + 1);
+
+            try {
+                ParsedThought parsedThought = requestThoughtResultStream(
+                        systemPrompt, messages, step, customerId, sessionId, eventSink, step + 1);
+                log.info("Agent响应: {}", parsedThought.responseText());
+
+                ThoughtResult thought = parsedThought.thoughtResult();
+                history.add(Step.thought(thought.getThinking()));
+                messages.add(Message.assistant(parsedThought.responseText()));
+                emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.THOUGHT, thought.getThinking());
+
+                if (thought.isFinished()) {
+                    StructuredFinalAnswer finalAnswer = thought.getStructuredFinalAnswer();
+                    SafetyAssessment finalAnswerAssessment = medicalSafetyService.assessFinalAnswer(
+                            finalAnswer,
+                            history);
+                    log.info("Agent任务完成");
+                    sessionService.completeSession(sessionId, history);
+
+                    long duration = System.currentTimeMillis() - startTime;
+                    agentMetrics.recordExecutionSuccess(step + 1, duration);
+
+                    AgentResult result = AgentResult.success(
+                            sessionId,
+                            finalAnswerAssessment.isBlocked()
+                                    ? medicalSafetyService.buildSafetyStructuredAnswer(finalAnswerAssessment.message())
+                                    : finalAnswer,
+                            history,
+                            step + 1);
+                    emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.FINAL_ANSWER,
+                            result.getStructuredFinalAnswer());
+                    emitDone(eventSink, sessionId, step + 1, result.getStatus().name());
+                    agentAuditService.recordSessionResult(
+                            sessionId,
+                            customerId,
+                            doctorId,
+                            goal,
+                            result,
+                            step + 1,
+                            duration);
+                    return result;
+                }
+
+                ActionDecision action = thought.getAction();
+                history.add(Step.action(action));
+                emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.ACTION, actionToEventData(action));
+
+                log.info("Agent执行行动: tool={}, input={}",
+                        action.getToolName(),
+                        JSON.toJSONString(action.getInput()));
+
+                SafetyAssessment actionAssessment = medicalSafetyService.assessAction(action, history);
+                if (actionAssessment.isBlocked()) {
+                    history.add(Step.observation(actionAssessment.message()));
+                    messages.add(Message.user("Observation: " + actionAssessment.message()));
+                    emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.OBSERVATION,
+                            actionAssessment.message());
+                    sessionService.updateSession(sessionId, history, messages, step + 1);
+                    continue;
+                }
+
+                ActionResult actionResult = actionExecutor.execute(
+                        action,
+                        customerId,
+                        doctorId,
+                        sessionId);
+
+                if (actionResult.isNeedsApproval()) {
+                    log.info("行动需要医生确认，Agent暂停");
+                    sessionService.pauseSession(sessionId, history, messages);
+                    agentMetrics.recordPendingApproval(action.getToolName());
+
+                    AgentResult result = AgentResult.pendingApproval(
+                            sessionId,
+                            actionResult.getTask(),
+                            history,
+                            step + 1);
+                    emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.PENDING_APPROVAL,
+                            actionResult.getTask());
+                    emitDone(eventSink, sessionId, step + 1, result.getStatus().name());
+                    agentAuditService.recordSessionResult(
+                            sessionId,
+                            customerId,
+                            doctorId,
+                            goal,
+                            result,
+                            step + 1,
+                            System.currentTimeMillis() - startTime);
+                    return result;
+                }
+
+                String observation = formatObservation(actionResult);
+                history.add(Step.observation(observation));
+                messages.add(Message.user("Observation: " + observation));
+                emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.OBSERVATION, observation);
+
+                log.info("Agent观察结果: {}", observation);
+                sessionService.updateSession(sessionId, history, messages, step + 1);
+
+            } catch (Exception e) {
+                log.error("Agent执行异常", e);
+                sessionService.failSession(sessionId, e.getMessage());
+
+                long duration = System.currentTimeMillis() - startTime;
+                agentMetrics.recordExecutionFailure(e.getClass().getSimpleName(), step + 1, duration);
+
+                StructuredFinalAnswer degraded = medicalSafetyService.buildDegradedStructuredAnswer(
+                        buildExecutionDegradedSummary(e),
+                        "MEDIUM",
+                        buildExecutionRuntimeEvidence(e),
+                        List.of("请人工接管当前会话", "补充近期关键数据后再尝试重新分析"),
+                        List.of("当前未获得可用的自动分析结果"));
+                AgentResult result = AgentResult.error(sessionId, e.getMessage(), degraded, history, step + 1);
+                emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.ERROR,
+                        Map.of("message", e.getMessage(), "structuredFinalAnswer", degraded));
+                emitDone(eventSink, sessionId, step + 1, result.getStatus().name());
+                agentAuditService.recordSessionResult(
+                        sessionId,
+                        customerId,
+                        doctorId,
+                        goal,
+                        result,
+                        step + 1,
+                        duration);
+                return result;
+            }
+        }
+
+        log.warn("Agent达到最大步数限制");
+        sessionService.failSession(sessionId, "达到最大步数限制");
+        agentMetrics.recordMaxStepsReached(maxSteps, System.currentTimeMillis() - startTime);
+
+        StructuredFinalAnswer degraded = medicalSafetyService.buildDegradedStructuredAnswer(
+                "自动分析已达到最大步数，未能收敛到最终结论。",
+                "MEDIUM",
+                "达到最大步数限制",
+                List.of("请人工查看已有 Observation", "必要时缩小问题范围后重新发起分析"),
+                List.of("当前分析链路未完成"));
+        AgentResult result = AgentResult.maxStepsReached(sessionId, degraded, history, maxSteps);
+        emitEvent(eventSink, sessionId, maxSteps, AgentStreamEventType.FINAL_ANSWER, degraded);
+        emitDone(eventSink, sessionId, maxSteps, result.getStatus().name());
+        agentAuditService.recordSessionResult(
+                sessionId,
+                customerId,
+                doctorId,
+                goal,
+                result,
+                maxSteps,
+                System.currentTimeMillis() - startTime);
+        return result;
+    }
+
     /**
      * 继续执行（用于人工确认后恢复）
      */
@@ -340,6 +533,74 @@ public class ReActAgentEngine {
                     List.of("请人工复核当前待审批任务和会话状态", "必要时重新发起新的减重分析会话"),
                     List.of("自动恢复链路已中断", e.getMessage()));
             return AgentResult.error(sessionId, e.getMessage(), degraded, new ArrayList<>(), 0);
+        }
+    }
+
+    public AgentResult resumeStream(String sessionId, Long approvedTaskId, Consumer<AgentStreamEvent> eventSink) {
+        long startTime = System.currentTimeMillis();
+        log.info("Agent流式恢复执行: sessionId={}, taskId={}", sessionId, approvedTaskId);
+
+        try {
+            AgentSession session = sessionService.getById(sessionId);
+            if (session == null) {
+                throw new AgentException("会话不存在: " + sessionId);
+            }
+
+            if (!SessionStatus.PAUSED.name().equals(session.getStatus())) {
+                throw new AgentException("会话状态不正确，当前状态: " + session.getStatus());
+            }
+
+            PendingTask task = sessionService.getPendingTask(approvedTaskId);
+            if (task == null) {
+                throw new AgentException("任务不存在: " + approvedTaskId);
+            }
+
+            if (!sessionId.equals(task.getAgentSessionId())) {
+                throw new AgentException("任务不属于该会话");
+            }
+
+            if (!TaskStatus.APPROVED.name().equals(task.getStatus())) {
+                throw new AgentException("任务未批准，当前状态: " + task.getStatus());
+            }
+
+            List<Step> history = JSON.parseArray(session.getHistoryJson(), Step.class);
+            List<Message> messages = JSON.parseArray(session.getMessagesJson(), Message.class);
+            int currentStep = session.getCurrentStep() != null ? session.getCurrentStep() : 0;
+
+            ActionDecision action = JSON.parseObject(task.getInputJson(), ActionDecision.class);
+            ActionResult actionResult = actionExecutor.executeApprovedAction(action);
+
+            String observation = formatObservation(actionResult);
+            history.add(Step.observation(observation));
+            messages.add(Message.user("Observation: " + observation));
+            emitEvent(eventSink, sessionId, currentStep + 1, AgentStreamEventType.OBSERVATION, observation);
+
+            sessionService.resumeSession(sessionId);
+
+            return continueReActLoopStream(
+                    sessionId,
+                    session.getGoal(),
+                    session.getCustomerId(),
+                    session.getDoctorId(),
+                    history,
+                    messages,
+                    currentStep + 1,
+                    startTime,
+                    eventSink);
+        } catch (Exception e) {
+            log.error("Agent恢复执行异常", e);
+            sessionService.failSession(sessionId, e.getMessage());
+            StructuredFinalAnswer degraded = medicalSafetyService.buildDegradedStructuredAnswer(
+                    "恢复执行失败，当前会话无法继续自动推进。",
+                    "HIGH",
+                    "恢复执行失败",
+                    List.of("请人工复核当前待审批任务和会话状态", "必要时重新发起新的减重分析会话"),
+                    List.of("自动恢复链路已中断", e.getMessage()));
+            AgentResult result = AgentResult.error(sessionId, e.getMessage(), degraded, new ArrayList<>(), 0);
+            emitEvent(eventSink, sessionId, 0, AgentStreamEventType.ERROR,
+                    Map.of("message", e.getMessage(), "structuredFinalAnswer", degraded));
+            emitDone(eventSink, sessionId, 0, result.getStatus().name());
+            return result;
         }
     }
 
@@ -510,6 +771,172 @@ public class ReActAgentEngine {
         return result;
     }
 
+    private AgentResult continueReActLoopStream(
+            String sessionId,
+            String goal,
+            String customerId,
+            String doctorId,
+            List<Step> history,
+            List<Message> messages,
+            int startStep,
+            long startTime,
+            Consumer<AgentStreamEvent> eventSink) {
+        log.info("继续流式ReAct循环: sessionId={}, startStep={}", sessionId, startStep);
+
+        String systemPrompt = promptBuilder.buildSystemPrompt(toolRegistry.getAllTools());
+
+        for (int step = startStep; step < maxSteps; step++) {
+            log.info("Agent执行第{}步", step + 1);
+
+            try {
+                ParsedThought parsedThought = requestThoughtResult(systemPrompt, messages, step, customerId);
+                log.info("Agent响应: {}", parsedThought.responseText());
+
+                ThoughtResult thought = parsedThought.thoughtResult();
+                history.add(Step.thought(thought.getThinking()));
+                messages.add(Message.assistant(parsedThought.responseText()));
+                emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.THOUGHT, thought.getThinking());
+
+                if (thought.isFinished()) {
+                    StructuredFinalAnswer finalAnswer = thought.getStructuredFinalAnswer();
+                    SafetyAssessment finalAnswerAssessment = medicalSafetyService.assessFinalAnswer(
+                            finalAnswer,
+                            history);
+                    log.info("Agent任务完成");
+                    sessionService.completeSession(sessionId, history);
+
+                    long duration = System.currentTimeMillis() - startTime;
+                    agentMetrics.recordExecutionSuccess(step + 1, duration);
+
+                    AgentResult result = AgentResult.success(
+                            sessionId,
+                            finalAnswerAssessment.isBlocked()
+                                    ? medicalSafetyService.buildSafetyStructuredAnswer(finalAnswerAssessment.message())
+                                    : finalAnswer,
+                            history,
+                            step + 1);
+                    emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.FINAL_ANSWER,
+                            result.getStructuredFinalAnswer());
+                    emitDone(eventSink, sessionId, step + 1, result.getStatus().name());
+                    agentAuditService.recordSessionResult(
+                            sessionId,
+                            customerId,
+                            doctorId,
+                            goal,
+                            result,
+                            step + 1,
+                            duration);
+                    return result;
+                }
+
+                ActionDecision action = thought.getAction();
+                history.add(Step.action(action));
+                emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.ACTION, actionToEventData(action));
+
+                log.info("Agent执行行动: tool={}, input={}",
+                        action.getToolName(),
+                        JSON.toJSONString(action.getInput()));
+
+                SafetyAssessment actionAssessment = medicalSafetyService.assessAction(action, history);
+                if (actionAssessment.isBlocked()) {
+                    history.add(Step.observation(actionAssessment.message()));
+                    messages.add(Message.user("Observation: " + actionAssessment.message()));
+                    emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.OBSERVATION,
+                            actionAssessment.message());
+                    sessionService.updateSession(sessionId, history, messages, step + 1);
+                    continue;
+                }
+
+                ActionResult actionResult = actionExecutor.execute(
+                        action,
+                        customerId,
+                        doctorId,
+                        sessionId);
+
+                if (actionResult.isNeedsApproval()) {
+                    log.info("行动需要医生确认，Agent暂停");
+                    sessionService.pauseSession(sessionId, history, messages);
+                    agentMetrics.recordPendingApproval(action.getToolName());
+
+                    AgentResult result = AgentResult.pendingApproval(
+                            sessionId,
+                            actionResult.getTask(),
+                            history,
+                            step + 1);
+                    emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.PENDING_APPROVAL,
+                            actionResult.getTask());
+                    emitDone(eventSink, sessionId, step + 1, result.getStatus().name());
+                    agentAuditService.recordSessionResult(
+                            sessionId,
+                            customerId,
+                            doctorId,
+                            goal,
+                            result,
+                            step + 1,
+                            System.currentTimeMillis() - startTime);
+                    return result;
+                }
+
+                String observation = formatObservation(actionResult);
+                history.add(Step.observation(observation));
+                messages.add(Message.user("Observation: " + observation));
+                emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.OBSERVATION, observation);
+
+                log.info("Agent观察结果: {}", observation);
+                sessionService.updateSession(sessionId, history, messages, step + 1);
+            } catch (Exception e) {
+                log.error("Agent执行异常", e);
+                sessionService.failSession(sessionId, e.getMessage());
+
+                long duration = System.currentTimeMillis() - startTime;
+                agentMetrics.recordExecutionFailure(e.getClass().getSimpleName(), step + 1, duration);
+
+                StructuredFinalAnswer degraded = medicalSafetyService.buildDegradedStructuredAnswer(
+                        buildExecutionDegradedSummary(e),
+                        "MEDIUM",
+                        buildExecutionRuntimeEvidence(e),
+                        List.of("请人工接管当前会话", "补充近期关键数据后再尝试重新分析"),
+                        List.of("当前未获得可用的自动分析结果"));
+                AgentResult result = AgentResult.error(sessionId, e.getMessage(), degraded, history, step + 1);
+                emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.ERROR,
+                        Map.of("message", e.getMessage(), "structuredFinalAnswer", degraded));
+                emitDone(eventSink, sessionId, step + 1, result.getStatus().name());
+                agentAuditService.recordSessionResult(
+                        sessionId,
+                        customerId,
+                        doctorId,
+                        goal,
+                        result,
+                        step + 1,
+                        duration);
+                return result;
+            }
+        }
+
+        log.warn("Agent达到最大步数限制");
+        sessionService.failSession(sessionId, "达到最大步数限制");
+        agentMetrics.recordMaxStepsReached(maxSteps, System.currentTimeMillis() - startTime);
+
+        StructuredFinalAnswer degraded = medicalSafetyService.buildDegradedStructuredAnswer(
+                "自动分析已达到最大步数，未能收敛到最终结论。",
+                "MEDIUM",
+                "达到最大步数限制",
+                List.of("请人工查看已有 Observation", "必要时缩小问题范围后重新发起分析"),
+                List.of("当前分析链路未完成"));
+        AgentResult result = AgentResult.maxStepsReached(sessionId, degraded, history, maxSteps);
+        emitEvent(eventSink, sessionId, maxSteps, AgentStreamEventType.FINAL_ANSWER, degraded);
+        emitDone(eventSink, sessionId, maxSteps, result.getStatus().name());
+        agentAuditService.recordSessionResult(
+                sessionId,
+                customerId,
+                doctorId,
+                goal,
+                result,
+                maxSteps,
+                System.currentTimeMillis() - startTime);
+        return result;
+    }
+
     /**
      * 格式化观察结果
      */
@@ -543,6 +970,49 @@ public class ReActAgentEngine {
             AgentException lastException = parseException;
             for (int attempt = 0; attempt < protocolRepairAttempts; attempt++) {
                 String repairedResponse = deepSeekClient.chat(systemPrompt, repairMessages).getContent();
+                try {
+                    return new ParsedThought(repairedResponse, responseParser.parse(repairedResponse));
+                } catch (AgentException repairException) {
+                    lastException = repairException;
+                    repairMessages.add(Message.assistant(repairedResponse));
+                    repairMessages
+                            .add(Message.user(promptBuilder.buildProtocolRepairPrompt(repairException.getMessage())));
+                }
+            }
+            throw lastException;
+        }
+    }
+
+    private ParsedThought requestThoughtResultStream(
+            String systemPrompt,
+            List<Message> messages,
+            int step,
+            String customerId,
+            String sessionId,
+            Consumer<AgentStreamEvent> eventSink,
+            int eventStep) {
+        if (useMock) {
+            String mockResponse = mockDeepSeekResponse(step, customerId);
+            emitEvent(eventSink, sessionId, eventStep, AgentStreamEventType.THINKING_DELTA, mockResponse);
+            return new ParsedThought(mockResponse, responseParser.parse(mockResponse));
+        }
+
+        String responseText = deepSeekClient.chatStream(systemPrompt, messages,
+                delta -> emitEvent(eventSink, sessionId, eventStep, AgentStreamEventType.THINKING_DELTA, delta))
+                .getContent();
+        try {
+            return new ParsedThought(responseText, responseParser.parse(responseText));
+        } catch (AgentException parseException) {
+            log.warn("Agent响应协议不合法，准备纠偏重试: {}", parseException.getMessage());
+            List<Message> repairMessages = new ArrayList<>(messages);
+            repairMessages.add(Message.assistant(responseText));
+            repairMessages.add(Message.user(promptBuilder.buildProtocolRepairPrompt(parseException.getMessage())));
+
+            AgentException lastException = parseException;
+            for (int attempt = 0; attempt < protocolRepairAttempts; attempt++) {
+                String repairedResponse = deepSeekClient.chatStream(systemPrompt, repairMessages,
+                        delta -> emitEvent(eventSink, sessionId, eventStep, AgentStreamEventType.THINKING_DELTA, delta))
+                        .getContent();
                 try {
                     return new ParsedThought(repairedResponse, responseParser.parse(repairedResponse));
                 } catch (AgentException repairException) {
@@ -626,6 +1096,35 @@ public class ReActAgentEngine {
     }
 
     private record ParsedThought(String responseText, ThoughtResult thoughtResult) {
+    }
+
+    private Map<String, Object> actionToEventData(ActionDecision action) {
+        return Map.of(
+                "toolName", action.getToolName(),
+                "input", action.getInput(),
+                "reason", action.getReason());
+    }
+
+    private void emitEvent(
+            Consumer<AgentStreamEvent> eventSink,
+            String sessionId,
+            int step,
+            AgentStreamEventType type,
+            Object data) {
+        if (eventSink == null) {
+            return;
+        }
+        eventSink.accept(AgentStreamEvent.builder()
+                .sessionId(sessionId)
+                .step(step)
+                .type(type)
+                .data(data)
+                .timestamp(java.time.LocalDateTime.now())
+                .build());
+    }
+
+    private void emitDone(Consumer<AgentStreamEvent> eventSink, String sessionId, int step, String status) {
+        emitEvent(eventSink, sessionId, step, AgentStreamEventType.DONE, Map.of("status", status));
     }
 
     private String buildExecutionDegradedSummary(Exception exception) {
