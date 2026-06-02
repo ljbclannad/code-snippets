@@ -302,6 +302,7 @@ public class ReActAgentEngine {
         List<Message> messages = new ArrayList<>();
         AgentContext context = AgentContext.initialize(customerId, doctorId, goal);
 
+        // 先做目标级安全预检，命中高危规则时直接返回安全结果，不进入模型循环。
         SafetyAssessment goalAssessment = medicalSafetyService.assessGoal(goal);
         if (goalAssessment.isBlocked()) {
             context.addEvidence("goal_assessment", "SAFETY_RULE", goalAssessment.message(), Map.of("goal", goal));
@@ -325,9 +326,12 @@ public class ReActAgentEngine {
             log.info("Agent执行第{}步", step + 1);
 
             try {
+                // 每一轮先由协调器选择当前子代理，再基于其角色职责构建专属 prompt。
                 AgentSubAgent subAgent = selectSubAgent(goal, context);
                 switchSubAgent(sessionId, step + 1, context, subAgent, eventSink);
                 String systemPrompt = promptBuilder.buildSubAgentSystemPrompt(subAgent, toolRegistry.getAllTools());
+
+                // 流式调用模型：前端先收到 thinking_delta，流结束后再解析完整 JSON。
                 ParsedThought parsedThought = requestThoughtResultStream(
                         systemPrompt, messages, step, customerId, sessionId, eventSink, step + 1, context);
                 log.info("Agent响应: {}", parsedThought.responseText());
@@ -337,6 +341,7 @@ public class ReActAgentEngine {
                 messages.add(Message.assistant(parsedThought.responseText()));
                 emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.THOUGHT, thought.getThinking());
 
+                // 当模型已经收敛到最终答案时，直接落会话、发 final_answer 并结束流。
                 if (thought.isFinished()) {
                     StructuredFinalAnswer finalAnswer = thought.getStructuredFinalAnswer();
                     SafetyAssessment finalAnswerAssessment = medicalSafetyService.assessFinalAnswer(
@@ -366,10 +371,11 @@ public class ReActAgentEngine {
                             goal,
                             result,
                             step + 1,
-                            duration);
+                        duration);
                     return result;
                 }
 
+                // 未完成时进入动作阶段，先广播 action，再执行安全校验和工具调用。
                 ActionDecision action = thought.getAction();
                 history.add(Step.action(action));
                 emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.ACTION, actionToEventData(action));
@@ -390,6 +396,7 @@ public class ReActAgentEngine {
                     continue;
                 }
 
+                // 工具执行后分两条路：要么进入审批暂停，要么把结果写入显式状态继续推进。
                 ActionResult actionResult = actionExecutor.execute(
                         action,
                         customerId,
@@ -421,6 +428,7 @@ public class ReActAgentEngine {
                     return result;
                 }
 
+                // 标准化工具输出会在这里汇总成 Observation，同时回写 AgentContext。
                 String observation = formatObservation(actionResult);
                 history.add(Step.observation(observation));
                 messages.add(Message.user("Observation: " + observation));
@@ -432,6 +440,7 @@ public class ReActAgentEngine {
                 sessionService.updateSession(sessionId, history, messages, context, step + 1);
 
             } catch (Exception e) {
+                // 任一阶段异常都统一转成结构化降级结果，并发 error/done 结束流。
                 log.error("Agent执行异常", e);
                 sessionService.failSession(sessionId, e.getMessage());
 
@@ -461,6 +470,7 @@ public class ReActAgentEngine {
             }
         }
 
+        // 超过最大步数仍未完成时，返回保守降级答案，避免无限循环。
         log.warn("Agent达到最大步数限制");
         sessionService.failSession(sessionId, "达到最大步数限制");
         agentMetrics.recordMaxStepsReached(maxSteps, System.currentTimeMillis() - startTime);
