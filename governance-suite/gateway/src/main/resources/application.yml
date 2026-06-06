@@ -68,7 +68,7 @@ spring:
         - id: appointment-ws
           uri: lb:ws://appointment-service
           predicates:
-            - Path=/ws/appointment/**
+            - Path=/ws/appointment,/ws/appointment/**
 
 # Gateway 自带的 RedisRateLimiter（演示用）
 # 生产上建议：它负责网关级粗粒度限流，Sentinel 负责细粒度（链路/热点/熔断降级）

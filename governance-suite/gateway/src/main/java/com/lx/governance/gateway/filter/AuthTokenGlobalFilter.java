@@ -41,7 +41,7 @@ public class AuthTokenGlobalFilter implements GlobalFilter, Ordered {
         }
 
         try {
-            AuthTokenClaims claims = authTokenService.verify(exchange.getRequest().getHeaders().getFirst(AuthHeaders.AUTHORIZATION));
+            AuthTokenClaims claims = authTokenService.verify(resolveToken(exchange));
             ServerHttpRequest mutated = exchange.getRequest().mutate()
                     .headers(headers -> {
                         headers.remove(AuthHeaders.USER_ID);
@@ -68,6 +68,18 @@ public class AuthTokenGlobalFilter implements GlobalFilter, Ordered {
             );
             return unauthorized(exchange, e.getMessage());
         }
+    }
+
+    private String resolveToken(ServerWebExchange exchange) {
+        String rawToken = exchange.getRequest().getHeaders().getFirst(AuthHeaders.AUTHORIZATION);
+        if ((rawToken == null || rawToken.isBlank()) && isAppointmentWebSocket(exchange.getRequest().getPath().value())) {
+            rawToken = exchange.getRequest().getQueryParams().getFirst("token");
+        }
+        return rawToken;
+    }
+
+    private boolean isAppointmentWebSocket(String path) {
+        return path.equals("/ws/appointment") || path.startsWith("/ws/appointment/");
     }
 
     private boolean skip(String path) {
