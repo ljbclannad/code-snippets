@@ -17,14 +17,17 @@ public class AppointmentService {
     private final StringRedisTemplate redisTemplate;
     private final RedisScript<String> grabLuaScript;
     private final IdempotencyService idempotencyService;
+    private final com.lx.governance.appointment.websocket.AppointmentPushService appointmentPushService;
 
     public AppointmentService(
             StringRedisTemplate redisTemplate,
             RedisScript<String> grabLuaScript,
-            IdempotencyService idempotencyService) {
+            IdempotencyService idempotencyService,
+            com.lx.governance.appointment.websocket.AppointmentPushService appointmentPushService) {
         this.redisTemplate = redisTemplate;
         this.grabLuaScript = grabLuaScript;
         this.idempotencyService = idempotencyService;
+        this.appointmentPushService = appointmentPushService;
     }
 
     public GrabResultVO grabAppointment(Long userId, Long scheduleId, String requestId) {
@@ -65,9 +68,11 @@ public class AppointmentService {
         GrabResultVO vo = new GrabResultVO();
         vo.setScheduleId(scheduleId);
         vo.setExpireAt(LocalDateTime.now().plusMinutes(15));
+        vo.setRequestId(requestId);
 
         log.info("[APPOINTMENT] [GRAB] 抢号成功: userId={}, scheduleId={}, requestId={}",
             userId, scheduleId, requestId);
+        appointmentPushService.pushGrabAccepted(userId, scheduleId, requestId, vo);
 
         return vo;
     }

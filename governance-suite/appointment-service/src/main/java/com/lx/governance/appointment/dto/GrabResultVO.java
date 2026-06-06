@@ -9,5 +9,7 @@ public class GrabResultVO {
 
     private Long scheduleId;
 
+    private String requestId;
+
     private LocalDateTime expireAt;
 }

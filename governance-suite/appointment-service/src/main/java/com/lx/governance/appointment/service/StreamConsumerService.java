@@ -30,6 +30,7 @@ public class StreamConsumerService {
     private final AppointmentOrderMapper orderMapper;
     private final AppointmentIdempotencyMapper idempotencyMapper;
     private final SnowflakeIdGenerator snowflakeIdGenerator;
+    private final com.lx.governance.appointment.websocket.AppointmentPushService appointmentPushService;
 
     private static final String STREAM_KEY = "appointment:stream:orders";
     private static final String CONSUMER_GROUP = "appointment-consumer-group";
@@ -40,12 +41,14 @@ public class StreamConsumerService {
             ScheduleMapper scheduleMapper,
             AppointmentOrderMapper orderMapper,
             AppointmentIdempotencyMapper idempotencyMapper,
-            SnowflakeIdGenerator snowflakeIdGenerator) {
+            SnowflakeIdGenerator snowflakeIdGenerator,
+            com.lx.governance.appointment.websocket.AppointmentPushService appointmentPushService) {
         this.redisTemplate = redisTemplate;
         this.scheduleMapper = scheduleMapper;
         this.orderMapper = orderMapper;
         this.idempotencyMapper = idempotencyMapper;
         this.snowflakeIdGenerator = snowflakeIdGenerator;
+        this.appointmentPushService = appointmentPushService;
     }
 
     @PostConstruct
@@ -143,6 +146,7 @@ public class StreamConsumerService {
 
             log.info("[APPOINTMENT] [STREAM] 订单创建成功: orderNo={}, userId={}, scheduleId={}",
                 orderNo, userId, scheduleId);
+            appointmentPushService.pushOrderCreated(userId, scheduleId, requestId, orderNo);
             return true;
 
         } catch (DuplicateKeyException e) {

@@ -21,11 +21,14 @@ public class AppointmentPaidEventHandler {
 
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
+    private final com.lx.governance.appointment.websocket.AppointmentPushService appointmentPushService;
 
     public AppointmentPaidEventHandler(StringRedisTemplate redisTemplate,
-                                      ObjectMapper objectMapper) {
+                                      ObjectMapper objectMapper,
+                                      com.lx.governance.appointment.websocket.AppointmentPushService appointmentPushService) {
         this.redisTemplate = redisTemplate;
         this.objectMapper = objectMapper;
+        this.appointmentPushService = appointmentPushService;
     }
 
     @RabbitListener(queues = RabbitMQConfig.QUEUE_NAME)
@@ -71,6 +74,7 @@ public class AppointmentPaidEventHandler {
                 kv("userId", event.getUserId()),
                 kv("message", "挂号成功，请按时就诊")
             );
+            appointmentPushService.pushPaymentSuccess(event.getUserId(), event.getScheduleId(), event.getOrderNo());
 
             // 5. ACK 消息
             channel.basicAck(deliveryTag, false);
