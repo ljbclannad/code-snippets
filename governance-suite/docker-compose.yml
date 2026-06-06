@@ -191,6 +191,16 @@ services:
             timeout: 10s
             retries: 3
 
+    attu:
+        image: zilliz/attu:latest
+        container_name: gov-attu
+        restart: unless-stopped
+        ports:
+            - "8000:3000"
+        depends_on:
+            milvus:
+                condition: service_healthy
+
     elasticsearch:
         image: elasticsearch:8.11.0
         container_name: gov-elasticsearch
