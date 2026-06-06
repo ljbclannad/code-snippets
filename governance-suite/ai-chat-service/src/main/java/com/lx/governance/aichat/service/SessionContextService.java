@@ -18,6 +18,9 @@ import com.lx.governance.aichat.dto.SessionContext;
 import io.github.resilience4j.retry.annotation.Retry;
 import lombok.extern.slf4j.Slf4j;
 
+/**
+ * 上下文处理服务
+ */
 @Service
 @Slf4j
 public class SessionContextService {

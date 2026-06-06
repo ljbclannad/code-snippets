@@ -47,7 +47,7 @@ open http://localhost:5601
 docker exec -it governance-suite-elasticsearch-1 bash
 
 # 安装 IK 分词器
-elasticsearch-plugin install https://github.com/medcl/elasticsearch-analysis-ik/releases/download/v8.11.0/elasticsearch-analysis-ik-8.11.0.zip
+elasticsearch-plugin install https://release.infinilabs.com/analysis-ik/stable/elasticsearch-analysis-ik-8.11.0.zip
 
 # 退出容器
 exit
@@ -161,12 +161,13 @@ mvn spring-boot:run
 
 发起一次对话：
 ```bash
-curl -X POST "http://localhost:8084/api/chat" \
+curl -X POST "http://localhost:8100/api/chat" \
   -H "Content-Type: application/json" \
   -d '{
     "customerId": "test-customer-001",
     "message": "如何使用 Spring Boot 集成 Elasticsearch？",
-    "conversationId": null
+    "conversationId": null,
+    "groupId":"12"
   }'
 ```
 

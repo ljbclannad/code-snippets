@@ -30,15 +30,58 @@ import lombok.extern.slf4j.Slf4j;
 @Configuration
 public class MilvusVectorStoreConfig {
 
+    /**
+     * Milvus 服务地址。
+     *
+     * 表示当前应用要连接的 Milvus 节点主机名或 IP。
+     * 在本地开发时通常是 `localhost`，在 Docker Compose 或集群环境中，
+     * 往往会配置成容器服务名或内网地址。
+     *
+     * 它和 `milvusPort` 一起决定客户端最终连到哪个 Milvus 实例。
+     */
     @Value("${spring.ai.vectorstore.milvus.client.host:localhost}")
     private String milvusHost;
 
+    /**
+     * Milvus 服务端口。
+     *
+     * 这是 Milvus gRPC 服务的访问端口，默认是 `19530`。
+     * Spring AI 的 Milvus VectorStore 和 Milvus Java Client 都通过这个端口建立连接，
+     * 因此如果 Milvus 部署时改过端口，这里必须同步修改。
+     */
     @Value("${spring.ai.vectorstore.milvus.client.port:19530}")
     private int milvusPort;
 
+    /**
+     * Milvus 数据库名。
+     *
+     * 这个字段不是“业务数据库”的概念，而是 Milvus 2.x 自己提供的逻辑库隔离能力。
+     * 它决定：
+     * 1. 当前 VectorStore 创建和查询时落在哪个 Milvus database 下
+     * 2. 同名 collection 是否和其他环境/业务隔离
+     * 3. 客户端连接建立后默认操作的是哪一个逻辑库
+     *
+     * 默认值是 `default`。如果后续需要区分不同环境、租户或业务线，
+     * 可以通过这个字段把向量集合隔离到不同的 Milvus database 中，
+     * 避免所有 collection 都堆在同一个逻辑空间下。
+     */
     @Value("${spring.ai.vectorstore.milvus.database-name:default}")
     private String databaseName;
 
+    /**
+     * 向量维度。
+     *
+     * 该字段必须与 EmbeddingModel 输出的维度严格一致。
+     * 例如如果 embedding 模型输出 1024 维向量，那么这里也必须是 1024，
+     * 否则在创建 collection 或插入向量时会发生维度不匹配错误。
+     *
+     * 这个字段直接影响：
+     * 1. Milvus collection 的 schema 定义
+     * 2. 向量写入校验
+     * 3. 后续检索时的数据兼容性
+     *
+     * 一旦线上 collection 已存在，修改该值通常意味着需要重建 collection。
+     */
     @Value("${spring.ai.vectorstore.milvus.embedding-dimension:1024}")
     private int embeddingDimension;
 
@@ -90,6 +133,15 @@ public class MilvusVectorStoreConfig {
 
         log.info("Creating groupMemoryVectorStore with collection: ai_group_memories");
 
+        // IndexType.IVF_FLAT:
+        // 使用 IVF（倒排文件）做分桶，再在桶内做 FLAT 精确比对。
+        // 这是一个在检索速度和实现复杂度之间比较平衡的索引类型，
+        // 适合当前文本向量检索场景，通常比纯 FLAT 全量暴力搜索更快。
+        //
+        // MetricType.COSINE:
+        // 使用余弦相似度作为向量相似性度量方式。
+        // 对文本 embedding 来说，向量方向通常比向量绝对长度更重要，
+        // 因此 COSINE 是最常见也最合理的配置之一。
         MilvusVectorStore.MilvusVectorStoreConfig config = MilvusVectorStore.MilvusVectorStoreConfig.builder()
                 .withCollectionName("ai_group_memories")
                 .withDatabaseName(databaseName)
@@ -114,6 +166,9 @@ public class MilvusVectorStoreConfig {
 
         log.info("Creating userMemoryVectorStore with collection: ai_user_memories");
 
+        // 这里沿用与群组记忆相同的索引和度量配置：
+        // - IVF_FLAT：在当前数据规模下提供较稳定的查询性能
+        // - COSINE：与文本 embedding 的语义相似度计算方式保持一致
         MilvusVectorStore.MilvusVectorStoreConfig config = MilvusVectorStore.MilvusVectorStoreConfig.builder()
                 .withCollectionName("ai_user_memories")
                 .withDatabaseName(databaseName)
