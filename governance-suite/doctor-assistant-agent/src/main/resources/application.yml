@@ -54,6 +54,11 @@ agent:
   session-timeout: 3600
   task-expire-hours: 24
   use-mock: false
+  sse:
+    timeout-millis: 120000
+  access:
+    max-requests-per-minute: 30
+    max-sse-connections: 32
   tool-timeout-millis: 3000
   tool-executor:
     core-pool-size: 8

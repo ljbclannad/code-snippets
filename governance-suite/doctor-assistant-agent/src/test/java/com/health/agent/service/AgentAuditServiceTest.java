@@ -130,4 +130,26 @@ class AgentAuditServiceTest {
         assertTrue(log.getFinalAnswer().contains("问题摘要"));
         assertEquals(3, log.getTotalSteps());
     }
+
+    @Test
+    void shouldPersistMedicalSafetyBlockAudit() {
+        auditService.recordSafetyBlock(
+            "S001",
+            "C001",
+            "D001",
+            "患者想调整减重药物",
+            "MEDICATION_ADJUSTMENT",
+            "不得自动生成药物调整结论",
+            "{\"goal\":\"患者想调整减重药物\"}"
+        );
+
+        ArgumentCaptor<AgentExecutionLog> captor = ArgumentCaptor.forClass(AgentExecutionLog.class);
+        verify(executionLogMapper).insert(captor.capture());
+
+        AgentExecutionLog log = captor.getValue();
+        assertEquals("SAFETY_BLOCK", log.getResultStatus());
+        assertEquals("medical_safety_rule", log.getToolName());
+        assertEquals("MEDICATION_ADJUSTMENT", log.getApprovalStatus());
+        assertTrue(log.getErrorMessage().contains("不得自动生成药物调整结论"));
+    }
 }

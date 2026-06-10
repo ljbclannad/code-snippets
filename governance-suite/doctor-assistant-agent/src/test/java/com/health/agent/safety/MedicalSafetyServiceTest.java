@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MedicalSafetyServiceTest {
@@ -22,7 +23,55 @@ class MedicalSafetyServiceTest {
         );
 
         assertTrue(assessment.isBlocked());
+        assertEquals("EMERGENCY", assessment.category());
         assertTrue(assessment.message().contains("立即线下就医"));
+    }
+
+    @Test
+    void shouldBlockMedicationAdjustmentGoal() {
+        SafetyAssessment assessment = safetyService.assessGoal(
+            "患者想把司美格鲁肽剂量加倍，帮我直接给调整方案"
+        );
+
+        assertTrue(assessment.isBlocked());
+        assertEquals("MEDICATION_ADJUSTMENT", assessment.category());
+        assertTrue(assessment.message().contains("不得自动生成药物调整结论"));
+    }
+
+    @Test
+    void shouldRequireManualReviewForPrescriptionFinalAnswer() {
+        SafetyAssessment assessment = safetyService.assessFinalAnswer(
+            StructuredFinalAnswer.builder()
+                .summary("建议开具奥利司他并调整减重药物剂量。")
+                .riskLevel("MEDIUM")
+                .recommendedActions(List.of("开具奥利司他", "调整药物剂量"))
+                .supportingEvidence(List.of("患者近期体重下降变慢", "自述食欲增加"))
+                .evidenceSources(List.of("WEIGHT_HISTORY", "CHAT_HISTORY"))
+                .build(),
+            List.of(Step.observation("{\"weight\":80.0,\"date\":\"2026-05-30\"}"))
+        );
+
+        assertTrue(assessment.isBlocked());
+        assertEquals("PRESCRIPTION", assessment.category());
+        assertTrue(assessment.message().contains("处方或用药调整"));
+    }
+
+    @Test
+    void shouldRequireOfflineReviewForFollowUpDelayFinalAnswer() {
+        SafetyAssessment assessment = safetyService.assessFinalAnswer(
+            StructuredFinalAnswer.builder()
+                .summary("患者出现明显不适，但可以暂缓复诊，继续线上观察。")
+                .riskLevel("MEDIUM")
+                .recommendedActions(List.of("暂缓复诊", "继续线上观察"))
+                .supportingEvidence(List.of("患者描述不适", "近期体重波动"))
+                .evidenceSources(List.of("CHAT_HISTORY"))
+                .build(),
+            List.of(Step.observation("{\"weight\":80.0,\"date\":\"2026-05-30\"}"))
+        );
+
+        assertTrue(assessment.isBlocked());
+        assertEquals("FOLLOW_UP", assessment.category());
+        assertTrue(assessment.message().contains("复诊"));
     }
 
     @Test

@@ -108,6 +108,7 @@ public class ReActAgentEngine {
         SafetyAssessment goalAssessment = medicalSafetyService.assessGoal(goal);
         if (goalAssessment.isBlocked()) {
             context.addEvidence("goal_assessment", "SAFETY_RULE", goalAssessment.message(), Map.of("goal", goal));
+            recordSafetyBlock(sessionId, customerId, doctorId, goal, goalAssessment, Map.of("goal", goal));
             sessionService.completeSession(sessionId, history, context);
             AgentResult result = AgentResult.success(
                     sessionId,
@@ -159,6 +160,9 @@ public class ReActAgentEngine {
                                     : finalAnswer,
                             history,
                             step + 1);
+                    if (finalAnswerAssessment.isBlocked()) {
+                        recordSafetyBlock(sessionId, customerId, doctorId, goal, finalAnswerAssessment, finalAnswer);
+                    }
                     emitSubAgentFinished(sessionId, step + 1, context, null);
                     agentAuditService.recordSessionResult(
                             sessionId,
@@ -185,6 +189,7 @@ public class ReActAgentEngine {
                     messages.add(Message.user("Observation: " + actionAssessment.message()));
                     context.addEvidence(action.getToolName(), "SAFETY_RULE", actionAssessment.message(),
                             action.getInput());
+                    recordSafetyBlock(sessionId, customerId, doctorId, goal, actionAssessment, action);
                     sessionService.updateSession(sessionId, history, messages, context, step + 1);
                     continue;
                 }
@@ -306,6 +311,7 @@ public class ReActAgentEngine {
         SafetyAssessment goalAssessment = medicalSafetyService.assessGoal(goal);
         if (goalAssessment.isBlocked()) {
             context.addEvidence("goal_assessment", "SAFETY_RULE", goalAssessment.message(), Map.of("goal", goal));
+            recordSafetyBlock(sessionId, customerId, doctorId, goal, goalAssessment, Map.of("goal", goal));
             sessionService.completeSession(sessionId, history, context);
             AgentResult result = AgentResult.success(
                     sessionId,
@@ -360,6 +366,9 @@ public class ReActAgentEngine {
                                     : finalAnswer,
                             history,
                             step + 1);
+                    if (finalAnswerAssessment.isBlocked()) {
+                        recordSafetyBlock(sessionId, customerId, doctorId, goal, finalAnswerAssessment, finalAnswer);
+                    }
                     emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.FINAL_ANSWER,
                             result.getStructuredFinalAnswer());
                     emitSubAgentFinished(sessionId, step + 1, context, eventSink);
@@ -392,6 +401,7 @@ public class ReActAgentEngine {
                             actionAssessment.message());
                     context.addEvidence(action.getToolName(), "SAFETY_RULE", actionAssessment.message(),
                             action.getInput());
+                    recordSafetyBlock(sessionId, customerId, doctorId, goal, actionAssessment, action);
                     sessionService.updateSession(sessionId, history, messages, context, step + 1);
                     continue;
                 }
@@ -702,6 +712,9 @@ public class ReActAgentEngine {
                                     : finalAnswer,
                             history,
                             step + 1);
+                    if (finalAnswerAssessment.isBlocked()) {
+                        recordSafetyBlock(sessionId, customerId, doctorId, goal, finalAnswerAssessment, finalAnswer);
+                    }
                     emitSubAgentFinished(sessionId, step + 1, context, null);
                     agentAuditService.recordSessionResult(
                             sessionId,
@@ -728,6 +741,7 @@ public class ReActAgentEngine {
                     messages.add(Message.user("Observation: " + actionAssessment.message()));
                     context.addEvidence(action.getToolName(), "SAFETY_RULE", actionAssessment.message(),
                             action.getInput());
+                    recordSafetyBlock(sessionId, customerId, doctorId, goal, actionAssessment, action);
                     sessionService.updateSession(sessionId, history, messages, context, step + 1);
                     continue;
                 }
@@ -874,6 +888,9 @@ public class ReActAgentEngine {
                                     : finalAnswer,
                             history,
                             step + 1);
+                    if (finalAnswerAssessment.isBlocked()) {
+                        recordSafetyBlock(sessionId, customerId, doctorId, goal, finalAnswerAssessment, finalAnswer);
+                    }
                     emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.FINAL_ANSWER,
                             result.getStructuredFinalAnswer());
                     emitSubAgentFinished(sessionId, step + 1, context, eventSink);
@@ -905,6 +922,7 @@ public class ReActAgentEngine {
                             actionAssessment.message());
                     context.addEvidence(action.getToolName(), "SAFETY_RULE", actionAssessment.message(),
                             action.getInput());
+                    recordSafetyBlock(sessionId, customerId, doctorId, goal, actionAssessment, action);
                     emitContextUpdated(sessionId, step + 1, context, action.getToolName(), eventSink);
                     sessionService.updateSession(sessionId, history, messages, context, step + 1);
                     continue;
@@ -1364,6 +1382,23 @@ public class ReActAgentEngine {
 
     private void emitDone(Consumer<AgentStreamEvent> eventSink, String sessionId, int step, String status) {
         emitEvent(eventSink, sessionId, step, AgentStreamEventType.DONE, Map.of("status", status));
+    }
+
+    private void recordSafetyBlock(
+            String sessionId,
+            String customerId,
+            String doctorId,
+            String goal,
+            SafetyAssessment assessment,
+            Object evidence) {
+        agentAuditService.recordSafetyBlock(
+                sessionId,
+                customerId,
+                doctorId,
+                goal,
+                assessment.category(),
+                assessment.message(),
+                JSON.toJSONString(evidence));
     }
 
     private String buildExecutionDegradedSummary(Exception exception) {

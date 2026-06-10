@@ -93,6 +93,15 @@ class ReActAgentEngineSafetyTest {
         assertEquals("HIGH", result.getStructuredFinalAnswer().getRiskLevel());
         verify(deepSeekClient, never()).chat(anyString(), anyList());
         verify(sessionService).completeSession(anyString(), anyList(), any(AgentContext.class));
+        verify(agentAuditService).recordSafetyBlock(
+            anyString(),
+            anyString(),
+            anyString(),
+            anyString(),
+            org.mockito.ArgumentMatchers.eq("EMERGENCY"),
+            anyString(),
+            anyString()
+        );
     }
 
     @Test

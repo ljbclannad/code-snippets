@@ -19,6 +19,7 @@ import jakarta.validation.Valid;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -30,6 +31,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Agent API 控制器
@@ -53,6 +55,12 @@ public class AgentController {
 
     @Autowired
     private PendingTaskService taskService;
+
+    @Autowired
+    private AgentAccessGuard accessGuard;
+
+    @Value("${agent.sse.timeout-millis:120000}")
+    private long sseTimeoutMillis;
 
     @Operation(
         summary = "执行 Agent 任务",
@@ -120,13 +128,15 @@ public class AgentController {
         log.info("收到Agent执行请求: goal={}, customerId={}",
             request.getGoal(), request.getCustomerId());
 
-        SseEmitter emitter = new SseEmitter(0L);
-        CompletableFuture.runAsync(() -> streamToEmitter(emitter, () -> agentEngine.executeStream(
+        AgentAccessGuard.AccessPermit permit = accessGuard.acquire(request.getDoctorId(), true);
+        AtomicReference<CompletableFuture<?>> streamFuture = new AtomicReference<>();
+        SseEmitter emitter = createGuardedEmitter(permit, streamFuture);
+        streamFuture.set(CompletableFuture.runAsync(() -> streamToEmitter(emitter, () -> agentEngine.executeStream(
             request.getGoal(),
             request.getCustomerId(),
             request.getDoctorId(),
             event -> sendEvent(emitter, event.getType().name().toLowerCase(), event)
-        )), streamExecutor);
+        )), streamExecutor));
         return emitter;
     }
 
@@ -171,13 +181,41 @@ public class AgentController {
         log.info("恢复Agent执行: sessionId={}, taskId={}",
             request.getSessionId(), request.getApprovedTaskId());
 
-        SseEmitter emitter = new SseEmitter(0L);
-        CompletableFuture.runAsync(() -> streamToEmitter(emitter, () -> agentEngine.resumeStream(
+        AgentAccessGuard.AccessPermit permit = accessGuard.acquire(request.getSessionId(), true);
+        AtomicReference<CompletableFuture<?>> streamFuture = new AtomicReference<>();
+        SseEmitter emitter = createGuardedEmitter(permit, streamFuture);
+        streamFuture.set(CompletableFuture.runAsync(() -> streamToEmitter(emitter, () -> agentEngine.resumeStream(
             request.getSessionId(),
             request.getApprovedTaskId(),
             event -> sendEvent(emitter, event.getType().name().toLowerCase(), event)
-        )), streamExecutor);
+        )), streamExecutor));
         return emitter;
+    }
+
+    private SseEmitter createGuardedEmitter(
+        AgentAccessGuard.AccessPermit permit,
+        AtomicReference<CompletableFuture<?>> streamFuture
+    ) {
+        SseEmitter emitter = new SseEmitter(sseTimeoutMillis);
+        emitter.onCompletion(() -> cleanupStream(permit, streamFuture, false));
+        emitter.onTimeout(() -> {
+            cleanupStream(permit, streamFuture, true);
+            emitter.complete();
+        });
+        emitter.onError(error -> cleanupStream(permit, streamFuture, true));
+        return emitter;
+    }
+
+    private void cleanupStream(
+        AgentAccessGuard.AccessPermit permit,
+        AtomicReference<CompletableFuture<?>> streamFuture,
+        boolean cancel
+    ) {
+        permit.release();
+        CompletableFuture<?> future = streamFuture.get();
+        if (cancel && future != null) {
+            future.cancel(true);
+        }
     }
 
     @Operation(

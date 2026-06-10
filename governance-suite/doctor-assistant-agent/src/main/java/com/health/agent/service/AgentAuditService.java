@@ -103,4 +103,27 @@ public class AgentAuditService {
         log.setCreatedAt(LocalDateTime.now());
         executionLogMapper.insert(log);
     }
+
+    public void recordSafetyBlock(
+        String sessionId,
+        String customerId,
+        String doctorId,
+        String goal,
+        String category,
+        String message,
+        String evidenceJson
+    ) {
+        AgentExecutionLog log = new AgentExecutionLog();
+        log.setSessionId(sessionId);
+        log.setCustomerId(customerId);
+        log.setDoctorId(doctorId);
+        log.setGoal(goal);
+        log.setResultStatus("SAFETY_BLOCK");
+        log.setToolName("medical_safety_rule");
+        log.setToolInputJson(evidenceJson);
+        log.setApprovalStatus(category);
+        log.setErrorMessage(message);
+        log.setCreatedAt(LocalDateTime.now());
+        executionLogMapper.insert(log);
+    }
 }
