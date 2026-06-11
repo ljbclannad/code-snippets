@@ -182,3 +182,62 @@ profile-completion:
 ai-chat:
   concurrency:
     conversation-lock-timeout-ms: 0
+
+  # 聊天历史推荐配置
+  chat-history:
+    auto-recommend-enabled: true
+    recommend-count: 3
+
+  # 配额管理配置
+  quota:
+    enabled: true
+    default-type: daily           # 默认配额类型: daily, monthly, total
+    default-limit: 100000         # 默认配额限制（tokens）
+
+  # 降级配置
+  degradation:
+    enabled: true                 # 是否启用降级功能
+    auto-enabled: true            # 是否启用自动降级
+    check-interval-seconds: 10    # 降级检查间隔（秒）
+
+    # 降级阈值配置
+    thresholds:
+      light:
+        cpu-usage: 70.0
+        memory-usage: 70.0
+        concurrent-requests: 100
+        error-rate: 5.0
+        avg-response-time: 3000
+
+      medium:
+        cpu-usage: 80.0
+        memory-usage: 80.0
+        concurrent-requests: 200
+        error-rate: 10.0
+        avg-response-time: 5000
+
+      heavy:
+        cpu-usage: 85.0
+        memory-usage: 85.0
+        concurrent-requests: 300
+        error-rate: 20.0
+        avg-response-time: 8000
+
+      critical:
+        cpu-usage: 90.0
+        memory-usage: 90.0
+        concurrent-requests: 500
+        error-rate: 30.0
+        avg-response-time: 10000
+
+      circuit-break:
+        cpu-usage: 95.0
+        memory-usage: 95.0
+        concurrent-requests: 1000
+        error-rate: 50.0
+        avg-response-time: 15000
+
+    # 恢复阈值配置
+    recovery:
+      factor: 0.8                 # 恢复因子（需降到降级阈值的 80%）
+      duration-seconds: 30        # 持续时间（秒）

@@ -28,12 +28,15 @@ import org.springframework.test.util.ReflectionTestUtils;
 import com.lx.governance.aichat.client.DeepSeekClient;
 import com.lx.governance.aichat.client.UserProfileClientFixed;
 import com.lx.governance.aichat.config.ProfileCompletionProperties;
+import com.lx.governance.aichat.degradation.DegradationManager;
+import com.lx.governance.aichat.degradation.DegradationStrategyExecutor;
 import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.ChatResponse;
 import com.lx.governance.aichat.dto.DifyResponse;
 import com.lx.governance.aichat.dto.SessionContext;
 import com.lx.governance.aichat.dto.UserProfileDTO;
 import com.lx.governance.aichat.metrics.AiChatMetrics;
+import com.lx.governance.aichat.quota.QuotaService;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
@@ -57,6 +60,12 @@ class AiChatServiceConcurrencyTest {
     private FollowUpResponseBuilder followUpResponseBuilder;
     @Mock
     private ChatAsyncProcessingService chatAsyncProcessingService;
+    @Mock
+    private QuotaService quotaService;
+    @Mock
+    private DegradationManager degradationManager;
+    @Mock
+    private DegradationStrategyExecutor degradationStrategyExecutor;
 
     private AutoCloseable closeable;
     private ExecutorService executorService;
@@ -85,7 +94,10 @@ class AiChatServiceConcurrencyTest {
                 followUpResponseBuilder,
                 profileCompletionProperties,
                 chatAsyncProcessingService,
-                conversationExecutionGuard);
+                conversationExecutionGuard,
+                quotaService,
+                degradationManager,
+                degradationStrategyExecutor);
 
         ReflectionTestUtils.setField(aiChatService, "autoRecommendEnabled", false);
         ReflectionTestUtils.setField(aiChatService, "recommendCount", 3);

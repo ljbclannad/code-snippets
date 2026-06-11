@@ -7,6 +7,7 @@ import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.StreamingChatModel;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.beans.factory.annotation.Value;
@@ -18,12 +19,15 @@ import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.DifyResponse;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.SessionContext;
+import com.lx.governance.aichat.dto.StreamEvent;
 import com.lx.governance.aichat.dto.UserProfileDTO;
+import com.lx.governance.aichat.exception.AiServiceException;
 import com.lx.governance.aichat.monitor.TokenMonitor;
 import com.lx.governance.aichat.monitor.TokenUsageMetrics;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import reactor.core.publisher.Flux;
 
 /**
  * DeepSeek API client for AI chat integration
@@ -34,6 +38,7 @@ import lombok.extern.slf4j.Slf4j;
 public class DeepSeekClient {
 
     private final ChatModel chatModel;
+    private final StreamingChatModel streamingChatModel;
     private final ContextBudgetManager contextBudgetManager;
     private final TokenMonitor tokenMonitor;
     private final ContextBudgetProperties properties;
@@ -101,8 +106,77 @@ public class DeepSeekClient {
             long duration = System.currentTimeMillis() - startTime;
             log.error("DeepSeek API call failed after {}ms for customer: {}",
                     duration, request.getCustomerId(), e);
-            throw new RuntimeException("Failed to call DeepSeek API: " + e.getMessage(), e);
+            throw AiServiceException.apiError("DeepSeek API 调用失败", e);
         }
+    }
+
+    /**
+     * 流式调用 DeepSeek API
+     *
+     * @param request        chat request
+     * @param userProfile    user profile (nullable)
+     * @param sessionContext session context (nullable)
+     * @param memories       memory items (nullable)
+     * @return Flux of StreamEvent
+     */
+    public Flux<StreamEvent> chatStream(ChatRequest request, UserProfileDTO userProfile,
+            SessionContext sessionContext, List<MemoryItemDTO> memories) {
+        long startTime = System.currentTimeMillis();
+
+        return Flux.defer(() -> {
+            try {
+                log.info("Calling DeepSeek API (streaming) for customer: {}, conversationId: {}",
+                        request.getCustomerId(), request.getConversationId());
+
+                // Build system prompt
+                String systemPrompt = buildSystemPrompt(request, userProfile, sessionContext, memories);
+                String userMessage = request.getMessage();
+
+                // Construct Prompt
+                Prompt prompt = new Prompt(
+                        List.of(
+                                new SystemMessage(systemPrompt),
+                                new UserMessage(userMessage)),
+                        OpenAiChatOptions.builder()
+                                .withModel(model)
+                                .withTemperature(0.7)
+                                .withMaxTokens(2000)
+                                .build());
+
+                // 发送开始事件
+                String conversationId = request.getConversationId();
+
+                // Call StreamingChatModel
+                return Flux.concat(
+                        Flux.just(StreamEvent.start(conversationId)),
+                        streamingChatModel.stream(prompt)
+                                .map(response -> {
+                                    String content = response.getResult().getOutput().getContent();
+                                    return StreamEvent.content(content);
+                                })
+                                .doOnComplete(() -> {
+                                    long duration = System.currentTimeMillis() - startTime;
+                                    log.info("DeepSeek API streaming completed in {}ms", duration);
+                                }),
+                        Flux.just(StreamEvent.done(conversationId, null))
+                );
+
+            } catch (Exception e) {
+                long duration = System.currentTimeMillis() - startTime;
+                log.error("DeepSeek API streaming failed after {}ms for customer: {}",
+                        duration, request.getCustomerId(), e);
+                return Flux.just(StreamEvent.error(
+                        "AI 服务调用失败: " + e.getMessage(),
+                        3001
+                ));
+            }
+        }).onErrorResume(e -> {
+            log.error("DeepSeek API streaming error", e);
+            return Flux.just(StreamEvent.error(
+                    "AI 服务调用异常: " + e.getMessage(),
+                    3001
+            ));
+        });
     }
 
     /**

@@ -12,6 +12,9 @@ import org.springframework.stereotype.Service;
 import com.lx.governance.aichat.client.DeepSeekClient;
 import com.lx.governance.aichat.client.UserProfileClientFixed;
 import com.lx.governance.aichat.config.ProfileCompletionProperties;
+import com.lx.governance.aichat.degradation.DegradationLevel;
+import com.lx.governance.aichat.degradation.DegradationManager;
+import com.lx.governance.aichat.degradation.DegradationStrategyExecutor;
 import com.lx.governance.aichat.document.ChatHistoryDocument;
 import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.ChatResponse;
@@ -20,7 +23,10 @@ import com.lx.governance.aichat.dto.DifyResponse;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.SessionContext;
 import com.lx.governance.aichat.dto.UserProfileDTO;
+import com.lx.governance.aichat.exception.AiServiceException;
+import com.lx.governance.aichat.exception.ConversationException;
 import com.lx.governance.aichat.metrics.AiChatMetrics;
+import com.lx.governance.aichat.quota.QuotaService;
 import com.lx.governance.aichat.util.MessageValidator;
 
 import lombok.RequiredArgsConstructor;
@@ -43,6 +49,9 @@ public class AiChatService {
     private final ProfileCompletionProperties profileCompletionProperties;
     private final ChatAsyncProcessingService chatAsyncProcessingService;
     private final ConversationExecutionGuard conversationExecutionGuard;
+    private final QuotaService quotaService;
+    private final DegradationManager degradationManager;
+    private final DegradationStrategyExecutor degradationStrategyExecutor;
 
     @Value("${ai-chat.chat-history.auto-recommend-enabled:true}")
     private boolean autoRecommendEnabled;
@@ -55,6 +64,22 @@ public class AiChatService {
         metrics.recordChatRequest();
 
         String sessionId = ensureConversationId(request);
+
+        // 检查是否熔断
+        if (degradationManager.getCurrentLevel() == DegradationLevel.CIRCUIT_BREAK) {
+            log.warn("服务熔断中 - customerId: {}", request.getCustomerId());
+            return CompletableFuture.completedFuture(
+                    degradationStrategyExecutor.getCircuitBreakResponse(sessionId)
+            );
+        }
+
+        // 尝试使用缓存响应（极限降级时）
+        ChatResponse cachedResponse = degradationStrategyExecutor.getCachedResponse(
+                request.getCustomerId(), request.getMessage()
+        );
+        if (cachedResponse != null) {
+            return CompletableFuture.completedFuture(cachedResponse);
+        }
 
         // 包装整个响应时间
         return metrics.recordChatResponseAsync(() -> {
@@ -80,6 +105,11 @@ public class AiChatService {
             String correlationId,
             long startTime) {
         try {
+            // 预估需要的 tokens（基于历史平均值或固定值）
+            // 这里使用一个保守的估计值
+            int estimatedTokens = 4000;
+            quotaService.checkQuota(request.getCustomerId(), estimatedTokens);
+
             SessionContext sessionContext = metrics
                     .recordContextAnalysis(() -> sessionContextService.getOrCreateContext(
                             sessionId,
@@ -206,6 +236,14 @@ public class AiChatService {
             ChatRequest request,
             SessionContext sessionContext,
             String correlationId) {
+
+        // 检查降级：是否启用记忆检索
+        if (!degradationManager.isFeatureEnabled("memory")) {
+            log.info("降级模式：跳过记忆检索 - level: {}, correlationId: {}",
+                    degradationManager.getCurrentLevel(), correlationId);
+            return CompletableFuture.completedFuture(java.util.Collections.emptyList());
+        }
+
         boolean shouldRetrieve = MessageValidator.shouldRetrieveMemories(
                 request.getMessage(),
                 sessionContext.getComplexity());
@@ -216,8 +254,14 @@ public class AiChatService {
             return CompletableFuture.completedFuture(java.util.Collections.emptyList());
         }
 
-        log.debug("执行记忆检索 - message: {}, complexity: {}, correlationId: {}",
-                request.getMessage(), sessionContext.getComplexity(), correlationId);
+        // 根据降级级别调整检索数量
+        int retrievalCount = degradationStrategyExecutor.getMemoryRetrievalCount();
+        if (retrievalCount == 0) {
+            return CompletableFuture.completedFuture(java.util.Collections.emptyList());
+        }
+
+        log.debug("执行记忆检索 - message: {}, complexity: {}, count: {}, correlationId: {}",
+                request.getMessage(), sessionContext.getComplexity(), retrievalCount, correlationId);
         return memoryService.retrieveMemories(
                 request.getGroupId(),
                 request.getCustomerId(),
@@ -240,21 +284,54 @@ public class AiChatService {
 
         chatAsyncProcessingService.handleChatCompleted(request, difyResponse, correlationId);
 
+        // 从响应中提取 token 使用情况并更新配额
+        try {
+            if (difyResponse.getMetadata() != null && difyResponse.getMetadata().getUsage() != null) {
+                String usage = difyResponse.getMetadata().getUsage();
+                // 解析 token 使用情况（格式: "prompt_tokens=X, completion_tokens=Y, total_tokens=Z"）
+                int promptTokens = extractTokenValue(usage, "prompt_tokens");
+                int completionTokens = extractTokenValue(usage, "completion_tokens");
+
+                if (promptTokens > 0 && completionTokens > 0) {
+                    quotaService.consumeQuota(
+                            request.getCustomerId(),
+                            difyResponse.getConversationId(),
+                            difyResponse.getMessageId(),
+                            promptTokens,
+                            completionTokens
+                    );
+                }
+            }
+        } catch (Exception e) {
+            log.error("更新配额失败 - customerId: {}, correlationId: {}",
+                    request.getCustomerId(), correlationId, e);
+            // 配额更新失败不影响主流程
+        }
+
         long duration = System.currentTimeMillis() - startTime;
         log.info("聊天请求处理完成 - customerId: {}, correlationId: {}, 耗时: {}ms",
                 request.getCustomerId(), correlationId, duration);
 
-        if (autoRecommendEnabled) {
+        // 检查是否需要相似对话推荐（降级时可能关闭）
+        if (autoRecommendEnabled && degradationManager.isFeatureEnabled("recommendation")) {
             try {
                 List<ChatResponse.SimilarConversation> recommendations = getRecommendations(
                         request.getCustomerId(), request.getMessage());
 
                 if (!recommendations.isEmpty()) {
                     log.debug("获取到 {} 条相似对话推荐", recommendations.size());
-                    return ChatResponse.successWithRecommendations(
+                    ChatResponse response = ChatResponse.successWithRecommendations(
                             difyResponse.getAnswer(),
                             difyResponse.getConversationId(),
                             recommendations);
+
+                    // 添加降级提示
+                    addDegradationNotice(response);
+
+                    // 缓存响应（降级时）
+                    cacheResponseIfNeeded(request, response);
+
+                    return response;
                 }
             } catch (Exception e) {
                 log.error("获取推荐失败 - customerId: {}, correlationId: {}",
@@ -262,7 +339,38 @@ public class AiChatService {
             }
         }
 
-        return ChatResponse.success(difyResponse.getAnswer(), difyResponse.getConversationId());
+        ChatResponse response = ChatResponse.success(difyResponse.getAnswer(), difyResponse.getConversationId());
+
+        // 添加降级提示
+        addDegradationNotice(response);
+
+        // 缓存响应（降级时）
+        cacheResponseIfNeeded(request, response);
+
+        return response;
+    }
+
+    /**
+     * 添加降级提示到响应
+     */
+    private void addDegradationNotice(ChatResponse response) {
+        String notice = degradationStrategyExecutor.getDegradationNotice();
+        if (notice != null && response.getMessage() != null) {
+            response.setMessage(response.getMessage() + notice);
+        }
+    }
+
+    /**
+     * 在降级时缓存响应
+     */
+    private void cacheResponseIfNeeded(ChatRequest request, ChatResponse response) {
+        if (degradationManager.getCurrentLevel() == DegradationLevel.CRITICAL) {
+            degradationStrategyExecutor.cacheResponse(
+                    request.getCustomerId(),
+                    request.getMessage(),
+                    response
+            );
+        }
     }
 
     private Throwable unwrapCompletionException(Throwable throwable) {
@@ -327,9 +435,19 @@ public class AiChatService {
         long duration = System.currentTimeMillis() - startTime;
         log.error("聊天请求处理失败 - customerId: {}, correlationId: {}, 耗时: {}ms",
                 request.getCustomerId(), correlationId, duration, actual);
-        if (actual instanceof ConversationBusyException) {
-            return ChatResponse.error(actual.getMessage());
+
+        if (actual instanceof ConversationException) {
+            ConversationException ex = (ConversationException) actual;
+            return ChatResponse.error(ex.getErrorCode().getMessage() +
+                    (ex.getDetail() != null ? ": " + ex.getDetail() : ""));
         }
+
+        if (actual instanceof AiServiceException) {
+            AiServiceException ex = (AiServiceException) actual;
+            return ChatResponse.error(ex.getErrorCode().getMessage() +
+                    (ex.getDetail() != null ? ": " + ex.getDetail() : ""));
+        }
+
         return ChatResponse.error("聊天请求处理失败: " + actual.getMessage());
     }
 
@@ -341,5 +459,22 @@ public class AiChatService {
             return text;
         }
         return text.substring(0, maxLength) + "...";
+    }
+
+    /**
+     * 从 usage 字符串中提取 token 值
+     */
+    private int extractTokenValue(String usage, String key) {
+        try {
+            String pattern = key + "=(\\d+)";
+            java.util.regex.Pattern p = java.util.regex.Pattern.compile(pattern);
+            java.util.regex.Matcher m = p.matcher(usage);
+            if (m.find()) {
+                return Integer.parseInt(m.group(1));
+            }
+        } catch (Exception e) {
+            log.warn("解析 token 值失败 - key: {}, usage: {}", key, usage, e);
+        }
+        return 0;
     }
 }

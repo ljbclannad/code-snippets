@@ -17,6 +17,7 @@ public class AiChatMetrics {
 
     // 计数器
     private final Counter chatRequestCounter;
+    private final Counter chatErrorCounter;
     private final Counter contextCacheHitCounter;
     private final Counter contextCacheMissCounter;
     private final Counter profileCacheHitCounter;
@@ -31,12 +32,22 @@ public class AiChatMetrics {
     private final Timer memoryRetrievalTimer;
     private final Timer embeddingTimer;
 
+    // 降级相关指标
+    private final io.micrometer.core.instrument.Gauge degradationLevelGauge;
+    private final Counter degradationTriggerCounter;
+
+    private volatile int currentDegradationLevel = 0; // 0=NORMAL, 1=LIGHT, ..., 5=CIRCUIT_BREAK
+
     public AiChatMetrics(MeterRegistry meterRegistry) {
         this.meterRegistry = meterRegistry;
 
         // 初始化计数器
         this.chatRequestCounter = Counter.builder("ai.chat.requests")
             .description("Total chat requests")
+            .register(meterRegistry);
+
+        this.chatErrorCounter = Counter.builder("ai.chat.errors")
+            .description("Total chat errors")
             .register(meterRegistry);
 
         this.contextCacheHitCounter = Counter.builder("ai.context.cache.hit")
@@ -83,11 +94,37 @@ public class AiChatMetrics {
         this.embeddingTimer = Timer.builder("ai.embedding.time")
             .description("Embedding generation time")
             .register(meterRegistry);
+
+        // 降级指标
+        this.degradationLevelGauge = io.micrometer.core.instrument.Gauge.builder(
+                "ai.degradation.level", this, AiChatMetrics::getCurrentDegradationLevel)
+            .description("Current degradation level (0=NORMAL, 1=LIGHT, 2=MEDIUM, 3=HEAVY, 4=CRITICAL, 5=CIRCUIT_BREAK)")
+            .register(meterRegistry);
+
+        this.degradationTriggerCounter = Counter.builder("ai.degradation.triggers")
+            .description("Degradation trigger count")
+            .register(meterRegistry);
+    }
+
+    private double getCurrentDegradationLevel() {
+        return currentDegradationLevel;
     }
 
     // 计数器方法
     public void recordChatRequest() {
         chatRequestCounter.increment();
+    }
+
+    public void recordChatError() {
+        chatErrorCounter.increment();
+    }
+
+    public void recordDegradationTrigger() {
+        degradationTriggerCounter.increment();
+    }
+
+    public void updateDegradationLevel(int level) {
+        this.currentDegradationLevel = level;
     }
 
     public void recordContextCacheHit() {
