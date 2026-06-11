@@ -1,0 +1,125 @@
+server:
+  port: 8103
+
+spring:
+  application:
+    name: knowledge-base-service
+
+  # Nacos 服务发现
+  cloud:
+    nacos:
+      discovery:
+        server-addr: localhost:8848
+        namespace: public
+
+  # 数据源配置
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://localhost:3306/governance?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false
+    username: root
+    password: root
+    hikari:
+      minimum-idle: 5
+      maximum-pool-size: 20
+
+  # Redis 配置
+  data:
+    redis:
+      host: localhost
+      port: 36379
+      timeout: 3000ms
+
+  # Spring AI Milvus 配置
+  ai:
+    vectorstore:
+      milvus:
+        client:
+          host: localhost
+          port: 19530
+        database-name: default
+        embedding-dimension: 1024  # Qwen embedding dimension
+        index-type: IVF_FLAT
+        metric-type: COSINE
+        nlist: 1024
+
+    # Dashscope (Qwen) API 配置
+    dashscope:
+      api-key: ${DASHSCOPE_API_KEY:your-api-key}
+      embedding:
+        options:
+          model: text-embedding-v3
+
+  # 文件上传配置
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 20MB
+      max-request-size: 20MB
+
+# MyBatis Plus 配置
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      id-type: auto
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+# 知识库配置
+knowledge-base:
+  # 文件存储配置
+  storage:
+    base-path: /tmp/kb
+    upload-path: ${knowledge-base.storage.base-path}/uploads
+    temp-path: ${knowledge-base.storage.base-path}/temp
+
+  # 文档处理配置
+  document:
+    allowed-types: [pdf, md, markdown, txt]
+    max-file-size: 20971520  # 20MB
+    semantic-dedup-threshold: 0.9
+
+  # 语义切片配置
+  chunking:
+    default-size: 500              # 默认切片大小
+    default-overlap: 50            # 默认重叠大小
+    min-chunk-size: 100            # 最小切片
+    max-chunk-size: 2000           # 最大切片
+    semantic-threshold: 0.7        # 语义相似度阈值(用于合并相似段落)
+    paragraph-separator: "\n\n"    # 段落分隔符
+
+  # Embedding 配置
+  embedding:
+    model: qwen
+    dimension: 1024
+    batch-size: 32                 # 批量处理大小
+
+  # 检索配置
+  retrieval:
+    default-top-k: 5
+    max-top-k: 20
+    similarity-threshold: 0.6      # 相似度阈值
+
+  deepseek:
+    api-key: ${DEEPSEEK_API_KEY:}
+    base-url: https://api.deepseek.com/v1
+    model: deepseek-chat
+
+# Actuator 配置
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+
+# 日志配置
+logging:
+  level:
+    com.lx.governance.knowledgebase: INFO
+    org.springframework.ai: DEBUG

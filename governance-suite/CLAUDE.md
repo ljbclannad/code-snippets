@@ -128,6 +128,7 @@ mvn -q -pl inventory-service spring-boot:run
 mvn -q -pl appointment-service spring-boot:run
 mvn -q -pl outbox-consumer spring-boot:run
 mvn -q -pl doctor-assistant-agent spring-boot:run
+mvn -q -pl knowledge-base-service spring-boot:run
 ```
 
 ### Failure injection
@@ -181,9 +182,11 @@ There are no reliable repo-wide automated tests that prove the whole system. For
 | doctor-assistant-agent | 8088 |
 | appointment-service | 8089 |
 | outbox-consumer | 8090 |
+| knowledge-base-service | 8103 |
 | Nacos | 8848 |
 | Seata | 8091 |
 | Sentinel | 8858 |
 | RabbitMQ Management | 15672 |
 | Redis | 36379 |
 | MySQL | 3306 |
+| Milvus | 19530 |

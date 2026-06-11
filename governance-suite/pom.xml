@@ -20,6 +20,7 @@
     <module>ai-chat-service</module>
     <module>doctor-assistant-agent</module>
     <module>appointment-service</module>
+    <module>knowledge-base-service</module>
   </modules>
 
   <properties>

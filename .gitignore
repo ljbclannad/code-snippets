@@ -47,3 +47,5 @@ Thumbs.db
 
 # Spring AI
 spring-ai/demo/target/
+
+mcp-diagnosis/node_modules
