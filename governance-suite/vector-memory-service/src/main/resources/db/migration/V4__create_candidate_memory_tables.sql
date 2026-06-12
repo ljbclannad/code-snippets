@@ -1,0 +1,41 @@
+CREATE TABLE IF NOT EXISTS b_ai_group_memory_candidate (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+    customer_id VARCHAR(64) NOT NULL COMMENT '用户ID',
+    group_id VARCHAR(64) NOT NULL COMMENT '群组ID',
+    memory_type VARCHAR(32) NOT NULL COMMENT '记忆类型',
+    memory_key VARCHAR(128) NOT NULL COMMENT '原始记忆键',
+    normalized_key VARCHAR(128) NOT NULL COMMENT '归一化键',
+    normalized_value VARCHAR(255) COMMENT '归一化值',
+    polarity VARCHAR(16) COMMENT '极性: POSITIVE/NEGATIVE/NEUTRAL',
+    memory_content TEXT NOT NULL COMMENT '记忆内容',
+    confidence_score DECIMAL(5,3) NOT NULL COMMENT '置信度',
+    status VARCHAR(16) NOT NULL COMMENT '状态: CANDIDATE/CONFIRMED/REJECTED/CONFLICT',
+    hit_count INT NOT NULL DEFAULT 1 COMMENT '命中次数',
+    source_message TEXT COMMENT '来源消息',
+    last_seen_at DATETIME NOT NULL COMMENT '最后出现时间',
+    reviewed_by VARCHAR(64) COMMENT '审核人',
+    reviewed_at DATETIME COMMENT '审核时间',
+    confirmed_memory_id BIGINT COMMENT '已确认正式记忆ID',
+    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    INDEX idx_candidate_user_group (customer_id, group_id),
+    INDEX idx_candidate_status (status),
+    INDEX idx_candidate_normalized (customer_id, group_id, normalized_key, normalized_value)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='长期记忆候选表';
+
+CREATE TABLE IF NOT EXISTS b_ai_group_memory_conflict (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键ID',
+    customer_id VARCHAR(64) NOT NULL COMMENT '用户ID',
+    group_id VARCHAR(64) NOT NULL COMMENT '群组ID',
+    candidate_id BIGINT NOT NULL COMMENT '候选记忆ID',
+    conflict_target_type VARCHAR(16) NOT NULL COMMENT '冲突对象类型: CANDIDATE/CONFIRMED',
+    conflict_target_id BIGINT NOT NULL COMMENT '冲突对象ID',
+    conflict_reason VARCHAR(255) NOT NULL COMMENT '冲突原因',
+    conflict_score DECIMAL(5,3) NOT NULL COMMENT '冲突分数',
+    resolution_status VARCHAR(16) NOT NULL DEFAULT 'OPEN' COMMENT '冲突处理状态: OPEN/RESOLVED/REJECTED',
+    create_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    INDEX idx_conflict_candidate (candidate_id),
+    INDEX idx_conflict_target (conflict_target_type, conflict_target_id),
+    INDEX idx_conflict_user_group (customer_id, group_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='长期记忆冲突记录表';

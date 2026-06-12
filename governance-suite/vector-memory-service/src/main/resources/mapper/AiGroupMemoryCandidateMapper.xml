@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lx.governance.vectormemory.mapper.AiGroupMemoryCandidateMapper">
+
+    <resultMap id="BaseResultMap" type="com.lx.governance.vectormemory.entity.AiGroupMemoryCandidateEntity">
+        <id column="id" property="id"/>
+        <result column="customer_id" property="customerId"/>
+        <result column="group_id" property="groupId"/>
+        <result column="memory_type" property="memoryType"/>
+        <result column="memory_key" property="memoryKey"/>
+        <result column="normalized_key" property="normalizedKey"/>
+        <result column="normalized_value" property="normalizedValue"/>
+        <result column="polarity" property="polarity"/>
+        <result column="memory_content" property="memoryContent"/>
+        <result column="confidence_score" property="confidenceScore"/>
+        <result column="status" property="status"/>
+        <result column="hit_count" property="hitCount"/>
+        <result column="source_message" property="sourceMessage"/>
+        <result column="last_seen_at" property="lastSeenAt"/>
+        <result column="reviewed_by" property="reviewedBy"/>
+        <result column="reviewed_at" property="reviewedAt"/>
+        <result column="confirmed_memory_id" property="confirmedMemoryId"/>
+        <result column="create_time" property="createTime"/>
+        <result column="update_time" property="updateTime"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.lx.governance.vectormemory.entity.AiGroupMemoryCandidateEntity" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO b_ai_group_memory_candidate (
+            customer_id, group_id, memory_type, memory_key, normalized_key, normalized_value,
+            polarity, memory_content, confidence_score, status, hit_count, source_message,
+            last_seen_at, reviewed_by, reviewed_at, confirmed_memory_id
+        ) VALUES (
+            #{customerId}, #{groupId}, #{memoryType}, #{memoryKey}, #{normalizedKey}, #{normalizedValue},
+            #{polarity}, #{memoryContent}, #{confidenceScore}, #{status}, #{hitCount}, #{sourceMessage},
+            #{lastSeenAt}, #{reviewedBy}, #{reviewedAt}, #{confirmedMemoryId}
+        )
+    </insert>
+
+    <update id="updateStatus">
+        UPDATE b_ai_group_memory_candidate
+        SET status = #{status},
+            reviewed_by = #{reviewedBy},
+            reviewed_at = #{reviewedAt},
+            confirmed_memory_id = #{confirmedMemoryId},
+            update_time = NOW()
+        WHERE id = #{id}
+    </update>
+
+    <update id="incrementHitCount">
+        UPDATE b_ai_group_memory_candidate
+        SET hit_count = hit_count + 1,
+            confidence_score = #{confidenceScore},
+            source_message = #{sourceMessage},
+            last_seen_at = #{lastSeenAt},
+            update_time = NOW()
+        WHERE id = #{id}
+    </update>
+
+    <select id="selectById" resultMap="BaseResultMap">
+        SELECT * FROM b_ai_group_memory_candidate WHERE id = #{id}
+    </select>
+
+    <select id="selectLatestByNormalized" resultMap="BaseResultMap">
+        SELECT * FROM b_ai_group_memory_candidate
+        WHERE customer_id = #{customerId}
+          AND group_id = #{groupId}
+          AND normalized_key = #{normalizedKey}
+          AND normalized_value = #{normalizedValue}
+        ORDER BY update_time DESC
+        LIMIT 1
+    </select>
+
+    <select id="selectActiveByCustomerId" resultMap="BaseResultMap">
+        SELECT * FROM b_ai_group_memory_candidate
+        WHERE customer_id = #{customerId}
+          AND group_id = #{groupId}
+          AND status IN ('CANDIDATE', 'CONFLICT')
+        ORDER BY update_time DESC
+    </select>
+</mapper>

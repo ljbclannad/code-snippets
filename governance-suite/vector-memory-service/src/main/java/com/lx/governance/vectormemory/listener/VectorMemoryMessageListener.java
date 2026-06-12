@@ -74,7 +74,11 @@ public class VectorMemoryMessageListener {
                     request.getQuery(),
                     request.getGroupId(),
                     request.getCustomerId(),
-                    topK
+                    topK,
+                    request.getMemoryTypes(),
+                    request.getMinConfidence(),
+                    Boolean.TRUE.equals(request.getVerifiedOnly()),
+                    request.getRecentDays()
             );
 
             // 构建成功响应

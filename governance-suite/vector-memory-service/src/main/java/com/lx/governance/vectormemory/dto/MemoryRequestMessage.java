@@ -1,5 +1,7 @@
 package com.lx.governance.vectormemory.dto;
 
+import java.util.Set;
+
 import lombok.Data;
 
 /**
@@ -38,4 +40,9 @@ public class MemoryRequestMessage {
      * Request timestamp (epoch millis)
      */
     private Long timestamp;
+
+    private Set<String> memoryTypes;
+    private Double minConfidence;
+    private Boolean verifiedOnly;
+    private Integer recentDays;
 }

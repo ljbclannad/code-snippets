@@ -1,6 +1,7 @@
 package com.lx.governance.vectormemory.service;
 
 import com.lx.governance.vectormemory.config.MemoryRetrievalProperties;
+import com.lx.governance.vectormemory.dto.MemorySearchFilter;
 import com.lx.governance.vectormemory.dto.MemoryItemDTO;
 import com.lx.governance.vectormemory.entity.AiGroupMemoryEntity;
 import com.lx.governance.vectormemory.mapper.AiGroupMemoryMapper;
@@ -14,6 +15,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -50,6 +52,37 @@ public class MemoryRetrievalService {
      * @return 记忆列表（包含相似度）
      */
     public List<MemoryItemDTO> retrieveGroupMemories(String query, String groupId, String customerId, int topK) {
+        return retrieveGroupMemories(query, groupId, customerId, topK, null);
+    }
+
+    public List<MemoryItemDTO> retrieveGroupMemories(
+            String query,
+            String groupId,
+            String customerId,
+            int topK,
+            Set<String> memoryTypes,
+            Double minConfidence,
+            boolean verifiedOnly,
+            Integer recentDays) {
+        return retrieveGroupMemories(
+                query,
+                groupId,
+                customerId,
+                topK,
+                MemorySearchFilter.builder()
+                        .memoryTypes(memoryTypes)
+                        .minConfidence(minConfidence)
+                        .verifiedOnly(verifiedOnly)
+                        .recentDays(recentDays)
+                        .build());
+    }
+
+    public List<MemoryItemDTO> retrieveGroupMemories(
+            String query,
+            String groupId,
+            String customerId,
+            int topK,
+            MemorySearchFilter filter) {
         long startTime = System.currentTimeMillis();
         log.info("Retrieving group memories with hybrid search + rerank: query={}, groupId={}, customerId={}, topK={}",
                 query, groupId, customerId, topK);
@@ -102,6 +135,7 @@ public class MemoryRetrievalService {
 
                     // 转换为 MemoryItemDTO
                     milvusMemories = memoryEntities.stream()
+                            .filter(entity -> matchesFilter(entity, filter))
                             .map(entity -> {
                                 Double similarity = similarityMap.getOrDefault(entity.getEmbeddingId(), 0.0);
                                 return MemoryItemDTO.builder()
@@ -164,6 +198,41 @@ public class MemoryRetrievalService {
                 allCandidates.size(), finalResults.size(), elapsedTime);
 
         return finalResults;
+    }
+
+    private boolean matchesFilter(AiGroupMemoryEntity entity, MemorySearchFilter filter) {
+        if (filter == null) {
+            return true;
+        }
+
+        if (filter.getMemoryTypes() != null && !filter.getMemoryTypes().isEmpty()) {
+            if (entity.getMemoryType() == null || !filter.getMemoryTypes().contains(entity.getMemoryType())) {
+                return false;
+            }
+        }
+
+        if (filter.getMinConfidence() != null) {
+            double confidence = entity.getConfidenceScore() != null ? entity.getConfidenceScore().doubleValue() : 0.0;
+            if (confidence < filter.getMinConfidence()) {
+                return false;
+            }
+        }
+
+        if (Boolean.TRUE.equals(filter.getVerifiedOnly())) {
+            double confidence = entity.getConfidenceScore() != null ? entity.getConfidenceScore().doubleValue() : 0.0;
+            if (confidence < 0.8) {
+                return false;
+            }
+        }
+
+        if (filter.getRecentDays() != null && filter.getRecentDays() > 0) {
+            if (entity.getExtractedAt() == null ||
+                    entity.getExtractedAt().isBefore(java.time.LocalDateTime.now().minusDays(filter.getRecentDays()))) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /**
