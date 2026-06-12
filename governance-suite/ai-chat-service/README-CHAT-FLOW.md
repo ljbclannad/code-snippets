@@ -98,9 +98,28 @@
 
 当前策略：
 
-- 规则重写
-- 输入：当前消息 + 话题 + 意图 + 最近摘要 + 少量画像提示
-- 输出：更适合检索的压缩 Query
+- 基线规则重写
+- 复杂问题优先触发 LLM rewrite
+- 对“短追问 / 指代明显 / 强依赖上下文”的消息，也可以触发 LLM rewrite
+- LLM 输出无效时回退到规则版
+
+当前输入：
+
+- 当前消息
+- 当前话题
+- 用户意图
+- 最近摘要
+- 少量核心画像提示
+
+当前输出：
+
+- `rewrittenQuery`
+- `rewriteSource`，可区分 `BYPASS / RULE / LLM / FALLBACK_RULE`
+- `rewriteReason`
+- 可选 `keywords`
+- 可选 `suggestedMemoryTypes`
+- 可选 `suggestedRecentDays`
+- `contextDependent`
 
 这样可以避免直接拿原始口语消息去做长期记忆召回。
 
@@ -134,34 +153,63 @@
 当前行为：
 
 - 检索 Query 来自 `RetrievalQueryRewriteService`
-- 支持元数据过滤
+- 支持按意图动态生成长期记忆过滤策略
+- 会把 rewrite 结果里的建议过滤信号和意图策略合并
 - 当前已支持的过滤项包括：
   - `memoryType`
   - `minConfidence`
   - `verifiedOnly`
   - `recentDays`
 
+当前意图过滤策略已覆盖：
+
+- 用药类
+- 饮食类
+- 运动类
+- 症状类
+- 默认通用类
+
 当前限制：
 
-- 元数据过滤目前是在服务层过滤，不是 SQL 下推过滤
+- `ai-chat-service` 已经会传递过滤条件，但下游 SQL 层下推是否完成取决于 `vector-memory-service` 实现
 
 ### 7. Prompt 组装
 
 当前 Prompt 由 `DeepSeekClient` 和 `ContextBudgetManager` 共同构建。
 
-系统提示词目前会按预算编排这些内容：
+当前实现已经从“集中式大类拼接”演进为 section pipeline。
+
+当前结构：
+
+- `ContextBudgetManager` 负责预算分配、section 顺序控制、token 统计
+- `PromptSectionBuilder` 负责单个区块构建
+- `PromptSectionSupport` 负责复用格式化、压缩、token 估算等能力
+
+系统提示词目前会按预算编排这些区块：
 
 - 核心画像
 - 会话上下文
 - 短期记忆区块
 - 长期记忆区块
+- 兼容旧链路的相关历史记忆区块
 - 对话历史
 - 可选扩展画像
 
 当前已实现的关键点：
 
+- 每个 section 都可以独立构建和测试
+- 总装配器只负责预算和顺序控制
 - 短期记忆和长期记忆已经分成不同的 Prompt 区块
-- 不再是旧版本那种扁平的单一记忆列表
+- 非分层旧链路仍可走“相关历史记忆”兼容区块
+
+当前默认顺序：
+
+1. 核心画像
+2. 会话上下文
+3. 短期记忆
+4. 长期记忆或兼容相关历史记忆
+5. 对话历史
+6. 扩展画像
 
 ### 8. DeepSeek 回答生成
 
@@ -250,8 +298,9 @@
   -> 是否需要检索的判断
   -> 检索 Query 重写
   -> 短期记忆直接提炼
+  -> 长期记忆过滤策略决策
   -> 长期记忆通过 vector-memory-service 召回
-  -> 分层 Prompt 组装
+  -> section pipeline Prompt 组装
   -> DeepSeek 生成回答
   -> 聊天历史异步持久化
   -> 记忆提取异步触发
@@ -264,18 +313,21 @@
 - 画像补全追问
 - 检索开关判断
 - 检索 Query Rewrite
+- `RULE / LLM / FALLBACK_RULE / BYPASS` 区分与监控
 - 短期/长期记忆分层编排
+- 按意图动态设置长期记忆过滤策略
 - Prompt 中短期记忆与长期记忆分块
+- Prompt section pipeline 化
 - `vector-memory-service` 长期记忆元数据过滤
 - 长期记忆候选态下游处理
 - 画像候选态下游处理
 
 ## 当前仍然有限的部分
 
-- `ai-chat-service` 还没有按意图类型动态设置不同长期记忆过滤策略
-- 长期记忆元数据过滤还没有做 SQL 层下推
-- Query Rewrite 仍然是规则版，不是 LLM 版
-- Prompt 编排虽然已增强，但核心仍集中在 `ContextBudgetManager`
+- 流式链路还没有接入真实画像拉取
+- 流式链路完成后还没有把完整 assistant 响应写回会话上下文
+- Redis recent memory 路径的过滤一致性还需要继续补齐
+- 长期记忆元数据过滤是否做到 SQL 层下推，需要以下游 `vector-memory-service` 实现为准
 - 记忆冲突与画像冲突目前还是第一版实现，不是完整语义冲突系统
 
 ## 相关代码入口
@@ -285,5 +337,66 @@
 - [SessionContextService.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai-chat-service/src/main/java/com/lx/governance/aichat/service/SessionContextService.java:1)
 - [RetrievalQueryRewriteService.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai-chat-service/src/main/java/com/lx/governance/aichat/service/RetrievalQueryRewriteService.java:1)
 - [LayeredMemoryOrchestrator.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai-chat-service/src/main/java/com/lx/governance/aichat/service/LayeredMemoryOrchestrator.java:1)
+- [IntentMemoryFilterStrategy.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai-chat-service/src/main/java/com/lx/governance/aichat/service/IntentMemoryFilterStrategy.java:1)
 - [ContextBudgetManager.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai-chat-service/src/main/java/com/lx/governance/aichat/context/ContextBudgetManager.java:1)
+- [PromptSectionBuilder.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai-chat-service/src/main/java/com/lx/governance/aichat/context/PromptSectionBuilder.java:1)
+- [PromptSectionSupport.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai-chat-service/src/main/java/com/lx/governance/aichat/context/PromptSectionSupport.java:1)
 - [DeepSeekClient.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai-chat-service/src/main/java/com/lx/governance/aichat/client/DeepSeekClient.java:1)
+
+## chat 调用时序图
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant C as AiChatController
+    participant S as AiChatService
+    participant SC as SessionContextService
+    participant UP as UserProfileClientFixed
+    participant PD as ProfileDiagnosisService
+    participant LMO as LayeredMemoryOrchestrator
+    participant RQ as RetrievalQueryRewriteService
+    participant MS as MemoryService
+    participant DB as ContextBudgetManager
+    participant AI as DeepSeekClient
+    participant AP as ChatAsyncProcessingService
+
+    U->>C: POST /chat
+    C->>S: handleChatRequest(request)
+
+    S->>SC: getOrCreateContext(conversationId, customerId)
+    SC-->>S: SessionContext
+
+    S->>UP: getUserProfile(customerId)
+    UP-->>S: UserProfileDTO
+
+    S->>PD: diagnose(profile, message, sessionContext)
+    alt 画像信息不足
+        PD-->>S: followUpQuestion
+        S->>SC: updateContext(..., followUpQuestion)
+        S-->>C: 直接返回追问
+        C-->>U: follow-up response
+    else 可以进入完整回答链路
+        PD-->>S: continue
+
+        S->>LMO: loadMemories(groupId, customerId, message, sessionContext, profile, ...)
+        LMO->>RQ: rewrite(message, sessionContext, profile)
+        RQ-->>LMO: RetrievalQuery
+        LMO->>LMO: decide intent filter + merge rewrite hints
+        LMO->>MS: retrieveMemories(query, memoryTypes, minConfidence, verifiedOnly, recentDays)
+        MS-->>LMO: longTermMemories
+        LMO-->>S: LayeredMemories
+
+        S->>AI: chat(request, profile, sessionContext, layeredMemories)
+        AI->>DB: buildBudgetedSystemPrompt(...)
+        DB-->>AI: systemPrompt
+        AI->>AI: call DeepSeek model
+        AI-->>S: answer + token usage
+
+        S->>SC: updateContext(..., answer)
+        S->>AP: processAsync(request, response)
+        AP->>AP: save chat history / sync ES / trigger memory extraction
+
+        S-->>C: ChatResponse
+        C-->>U: answer
+    end
+```

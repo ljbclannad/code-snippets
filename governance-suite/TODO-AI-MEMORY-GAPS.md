@@ -102,7 +102,7 @@
   - 有可观测指标支撑效果评估
 
 ### 6. Prompt 编排从集中式管理演进为可插拔 section pipeline
-- [ ] 将 Prompt 编排从单体 `ContextBudgetManager` 演进为更易扩展的 section pipeline
+- [x] 将 Prompt 编排从单体 `ContextBudgetManager` 演进为更易扩展的 section pipeline
 - 当前现状：
   编排逻辑仍主要集中在 [ContextBudgetManager.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai-chat-service/src/main/java/com/lx/governance/aichat/context/ContextBudgetManager.java:49)
 - 当前问题：
@@ -219,7 +219,7 @@
 
 ### 第二阶段：提升检索质量与 Prompt 可扩展性
 - [ ] 5. 完善 LLM Query Rewrite 策略
-- [ ] 6. Prompt section pipeline 化
+- [x] 6. Prompt section pipeline 化
 - [ ] 7. Redis 最近记忆过滤一致性
 - [ ] 8. 自动确认策略分层化
 - [ ] 9. 画像正式回写范围扩展
