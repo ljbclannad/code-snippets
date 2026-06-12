@@ -13,6 +13,7 @@ import com.lx.governance.aichat.client.RetrievalRewriteClient;
 import com.lx.governance.aichat.config.ContextBudgetProperties;
 import com.lx.governance.aichat.dto.MessageSummary;
 import com.lx.governance.aichat.dto.RetrievalQuery;
+import com.lx.governance.aichat.dto.RetrievalRewriteResult;
 import com.lx.governance.aichat.dto.SessionContext;
 import com.lx.governance.aichat.dto.UserProfileDTO;
 
@@ -57,8 +58,14 @@ class RetrievalQueryRewriteServiceTest {
         ContextBudgetProperties properties = new ContextBudgetProperties();
         RetrievalRewriteClient rewriteClient = new RetrievalRewriteClient(null, properties) {
             @Override
-            public String rewrite(String message, SessionContext sessionContext, UserProfileDTO userProfile, String baselineQuery) {
-                return "减重管理 饮食建议 晚饭怎么吃";
+            public RetrievalRewriteResult rewriteStructured(String message, SessionContext sessionContext, UserProfileDTO userProfile, String baselineQuery) {
+                return RetrievalRewriteResult.builder()
+                        .rewrittenQuery("减重管理 饮食建议 晚饭怎么吃")
+                        .keywords(List.of("减重管理", "晚饭"))
+                        .suggestedMemoryTypes(new java.util.LinkedHashSet<>(List.of("DIET", "PREFERENCE")))
+                        .suggestedRecentDays(30)
+                        .contextDependent(true)
+                        .build();
             }
         };
         RetrievalQueryRewriteService llmService = new RetrievalQueryRewriteService(properties, rewriteClient);
@@ -75,6 +82,10 @@ class RetrievalQueryRewriteServiceTest {
 
         assertEquals("LLM", query.getRewriteSource());
         assertEquals("减重管理 饮食建议 晚饭怎么吃", query.getRewrittenQuery());
+        assertEquals(List.of("减重管理", "晚饭"), query.getKeywords());
+        assertTrue(query.getSuggestedMemoryTypes().contains("DIET"));
+        assertEquals(30, query.getSuggestedRecentDays());
+        assertTrue(Boolean.TRUE.equals(query.getContextDependent()));
     }
 
     @Test
@@ -82,8 +93,10 @@ class RetrievalQueryRewriteServiceTest {
         ContextBudgetProperties properties = new ContextBudgetProperties();
         RetrievalRewriteClient rewriteClient = new RetrievalRewriteClient(null, properties) {
             @Override
-            public String rewrite(String message, SessionContext sessionContext, UserProfileDTO userProfile, String baselineQuery) {
-                return "建议你晚饭少吃点";
+            public RetrievalRewriteResult rewriteStructured(String message, SessionContext sessionContext, UserProfileDTO userProfile, String baselineQuery) {
+                return RetrievalRewriteResult.builder()
+                        .rewrittenQuery("建议你晚饭少吃点")
+                        .build();
             }
         };
         RetrievalQueryRewriteService llmService = new RetrievalQueryRewriteService(properties, rewriteClient);
@@ -99,5 +112,82 @@ class RetrievalQueryRewriteServiceTest {
         assertEquals("FALLBACK_RULE", query.getRewriteSource());
         assertEquals("减重管理 饮食建议 那我这种情况晚饭怎么吃", query.getRewrittenQuery());
         assertFalse(query.getRewrittenQuery().contains("建议你"));
+    }
+
+    @Test
+    void shouldUseLlmRewriteForContextDependentFollowUpEvenWhenSimple() {
+        ContextBudgetProperties properties = new ContextBudgetProperties();
+        RetrievalRewriteClient rewriteClient = new RetrievalRewriteClient(null, properties) {
+            @Override
+            public RetrievalRewriteResult rewriteStructured(String message, SessionContext sessionContext, UserProfileDTO userProfile, String baselineQuery) {
+                return RetrievalRewriteResult.builder()
+                        .rewrittenQuery("减重管理 饮食建议 晚饭怎么吃")
+                        .contextDependent(true)
+                        .build();
+            }
+        };
+        RetrievalQueryRewriteService llmService = new RetrievalQueryRewriteService(properties, rewriteClient);
+
+        SessionContext sessionContext = SessionContext.builder()
+                .currentTopic("减重管理")
+                .userIntent("饮食建议")
+                .complexity("simple")
+                .recentSummaries(List.of(MessageSummary.builder().userMessage("最近血糖偏高").build()))
+                .build();
+
+        RetrievalQuery query = llmService.rewrite("那我这种情况呢？", sessionContext, null);
+
+        assertEquals("LLM", query.getRewriteSource());
+        assertEquals("context_signal_rewrite", query.getRewriteReason());
+    }
+
+    @Test
+    void shouldKeepRuleRewriteForStandaloneSimpleQuestion() {
+        ContextBudgetProperties properties = new ContextBudgetProperties();
+        RetrievalRewriteClient rewriteClient = new RetrievalRewriteClient(null, properties) {
+            @Override
+            public RetrievalRewriteResult rewriteStructured(String message, SessionContext sessionContext, UserProfileDTO userProfile, String baselineQuery) {
+                return RetrievalRewriteResult.builder()
+                        .rewrittenQuery("不应该被调用")
+                        .build();
+            }
+        };
+        RetrievalQueryRewriteService llmService = new RetrievalQueryRewriteService(properties, rewriteClient);
+
+        SessionContext sessionContext = SessionContext.builder()
+                .currentTopic("健康咨询")
+                .userIntent("一般咨询")
+                .complexity("simple")
+                .build();
+
+        RetrievalQuery query = llmService.rewrite("血压高怎么办", sessionContext, null);
+
+        assertEquals("RULE", query.getRewriteSource());
+        assertEquals("健康咨询 一般咨询 血压高怎么办", query.getRewrittenQuery());
+    }
+
+    @Test
+    void shouldFallbackToPlainStringStructuredResult() {
+        ContextBudgetProperties properties = new ContextBudgetProperties();
+        RetrievalRewriteClient rewriteClient = new RetrievalRewriteClient(null, properties) {
+            @Override
+            public RetrievalRewriteResult rewriteStructured(String message, SessionContext sessionContext, UserProfileDTO userProfile, String baselineQuery) {
+                return RetrievalRewriteResult.builder()
+                        .rewrittenQuery("减重管理 饮食建议 晚饭怎么吃")
+                        .build();
+            }
+        };
+        RetrievalQueryRewriteService llmService = new RetrievalQueryRewriteService(properties, rewriteClient);
+
+        SessionContext sessionContext = SessionContext.builder()
+                .currentTopic("减重管理")
+                .userIntent("饮食建议")
+                .complexity("complex")
+                .build();
+
+        RetrievalQuery query = llmService.rewrite("那我这种情况晚饭怎么吃？", sessionContext, null);
+
+        assertEquals("LLM", query.getRewriteSource());
+        assertTrue(query.getKeywords().isEmpty());
     }
 }

@@ -1,6 +1,7 @@
 package com.lx.governance.vectormemory.mapper;
 
 import com.lx.governance.vectormemory.entity.AiGroupMemoryEntity;
+import com.lx.governance.vectormemory.dto.MemorySearchFilter;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -52,6 +53,17 @@ public interface AiGroupMemoryMapper {
      * @return 记忆列表
      */
     List<AiGroupMemoryEntity> selectByEmbeddingIds(@Param("embeddingIds") List<String> embeddingIds);
+
+    /**
+     * 根据向量ID批量查询，并在 SQL 层执行元数据过滤
+     *
+     * @param embeddingIds 向量ID列表
+     * @param filter 检索过滤条件
+     * @return 记忆列表
+     */
+    List<AiGroupMemoryEntity> selectByEmbeddingIdsWithFilter(
+            @Param("embeddingIds") List<String> embeddingIds,
+            @Param("filter") MemorySearchFilter filter);
 
     /**
      * 检查相似记忆

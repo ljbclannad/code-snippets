@@ -78,6 +78,34 @@
         AND is_deleted = 0
     </select>
 
+    <select id="selectByEmbeddingIdsWithFilter" resultMap="BaseResultMap">
+        SELECT
+        <include refid="Base_Column_List"/>
+        FROM b_ai_group_memory
+        WHERE embedding_id IN
+        <foreach collection="embeddingIds" item="embeddingId" open="(" separator="," close=")">
+            #{embeddingId}
+        </foreach>
+        AND is_deleted = 0
+        <if test="filter != null">
+            <if test="filter.memoryTypes != null and filter.memoryTypes.size() > 0">
+                AND memory_type IN
+                <foreach collection="filter.memoryTypes" item="memoryType" open="(" separator="," close=")">
+                    #{memoryType}
+                </foreach>
+            </if>
+            <if test="filter.minConfidence != null">
+                AND confidence_score <![CDATA[ >= ]]> #{filter.minConfidence}
+            </if>
+            <if test="filter.verifiedOnly != null and filter.verifiedOnly">
+                AND confidence_score <![CDATA[ >= ]]> 0.8
+            </if>
+            <if test="filter.recentDays != null and filter.recentDays > 0">
+                AND extracted_at <![CDATA[ >= ]]> DATE_SUB(NOW(), INTERVAL #{filter.recentDays} DAY)
+            </if>
+        </if>
+    </select>
+
     <!-- 检查相似记忆 -->
     <select id="countSimilarMemory" resultType="int">
         SELECT COUNT(*)

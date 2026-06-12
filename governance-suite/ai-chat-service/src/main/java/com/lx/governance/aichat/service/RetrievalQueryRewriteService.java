@@ -12,17 +12,26 @@ import com.lx.governance.aichat.client.RetrievalRewriteClient;
 import com.lx.governance.aichat.config.ContextBudgetProperties;
 import com.lx.governance.aichat.dto.MessageSummary;
 import com.lx.governance.aichat.dto.RetrievalQuery;
+import com.lx.governance.aichat.dto.RetrievalRewriteResult;
 import com.lx.governance.aichat.dto.SessionContext;
 import com.lx.governance.aichat.dto.UserProfileDTO;
+import com.lx.governance.aichat.metrics.AiChatMetrics;
 
 @Service
 public class RetrievalQueryRewriteService {
 
     private static final int MAX_SUMMARY_COUNT = 2;
+    private static final String[] FOLLOW_UP_MARKERS = {
+            "那", "这个", "这种", "这样", "刚才", "上面", "前面", "继续", "还能", "需要调整", "可以吗", "怎么办", "怎么做"
+    };
+    private static final String[] REFERENTIAL_PATTERNS = {
+            "我这种情况", "我这个情况", "那我", "那这种", "这个情况", "上次说的", "刚刚说的", "前面提到的"
+    };
 
     private ContextBudgetProperties properties = new ContextBudgetProperties();
 
     private RetrievalRewriteClient retrievalRewriteClient;
+    private AiChatMetrics metrics;
 
     public RetrievalQueryRewriteService() {
     }
@@ -30,10 +39,18 @@ public class RetrievalQueryRewriteService {
     public RetrievalQueryRewriteService(
             ContextBudgetProperties properties,
             RetrievalRewriteClient retrievalRewriteClient) {
+        this(properties, retrievalRewriteClient, null);
+    }
+
+    public RetrievalQueryRewriteService(
+            ContextBudgetProperties properties,
+            RetrievalRewriteClient retrievalRewriteClient,
+            AiChatMetrics metrics) {
         if (properties != null) {
             this.properties = properties;
         }
         this.retrievalRewriteClient = retrievalRewriteClient;
+        this.metrics = metrics;
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -48,19 +65,27 @@ public class RetrievalQueryRewriteService {
         this.retrievalRewriteClient = retrievalRewriteClient;
     }
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setMetrics(AiChatMetrics metrics) {
+        this.metrics = metrics;
+    }
+
     public RetrievalQuery rewrite(
             String message,
             SessionContext sessionContext,
             UserProfileDTO userProfile) {
+        long startTime = System.currentTimeMillis();
 
         String normalizedMessage = normalize(message);
         if (normalizedMessage.isEmpty()) {
-            return RetrievalQuery.builder()
+            RetrievalQuery result = RetrievalQuery.builder()
                     .originalMessage(message)
                     .rewrittenQuery("")
                     .rewriteSource("BYPASS")
                     .rewriteReason("empty_message")
                     .build();
+            recordRewriteMetrics(result, startTime);
+            return result;
         }
 
         List<String> parts = new ArrayList<>();
@@ -74,46 +99,107 @@ public class RetrievalQueryRewriteService {
         String source = ruleQuery.equals(normalizedMessage) ? "BYPASS" : "RULE";
         String reason = source.equals("RULE") ? "context_enriched" : "original_message_sufficient";
 
-        if (!shouldUseLlmRewrite(sessionContext)) {
-            return RetrievalQuery.builder()
+        if (!shouldUseLlmRewrite(normalizedMessage, sessionContext, ruleQuery)) {
+            RetrievalQuery result = RetrievalQuery.builder()
                     .originalMessage(message)
                     .rewrittenQuery(ruleQuery)
                     .rewriteSource(source)
                     .rewriteReason(reason)
                     .build();
+            recordRewriteMetrics(result, startTime);
+            return result;
         }
 
-        String llmQuery = retrievalRewriteClient != null
-                ? retrievalRewriteClient.rewrite(message, sessionContext, userProfile, ruleQuery)
-                : "";
+        RetrievalRewriteResult rewriteResult = retrievalRewriteClient != null
+                ? retrievalRewriteClient.rewriteStructured(message, sessionContext, userProfile, ruleQuery)
+                : RetrievalRewriteResult.builder().rewrittenQuery("").build();
+        String llmQuery = rewriteResult.getRewrittenQuery();
         if (!isValidLlmRewrite(llmQuery, normalizedMessage, ruleQuery)) {
-            return RetrievalQuery.builder()
+            RetrievalQuery result = RetrievalQuery.builder()
                     .originalMessage(message)
                     .rewrittenQuery(ruleQuery)
                     .rewriteSource("FALLBACK_RULE")
                     .rewriteReason("llm_invalid_or_empty")
                     .build();
+            recordRewriteMetrics(result, startTime);
+            return result;
         }
 
-        return RetrievalQuery.builder()
+        RetrievalQuery result = RetrievalQuery.builder()
                 .originalMessage(message)
                 .rewrittenQuery(llmQuery)
                 .rewriteSource("LLM")
-                .rewriteReason("complex_context_rewrite")
+                .rewriteReason(determineLlmReason(normalizedMessage, sessionContext))
+                .keywords(rewriteResult.getKeywords())
+                .suggestedMemoryTypes(rewriteResult.getSuggestedMemoryTypes())
+                .suggestedRecentDays(rewriteResult.getSuggestedRecentDays())
+                .contextDependent(rewriteResult.getContextDependent())
                 .build();
+        recordRewriteMetrics(result, startTime);
+        return result;
     }
 
-    private boolean shouldUseLlmRewrite(SessionContext sessionContext) {
+    private void recordRewriteMetrics(RetrievalQuery result, long startTime) {
+        if (metrics == null || result == null) {
+            return;
+        }
+        metrics.recordRewrite(
+                result.getRewriteSource(),
+                result.getRewriteReason(),
+                System.currentTimeMillis() - startTime);
+    }
+
+    private boolean shouldUseLlmRewrite(String normalizedMessage, SessionContext sessionContext, String ruleQuery) {
         if (!properties.getMemory().getRewrite().isEnabled()) {
             return false;
         }
         if (retrievalRewriteClient == null) {
             return false;
         }
-        if (!properties.getMemory().getRewrite().isComplexOnly()) {
+        if (!properties.getMemory().getRewrite().isComplexOnly()
+                && !properties.getMemory().getRewrite().isContextualSignalsEnabled()) {
             return true;
         }
-        return sessionContext != null && "complex".equalsIgnoreCase(sessionContext.getComplexity());
+        if (sessionContext != null && "complex".equalsIgnoreCase(sessionContext.getComplexity())) {
+            return true;
+        }
+        if (!properties.getMemory().getRewrite().isContextualSignalsEnabled()) {
+            return false;
+        }
+        return isContextDependentFollowUp(normalizedMessage, sessionContext, ruleQuery);
+    }
+
+    private boolean isContextDependentFollowUp(String normalizedMessage, SessionContext sessionContext, String ruleQuery) {
+        if (sessionContext == null) {
+            return false;
+        }
+
+        boolean hasSessionSignals = !normalize(sessionContext.getCurrentTopic()).isEmpty()
+                || !normalize(sessionContext.getUserIntent()).isEmpty()
+                || (sessionContext.getRecentSummaries() != null && !sessionContext.getRecentSummaries().isEmpty());
+        if (!hasSessionSignals) {
+            return false;
+        }
+        boolean hasHistorySignals = (sessionContext.getRecentSummaries() != null && !sessionContext.getRecentSummaries().isEmpty())
+                || (sessionContext.getPendingQuestions() != null && !sessionContext.getPendingQuestions().isEmpty())
+                || (sessionContext.getMentionedEntities() != null && !sessionContext.getMentionedEntities().isEmpty());
+
+        int threshold = properties.getMemory().getRewrite().getShortMessageThreshold();
+        boolean isShortMessage = normalizedMessage.length() <= threshold;
+        boolean hasFollowUpMarker = containsAny(normalizedMessage, FOLLOW_UP_MARKERS);
+        boolean hasReferentialPattern = containsAny(normalizedMessage, REFERENTIAL_PATTERNS);
+        boolean ruleNeedsContext = !normalize(ruleQuery).equals(normalizedMessage);
+
+        return (isShortMessage && hasFollowUpMarker && hasHistorySignals)
+                || hasReferentialPattern
+                || (isShortMessage && ruleNeedsContext && hasHistorySignals);
+    }
+
+    private String determineLlmReason(String normalizedMessage, SessionContext sessionContext) {
+        if (sessionContext != null && "complex".equalsIgnoreCase(sessionContext.getComplexity())) {
+            return "complex_context_rewrite";
+        }
+        return "context_signal_rewrite";
     }
 
     private void appendRecentSummaries(List<String> parts, SessionContext sessionContext) {
@@ -203,6 +289,15 @@ public class RetrievalQueryRewriteService {
                 || normalized.startsWith("可以")
                 || normalized.startsWith("应该")
                 || normalized.startsWith("需要");
+    }
+
+    private boolean containsAny(String normalized, String... patterns) {
+        for (String pattern : patterns) {
+            if (normalized.contains(pattern)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private String normalize(String text) {

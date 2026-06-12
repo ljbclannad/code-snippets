@@ -117,7 +117,9 @@ public class MemoryRetrievalService {
                 log.debug("Found {} embedding IDs from Milvus", embeddingIds.size());
 
                 // 查询完整信息
-                List<AiGroupMemoryEntity> memoryEntities = memoryMapper.selectByEmbeddingIds(embeddingIds);
+                    List<AiGroupMemoryEntity> memoryEntities = shouldPushDownFilter(filter)
+                            ? memoryMapper.selectByEmbeddingIdsWithFilter(embeddingIds, filter)
+                            : memoryMapper.selectByEmbeddingIds(embeddingIds);
 
                 if (!memoryEntities.isEmpty()) {
                     // 构建 embeddingId -> similarity 映射
@@ -135,7 +137,6 @@ public class MemoryRetrievalService {
 
                     // 转换为 MemoryItemDTO
                     milvusMemories = memoryEntities.stream()
-                            .filter(entity -> matchesFilter(entity, filter))
                             .map(entity -> {
                                 Double similarity = similarityMap.getOrDefault(entity.getEmbeddingId(), 0.0);
                                 return MemoryItemDTO.builder()
@@ -200,39 +201,12 @@ public class MemoryRetrievalService {
         return finalResults;
     }
 
-    private boolean matchesFilter(AiGroupMemoryEntity entity, MemorySearchFilter filter) {
-        if (filter == null) {
-            return true;
-        }
-
-        if (filter.getMemoryTypes() != null && !filter.getMemoryTypes().isEmpty()) {
-            if (entity.getMemoryType() == null || !filter.getMemoryTypes().contains(entity.getMemoryType())) {
-                return false;
-            }
-        }
-
-        if (filter.getMinConfidence() != null) {
-            double confidence = entity.getConfidenceScore() != null ? entity.getConfidenceScore().doubleValue() : 0.0;
-            if (confidence < filter.getMinConfidence()) {
-                return false;
-            }
-        }
-
-        if (Boolean.TRUE.equals(filter.getVerifiedOnly())) {
-            double confidence = entity.getConfidenceScore() != null ? entity.getConfidenceScore().doubleValue() : 0.0;
-            if (confidence < 0.8) {
-                return false;
-            }
-        }
-
-        if (filter.getRecentDays() != null && filter.getRecentDays() > 0) {
-            if (entity.getExtractedAt() == null ||
-                    entity.getExtractedAt().isBefore(java.time.LocalDateTime.now().minusDays(filter.getRecentDays()))) {
-                return false;
-            }
-        }
-
-        return true;
+    private boolean shouldPushDownFilter(MemorySearchFilter filter) {
+        return filter != null
+                && ((filter.getMemoryTypes() != null && !filter.getMemoryTypes().isEmpty())
+                || filter.getMinConfidence() != null
+                || Boolean.TRUE.equals(filter.getVerifiedOnly())
+                || (filter.getRecentDays() != null && filter.getRecentDays() > 0));
     }
 
     /**

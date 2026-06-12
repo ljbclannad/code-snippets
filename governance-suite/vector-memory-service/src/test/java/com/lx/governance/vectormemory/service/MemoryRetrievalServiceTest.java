@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -11,6 +12,7 @@ import static org.mockito.Mockito.when;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
@@ -24,6 +26,7 @@ import org.springframework.ai.document.Document;
 
 import com.lx.governance.vectormemory.config.MemoryRetrievalProperties;
 import com.lx.governance.vectormemory.dto.MemoryItemDTO;
+import com.lx.governance.vectormemory.dto.MemorySearchFilter;
 import com.lx.governance.vectormemory.entity.AiGroupMemoryEntity;
 
 @ExtendWith(MockitoExtension.class)
@@ -74,6 +77,8 @@ class MemoryRetrievalServiceTest {
         assertEquals(1, results.size());
         assertEquals("DIET", results.get(0).getSource());
         assertTrue(results.get(0).getConfidenceScore() >= 0.8);
+        verify(memoryMapper).selectByEmbeddingIdsWithFilter(anyList(), any(MemorySearchFilter.class));
+        verify(memoryMapper, never()).selectByEmbeddingIds(anyList());
     }
 
     @Test
@@ -97,6 +102,7 @@ class MemoryRetrievalServiceTest {
 
         assertEquals(1, results.size());
         assertTrue(Boolean.TRUE.equals(results.get(0).getVerified()));
+        verify(memoryMapper).selectByEmbeddingIdsWithFilter(anyList(), any(MemorySearchFilter.class));
     }
 
     @Test
@@ -121,6 +127,34 @@ class MemoryRetrievalServiceTest {
         assertEquals(1, results.size());
         assertEquals(1L, results.get(0).getId());
         verify(rerankService, never()).rerank(eq("晚饭怎么吃"), anyList(), anyInt());
+        verify(memoryMapper).selectByEmbeddingIdsWithFilter(anyList(), any(MemorySearchFilter.class));
+    }
+
+    @Test
+    void shouldUseOriginalMapperWhenNoFilterProvided() {
+        AiGroupMemoryEntity memory = buildEntity(1L, "DIET", 0.92, LocalDateTime.now().minusDays(1));
+
+        List<Document> documents = List.of(new Document(
+                memory.getEmbeddingId(),
+                memory.getMemoryContent(),
+                java.util.Map.of("distance", 0.1)));
+
+        when(vectorStoreService.searchGroupMemories(eq("晚饭怎么吃"), eq("group-1"), eq("customer-1"), anyInt()))
+                .thenReturn(documents);
+        when(memoryMapper.selectByEmbeddingIds(anyList())).thenReturn(List.of(memory));
+        when(redisMemoryIndexService.getRecentMemories(eq("group-1"), anyInt())).thenReturn(List.of());
+        when(deduplicationService.mergeAndDeduplicate(anyList(), anyList()))
+                .thenAnswer(invocation -> invocation.getArgument(1));
+
+        List<MemoryItemDTO> results = memoryRetrievalService.retrieveGroupMemories(
+                "晚饭怎么吃",
+                "group-1",
+                "customer-1",
+                5);
+
+        assertEquals(1, results.size());
+        verify(memoryMapper).selectByEmbeddingIds(anyList());
+        verify(memoryMapper, never()).selectByEmbeddingIdsWithFilter(anyList(), any(MemorySearchFilter.class));
     }
 
     private void mockMilvusAndMapper(List<AiGroupMemoryEntity> entities) {
@@ -133,8 +167,40 @@ class MemoryRetrievalServiceTest {
 
         when(vectorStoreService.searchGroupMemories(eq("晚饭怎么吃"), eq("group-1"), eq("customer-1"), anyInt()))
                 .thenReturn(documents);
-        when(memoryMapper.selectByEmbeddingIds(anyList())).thenReturn(entities);
+        when(memoryMapper.selectByEmbeddingIdsWithFilter(anyList(), any(MemorySearchFilter.class)))
+                .thenAnswer(invocation -> applyFilter(entities, invocation.getArgument(1)));
         when(redisMemoryIndexService.getRecentMemories(eq("group-1"), anyInt())).thenReturn(List.of());
+    }
+
+    private List<AiGroupMemoryEntity> applyFilter(List<AiGroupMemoryEntity> entities, MemorySearchFilter filter) {
+        List<AiGroupMemoryEntity> results = new ArrayList<>();
+        for (AiGroupMemoryEntity entity : entities) {
+            if (filter.getMemoryTypes() != null && !filter.getMemoryTypes().isEmpty()) {
+                if (entity.getMemoryType() == null || !filter.getMemoryTypes().contains(entity.getMemoryType())) {
+                    continue;
+                }
+            }
+            if (filter.getMinConfidence() != null) {
+                double confidence = entity.getConfidenceScore() != null ? entity.getConfidenceScore().doubleValue() : 0.0;
+                if (confidence < filter.getMinConfidence()) {
+                    continue;
+                }
+            }
+            if (Boolean.TRUE.equals(filter.getVerifiedOnly())) {
+                double confidence = entity.getConfidenceScore() != null ? entity.getConfidenceScore().doubleValue() : 0.0;
+                if (confidence < 0.8) {
+                    continue;
+                }
+            }
+            if (filter.getRecentDays() != null && filter.getRecentDays() > 0) {
+                if (entity.getExtractedAt() == null
+                        || entity.getExtractedAt().isBefore(LocalDateTime.now().minusDays(filter.getRecentDays()))) {
+                    continue;
+                }
+            }
+            results.add(entity);
+        }
+        return results;
     }
 
     private AiGroupMemoryEntity buildEntity(Long id, String type, double confidence, LocalDateTime extractedAt) {

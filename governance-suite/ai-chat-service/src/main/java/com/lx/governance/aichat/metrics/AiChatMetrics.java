@@ -6,6 +6,8 @@ import io.micrometer.core.instrument.Timer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
 
@@ -24,6 +26,7 @@ public class AiChatMetrics {
     private final Counter profileCacheMissCounter;
     private final Counter memoryDuplicateCounter;
     private final Counter budgetCompressionCounter;
+    private final ConcurrentMap<String, Counter> rewriteCounters = new ConcurrentHashMap<>();
 
     // 计时器
     private final Timer chatResponseTimer;
@@ -31,6 +34,7 @@ public class AiChatMetrics {
     private final Timer profileFetchTimer;
     private final Timer memoryRetrievalTimer;
     private final Timer embeddingTimer;
+    private final ConcurrentMap<String, Timer> rewriteTimers = new ConcurrentHashMap<>();
 
     // 降级相关指标
     private final io.micrometer.core.instrument.Gauge degradationLevelGauge;
@@ -149,6 +153,26 @@ public class AiChatMetrics {
 
     public void recordBudgetCompression() {
         budgetCompressionCounter.increment();
+    }
+
+    public void recordRewrite(String source, String reason, long durationMs) {
+        String safeSource = source == null || source.isBlank() ? "UNKNOWN" : source;
+        String safeReason = reason == null || reason.isBlank() ? "unknown" : reason;
+
+        rewriteCounters.computeIfAbsent(safeSource + "|" + safeReason, key ->
+                Counter.builder("ai.rewrite.requests")
+                        .description("Retrieval rewrite requests by source and reason")
+                        .tag("source", safeSource)
+                        .tag("reason", safeReason)
+                        .register(meterRegistry))
+                .increment();
+
+        rewriteTimers.computeIfAbsent(safeSource, key ->
+                Timer.builder("ai.rewrite.time")
+                        .description("Retrieval rewrite processing time by source")
+                        .tag("source", safeSource)
+                        .register(meterRegistry))
+                .record(java.time.Duration.ofMillis(Math.max(durationMs, 0L)));
     }
 
     // 计时器方法

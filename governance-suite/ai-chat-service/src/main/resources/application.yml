@@ -122,7 +122,9 @@ ai:
       enable-deduplication: true    # 启用去重
       rewrite:
         enabled: true               # 启用 LLM Query Rewrite
-        complex-only: true          # 仅复杂问题走 LLM Rewrite
+        complex-only: true          # 复杂问题仍强制走 LLM Rewrite
+        contextual-signals-enabled: true # 简单问题也可按上下文依赖信号触发
+        short-message-threshold: 18 # 短追问判定阈值
         temperature: 0.0            # 尽量稳定输出
         max-tokens: 64              # Rewrite 输出上限
         max-query-length: 80        # 检索 query 最大长度

@@ -68,8 +68,14 @@ public class ContextBudgetProperties {
         /** 是否启用 LLM Query Rewrite */
         private boolean enabled = true;
 
-        /** 仅对复杂问题启用 LLM Rewrite */
+        /** 是否保留复杂问题强制触发 */
         private boolean complexOnly = true;
+
+        /** 是否启用基于上下文依赖信号的 LLM Rewrite */
+        private boolean contextualSignalsEnabled = true;
+
+        /** 触发上下文依赖判断的短消息阈值 */
+        private int shortMessageThreshold = 18;
 
         /** 模型温度 */
         private double temperature = 0.0;
