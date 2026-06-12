@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lx.governance.profile.mapper.UserProfileBehaviorPreferenceMapper">
+
+    <resultMap id="BaseResultMap" type="com.lx.governance.profile.entity.UserProfileBehaviorPreferenceEntity">
+        <id column="id" property="id"/>
+        <result column="customer_id" property="customerId"/>
+        <result column="diet_preference" property="dietPreference"/>
+        <result column="exercise_frequency" property="exerciseFrequency"/>
+        <result column="check_in_streak" property="checkInStreak"/>
+        <result column="create_time" property="createTime"/>
+        <result column="update_time" property="updateTime"/>
+    </resultMap>
+
+    <select id="selectByCustomerId" resultMap="BaseResultMap">
+        SELECT * FROM b_user_profile_behavior_preference
+        WHERE customer_id = #{customerId}
+    </select>
+
+    <insert id="insert" parameterType="com.lx.governance.profile.entity.UserProfileBehaviorPreferenceEntity" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO b_user_profile_behavior_preference (
+            customer_id, diet_preference, exercise_frequency, check_in_streak
+        ) VALUES (
+            #{customerId}, #{dietPreference}, #{exerciseFrequency}, #{checkInStreak}
+        )
+    </insert>
+
+    <update id="updateField">
+        UPDATE b_user_profile_behavior_preference
+        <set>
+            <if test="fieldName == 'dietPreference'">diet_preference = #{fieldValue},</if>
+            <if test="fieldName == 'exerciseFrequency'">exercise_frequency = #{fieldValue},</if>
+            <if test="fieldName == 'checkInStreak'">check_in_streak = #{fieldValue},</if>
+            update_time = NOW()
+        </set>
+        WHERE customer_id = #{customerId}
+    </update>
+</mapper>

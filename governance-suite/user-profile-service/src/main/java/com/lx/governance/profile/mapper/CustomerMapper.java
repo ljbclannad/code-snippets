@@ -7,4 +7,8 @@ import org.apache.ibatis.annotations.Param;
 @Mapper
 public interface CustomerMapper {
     CustomerEntity selectByCustomerId(@Param("customerId") String customerId);
+
+    void updateField(@Param("customerId") String customerId,
+                     @Param("fieldName") String fieldName,
+                     @Param("fieldValue") Object fieldValue);
 }

@@ -20,4 +20,19 @@
         LIMIT 1
     </select>
 
+    <update id="updateLatestField">
+        UPDATE t_health_assessment
+        <set>
+            <if test="fieldName == 'bmi'">bmi = #{fieldValue},</if>
+            <if test="fieldName == 'bloodPressure'">blood_pressure = #{fieldValue},</if>
+            <if test="fieldName == 'bloodSugar'">blood_sugar = #{fieldValue},</if>
+            <if test="fieldName == 'healthGoals'">health_goals = #{fieldValue},</if>
+            update_time = NOW()
+        </set>
+        WHERE customer_id = #{customerId}
+          AND is_deleted = 0
+        ORDER BY assessment_date DESC
+        LIMIT 1
+    </update>
+
 </mapper>

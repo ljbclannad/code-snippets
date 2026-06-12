@@ -18,4 +18,18 @@
           AND is_deleted = 0
     </select>
 
+    <update id="updateField">
+        UPDATE t_customer
+        <set>
+            <if test="fieldName == 'name'">name = #{fieldValue},</if>
+            <if test="fieldName == 'age'">age = #{fieldValue},</if>
+            <if test="fieldName == 'gender'">gender = #{fieldValue},</if>
+            <if test="fieldName == 'phone'">phone = #{fieldValue},</if>
+            <if test="fieldName == 'email'">email = #{fieldValue},</if>
+            update_time = NOW()
+        </set>
+        WHERE customer_id = #{customerId}
+          AND is_deleted = 0
+    </update>
+
 </mapper>

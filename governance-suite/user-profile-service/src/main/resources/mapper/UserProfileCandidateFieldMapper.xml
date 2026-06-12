@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lx.governance.profile.mapper.UserProfileCandidateFieldMapper">
+
+    <resultMap id="BaseResultMap" type="com.lx.governance.profile.entity.UserProfileCandidateFieldEntity">
+        <id column="id" property="id"/>
+        <result column="customer_id" property="customerId"/>
+        <result column="field_path" property="fieldPath"/>
+        <result column="normalized_value" property="normalizedValue"/>
+        <result column="raw_value" property="rawValue"/>
+        <result column="confidence_score" property="confidenceScore"/>
+        <result column="status" property="status"/>
+        <result column="hit_count" property="hitCount"/>
+        <result column="source" property="source"/>
+        <result column="reviewed_by" property="reviewedBy"/>
+        <result column="reviewed_at" property="reviewedAt"/>
+        <result column="create_time" property="createTime"/>
+        <result column="update_time" property="updateTime"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.lx.governance.profile.entity.UserProfileCandidateFieldEntity" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO b_user_profile_candidate_field (
+            customer_id, field_path, normalized_value, raw_value, confidence_score, status,
+            hit_count, source, reviewed_by, reviewed_at
+        ) VALUES (
+            #{customerId}, #{fieldPath}, #{normalizedValue}, #{rawValue}, #{confidenceScore}, #{status},
+            #{hitCount}, #{source}, #{reviewedBy}, #{reviewedAt}
+        )
+    </insert>
+
+    <select id="selectLatest" resultMap="BaseResultMap">
+        SELECT * FROM b_user_profile_candidate_field
+        WHERE customer_id = #{customerId}
+          AND field_path = #{fieldPath}
+          AND normalized_value = #{normalizedValue}
+        ORDER BY update_time DESC
+        LIMIT 1
+    </select>
+
+    <select id="selectActiveByCustomerId" resultMap="BaseResultMap">
+        SELECT * FROM b_user_profile_candidate_field
+        WHERE customer_id = #{customerId}
+          AND status IN ('CANDIDATE', 'CONFLICT')
+        ORDER BY update_time DESC
+    </select>
+
+    <select id="selectById" resultMap="BaseResultMap">
+        SELECT * FROM b_user_profile_candidate_field WHERE id = #{id}
+    </select>
+
+    <update id="incrementHitCount">
+        UPDATE b_user_profile_candidate_field
+        SET hit_count = hit_count + 1,
+            confidence_score = #{confidenceScore},
+            source = #{source},
+            update_time = NOW()
+        WHERE id = #{id}
+    </update>
+
+    <update id="updateStatus">
+        UPDATE b_user_profile_candidate_field
+        SET status = #{status},
+            reviewed_by = #{reviewedBy},
+            reviewed_at = #{reviewedAt},
+            update_time = NOW()
+        WHERE id = #{id}
+    </update>
+</mapper>

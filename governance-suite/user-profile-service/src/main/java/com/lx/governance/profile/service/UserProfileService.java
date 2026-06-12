@@ -18,6 +18,7 @@ public class UserProfileService {
     private final CustomerMapper customerMapper;
     private final HealthAssessmentMapper healthAssessmentMapper;
     private final AiUserMemoryMapper aiUserMemoryMapper;
+    private final UserProfileBehaviorPreferenceMapper userProfileBehaviorPreferenceMapper;
 
     @Cacheable(value = "user:profile", key = "#customerId", unless = "#result == null")
     public UserProfileDTO buildUserProfile(String customerId) {
@@ -87,6 +88,15 @@ public class UserProfileService {
     }
 
     private BehaviorPreferencesDTO buildBehaviorPreferences(String customerId) {
+        UserProfileBehaviorPreferenceEntity preference = userProfileBehaviorPreferenceMapper.selectByCustomerId(customerId);
+        if (preference != null) {
+            return BehaviorPreferencesDTO.builder()
+                .dietPreference(preference.getDietPreference())
+                .exerciseFrequency(preference.getExerciseFrequency())
+                .checkInStreak(preference.getCheckInStreak())
+                .build();
+        }
+
         return BehaviorPreferencesDTO.builder()
             .dietPreference("均衡饮食")
             .exerciseFrequency("每周3次")

@@ -7,4 +7,8 @@ import org.apache.ibatis.annotations.Param;
 @Mapper
 public interface HealthAssessmentMapper {
     HealthAssessmentEntity selectLatestByCustomerId(@Param("customerId") String customerId);
+
+    void updateLatestField(@Param("customerId") String customerId,
+                           @Param("fieldName") String fieldName,
+                           @Param("fieldValue") Object fieldValue);
 }
