@@ -58,6 +58,27 @@ public class ContextBudgetProperties {
 
         /** 启用去重 */
         private boolean enableDeduplication = true;
+
+        /** 检索 Query Rewrite 配置 */
+        private RewriteConfig rewrite = new RewriteConfig();
+    }
+
+    @Data
+    public static class RewriteConfig {
+        /** 是否启用 LLM Query Rewrite */
+        private boolean enabled = true;
+
+        /** 仅对复杂问题启用 LLM Rewrite */
+        private boolean complexOnly = true;
+
+        /** 模型温度 */
+        private double temperature = 0.0;
+
+        /** 最大输出 tokens */
+        private int maxTokens = 64;
+
+        /** 改写结果最大长度 */
+        private int maxQueryLength = 80;
     }
 
     /**

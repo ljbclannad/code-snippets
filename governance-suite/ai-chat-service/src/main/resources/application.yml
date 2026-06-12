@@ -120,6 +120,12 @@ ai:
       short-term-days: 3            # 短期记忆天数
       mid-term-days: 30             # 中期记忆天数
       enable-deduplication: true    # 启用去重
+      rewrite:
+        enabled: true               # 启用 LLM Query Rewrite
+        complex-only: true          # 仅复杂问题走 LLM Rewrite
+        temperature: 0.0            # 尽量稳定输出
+        max-tokens: 64              # Rewrite 输出上限
+        max-query-length: 80        # 检索 query 最大长度
 
       # 智能过滤配置（混合方案：规则 + 意图分析）
       smart-filter:

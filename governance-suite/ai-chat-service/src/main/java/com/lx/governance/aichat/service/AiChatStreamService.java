@@ -5,7 +5,6 @@ import com.lx.governance.aichat.dto.*;
 import com.lx.governance.aichat.metrics.AiChatMetrics;
 import com.lx.governance.aichat.quota.QuotaService;
 import com.lx.governance.aichat.stream.StreamResponseAccumulator;
-import com.lx.governance.aichat.util.MessageValidator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -29,6 +28,7 @@ public class AiChatStreamService {
     private final ChatAsyncProcessingService chatAsyncProcessingService;
     private final AiChatMetrics metrics;
     private final QuotaService quotaService;
+    private final LayeredMemoryOrchestrator layeredMemoryOrchestrator;
 
     /**
      * 处理流式聊天请求
@@ -183,7 +183,7 @@ public class AiChatStreamService {
             .flatMapMany(profile -> {
                 // 加载记忆
                 return Mono.fromCallable(() ->
-                        loadMemories(request, sessionContext, correlationId)
+                        loadLayeredMemories(request, sessionContext, profile, correlationId)
                 )
                 .flatMapMany(memories -> {
                     // 调用 AI 流式接口
@@ -209,30 +209,24 @@ public class AiChatStreamService {
         }
     }
 
-    private List<MemoryItemDTO> loadMemories(
+    private com.lx.governance.aichat.dto.LayeredMemories loadLayeredMemories(
             ChatRequest request,
             SessionContext sessionContext,
+            UserProfileDTO userProfile,
             String correlationId) {
-
-        boolean shouldRetrieve = MessageValidator.shouldRetrieveMemories(
-                request.getMessage(),
-                sessionContext.getComplexity()
-        );
-
-        if (!shouldRetrieve) {
-            log.info("跳过记忆检索 - correlationId: {}", correlationId);
-            return List.of();
-        }
-
         try {
-            return memoryService.retrieveMemories(
+            return layeredMemoryOrchestrator.loadMemories(
                     request.getGroupId(),
                     request.getCustomerId(),
-                    request.getMessage()
+                    request.getMessage(),
+                    sessionContext,
+                    userProfile,
+                    true,
+                    5
             ).join();
         } catch (Exception e) {
             log.error("记忆检索失败 - correlationId: {}", correlationId, e);
-            return List.of();
+            return com.lx.governance.aichat.dto.LayeredMemories.builder().build();
         }
     }
 

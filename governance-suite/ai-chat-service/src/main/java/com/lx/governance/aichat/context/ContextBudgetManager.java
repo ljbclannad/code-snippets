@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 
 import com.lx.governance.aichat.config.ContextBudgetProperties;
 import com.lx.governance.aichat.dto.ConversationMessage;
+import com.lx.governance.aichat.dto.LayeredMemories;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.SessionContext;
 import com.lx.governance.aichat.dto.UserProfileDTO;
@@ -172,6 +173,131 @@ public class ContextBudgetManager {
         lastTotalTokens = usedTokens;
         long duration = System.currentTimeMillis() - startTime;
 
+        log.info("上下文构建完成 - 总 tokens: {}/{}, 剩余预算: {}, 耗时: {}ms",
+                usedTokens, contextBudget, remainingBudget, duration);
+
+        return prompt.toString();
+    }
+
+    public String buildBudgetedSystemPrompt(
+            UserProfileDTO profile,
+            SessionContext sessionContext,
+            LayeredMemories layeredMemories,
+            String customerId,
+            String conversationId,
+            String userQuestion) {
+
+        long startTime = System.currentTimeMillis();
+        resetTokenCounters();
+
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("你是一个专业的健康顾问助手。请根据以下用户信息提供个性化的健康建议。\n\n");
+
+        String complexity = (sessionContext != null && sessionContext.getComplexity() != null)
+                ? sessionContext.getComplexity()
+                : "medium";
+
+        DynamicBudgetStrategy.BaseBudgetConfig baseBudget = new DynamicBudgetStrategy.BaseBudgetConfig();
+        baseBudget.setCoreProfileBudget(properties.getCoreProfileBudget());
+        baseBudget.setRelevantMemoriesBudget(properties.getRelevantMemoriesBudget());
+        baseBudget.setConversationHistoryBudget(properties.getConversationHistoryBudget());
+        baseBudget.setExtendedProfileBudget(properties.getExtendedProfileBudget());
+
+        BudgetAllocation dynamicBudget = dynamicBudgetStrategy.calculateBudget(complexity, baseBudget);
+
+        int contextBudget = dynamicBudget.getTotalBudget();
+        int remainingBudget = contextBudget;
+        int usedTokens = 0;
+
+        String coreProfile = extractCoreProfile(profile);
+        int coreTokens = estimateTokens(coreProfile);
+        int coreProfileBudget = dynamicBudget.getCoreProfileBudget();
+
+        if (coreTokens <= coreProfileBudget) {
+            prompt.append("## 用户核心信息\n").append(coreProfile).append("\n");
+            usedTokens += coreTokens;
+            remainingBudget -= coreTokens;
+            lastCoreProfileTokens = coreTokens;
+        } else {
+            coreProfile = compressText(coreProfile, coreProfileBudget);
+            prompt.append("## 用户核心信息\n").append(coreProfile).append("\n");
+            usedTokens += coreProfileBudget;
+            remainingBudget -= coreProfileBudget;
+            lastCoreProfileTokens = coreProfileBudget;
+        }
+
+        if (sessionContext != null) {
+            int sessionContextBudget = dynamicBudget.getSessionContextBudget();
+            String sessionContextText = formatSessionContext(sessionContext);
+            int sessionContextTokens = estimateTokens(sessionContextText);
+
+            if (sessionContextTokens <= sessionContextBudget && sessionContextTokens <= remainingBudget) {
+                prompt.append("## 会话上下文\n").append(sessionContextText).append("\n");
+                usedTokens += sessionContextTokens;
+                remainingBudget -= sessionContextTokens;
+                lastSessionContextTokens = sessionContextTokens;
+            } else if (remainingBudget > 0) {
+                sessionContextText = compressText(sessionContextText, Math.min(sessionContextBudget, remainingBudget));
+                int compressedTokens = estimateTokens(sessionContextText);
+                prompt.append("## 会话上下文\n").append(sessionContextText).append("\n");
+                usedTokens += compressedTokens;
+                remainingBudget -= compressedTokens;
+                lastSessionContextTokens = compressedTokens;
+            }
+        }
+
+        if (layeredMemories != null) {
+            String shortTermMemories = formatShortTermMemories(
+                    layeredMemories.getShortTermMemories(),
+                    Math.min(dynamicBudget.getSessionContextBudget(), remainingBudget));
+            if (!shortTermMemories.isEmpty()) {
+                int shortTermTokens = estimateTokens(shortTermMemories);
+                prompt.append("## 短期记忆\n").append(shortTermMemories).append("\n");
+                usedTokens += shortTermTokens;
+                remainingBudget -= shortTermTokens;
+            }
+
+            String longTermMemories = selectRelevantMemories(
+                    layeredMemories.getLongTermMemories(),
+                    Math.min(dynamicBudget.getMemoryBudget(), remainingBudget));
+            if (!longTermMemories.isEmpty()) {
+                int longTermTokens = estimateTokens(longTermMemories);
+                prompt.append("## 长期记忆\n").append(longTermMemories).append("\n");
+                usedTokens += longTermTokens;
+                remainingBudget -= longTermTokens;
+                lastMemoriesTokens = longTermTokens;
+            }
+        }
+
+        String conversationHistory = buildConversationHistory(
+                customerId, conversationId, Math.min(dynamicBudget.getSessionContextBudget(), remainingBudget));
+        if (!conversationHistory.isEmpty()) {
+            int conversationTokens = estimateTokens(conversationHistory);
+            prompt.append("## 对话历史\n").append(conversationHistory).append("\n");
+            usedTokens += conversationTokens;
+            remainingBudget -= conversationTokens;
+            lastConversationTokens = conversationTokens;
+        }
+
+        int extendedProfileBudget = dynamicBudget.getExtendedProfileBudget();
+        if (remainingBudget > 0) {
+            String extendedProfile = extractExtendedProfile(
+                    profile,
+                    userQuestion,
+                    Math.min(extendedProfileBudget, remainingBudget));
+            if (!extendedProfile.isEmpty()) {
+                int extendedTokens = estimateTokens(extendedProfile);
+                prompt.append("## 补充信息\n").append(extendedProfile).append("\n");
+                usedTokens += extendedTokens;
+                remainingBudget -= extendedTokens;
+                lastExtendedProfileTokens = extendedTokens;
+            }
+        }
+
+        prompt.append("\n请基于以上信息，提供专业、个性化的健康建议。");
+
+        lastTotalTokens = usedTokens;
+        long duration = System.currentTimeMillis() - startTime;
         log.info("上下文构建完成 - 总 tokens: {}/{}, 剩余预算: {}, 耗时: {}ms",
                 usedTokens, contextBudget, remainingBudget, duration);
 
@@ -443,6 +569,27 @@ public class ContextBudgetManager {
         }
 
         log.debug("选择了 {} 条相关记忆，使用 {} tokens", count, usedTokens);
+        return selected.toString();
+    }
+
+    private String formatShortTermMemories(List<String> memories, int budget) {
+        if (memories == null || memories.isEmpty() || budget <= 0) {
+            return "";
+        }
+
+        StringBuilder selected = new StringBuilder();
+        int usedTokens = 0;
+
+        for (String memory : memories) {
+            String memoryText = "- " + memory + "\n";
+            int tokens = estimateTokens(memoryText);
+            if (usedTokens + tokens > budget) {
+                break;
+            }
+            selected.append(memoryText);
+            usedTokens += tokens;
+        }
+
         return selected.toString();
     }
 

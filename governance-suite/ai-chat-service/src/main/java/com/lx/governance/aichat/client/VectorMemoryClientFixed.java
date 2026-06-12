@@ -14,6 +14,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
@@ -36,6 +37,18 @@ public class VectorMemoryClientFixed {
     private final Map<String, CompletableFuture<MemoryResponseMessage>> pendingRequests = new ConcurrentHashMap<>();
 
     public CompletableFuture<List<MemoryItemDTO>> requestMemories(String groupId, String customerId, String query, Integer topK) {
+        return requestMemories(groupId, customerId, query, topK, null, null, null, null);
+    }
+
+    public CompletableFuture<List<MemoryItemDTO>> requestMemories(
+            String groupId,
+            String customerId,
+            String query,
+            Integer topK,
+            Set<String> memoryTypes,
+            Double minConfidence,
+            Boolean verifiedOnly,
+            Integer recentDays) {
         String correlationId = Trace.getOrCreate();
         long startTime = System.currentTimeMillis();
 
@@ -49,6 +62,10 @@ public class VectorMemoryClientFixed {
         request.setTopK(topK != null ? topK : 5);
         request.setCorrelationId(correlationId);
         request.setTimestamp(System.currentTimeMillis());
+        request.setMemoryTypes(memoryTypes);
+        request.setMinConfidence(minConfidence);
+        request.setVerifiedOnly(verifiedOnly);
+        request.setRecentDays(recentDays);
 
         CompletableFuture<MemoryResponseMessage> future = new CompletableFuture<>();
         pendingRequests.put(correlationId, future);

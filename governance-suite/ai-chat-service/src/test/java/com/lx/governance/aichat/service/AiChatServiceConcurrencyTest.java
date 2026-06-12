@@ -3,6 +3,9 @@ package com.lx.governance.aichat.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -12,6 +15,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -33,6 +37,8 @@ import com.lx.governance.aichat.degradation.DegradationStrategyExecutor;
 import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.ChatResponse;
 import com.lx.governance.aichat.dto.DifyResponse;
+import com.lx.governance.aichat.dto.LayeredMemories;
+import com.lx.governance.aichat.dto.RetrievalQuery;
 import com.lx.governance.aichat.dto.SessionContext;
 import com.lx.governance.aichat.dto.UserProfileDTO;
 import com.lx.governance.aichat.metrics.AiChatMetrics;
@@ -66,6 +72,10 @@ class AiChatServiceConcurrencyTest {
     private DegradationManager degradationManager;
     @Mock
     private DegradationStrategyExecutor degradationStrategyExecutor;
+    @Mock
+    private RetrievalQueryRewriteService retrievalQueryRewriteService;
+    @Mock
+    private LayeredMemoryOrchestrator layeredMemoryOrchestrator;
 
     private AutoCloseable closeable;
     private ExecutorService executorService;
@@ -97,15 +107,29 @@ class AiChatServiceConcurrencyTest {
                 conversationExecutionGuard,
                 quotaService,
                 degradationManager,
-                degradationStrategyExecutor);
+                degradationStrategyExecutor,
+                retrievalQueryRewriteService,
+                layeredMemoryOrchestrator);
 
         ReflectionTestUtils.setField(aiChatService, "autoRecommendEnabled", false);
         ReflectionTestUtils.setField(aiChatService, "recommendCount", 3);
 
         when(userProfileClient.requestUserProfile(anyString()))
                 .thenReturn(CompletableFuture.completedFuture(new UserProfileDTO()));
-        when(memoryService.retrieveMemories(anyString(), anyString(), anyString()))
-                .thenReturn(CompletableFuture.completedFuture(Collections.emptyList()));
+        when(layeredMemoryOrchestrator.loadMemories(anyString(), anyString(), anyString(), any(), any(), anyBoolean(), anyInt()))
+                .thenReturn(CompletableFuture.completedFuture(LayeredMemories.builder()
+                        .shortTermMemories(Collections.emptyList())
+                        .longTermMemories(Collections.emptyList())
+                        .build()));
+        when(degradationManager.isFeatureEnabled(anyString())).thenReturn(true);
+        when(degradationStrategyExecutor.getMemoryRetrievalCount()).thenReturn(5);
+        when(retrievalQueryRewriteService.rewrite(anyString(), any(), any()))
+                .thenAnswer(invocation -> com.lx.governance.aichat.dto.RetrievalQuery.builder()
+                        .originalMessage(invocation.getArgument(0))
+                        .rewrittenQuery(invocation.getArgument(0))
+                        .rewriteSource("BYPASS")
+                        .rewriteReason("test_default")
+                        .build());
         doNothing().when(sessionContextService).updateContext(anyString(), anyString(), anyString());
     }
 
@@ -136,7 +160,8 @@ class AiChatServiceConcurrencyTest {
                     return context;
                 });
 
-        when(deepSeekClient.chat(any(), any(), any(), anyList())).thenAnswer(invocation -> {
+        when(deepSeekClient.chat(any(), any(), any(),
+                org.mockito.ArgumentMatchers.<com.lx.governance.aichat.dto.LayeredMemories>any())).thenAnswer(invocation -> {
             ChatRequest request = invocation.getArgument(0);
             DifyResponse response = new DifyResponse();
             response.setAnswer("ok");
@@ -152,7 +177,7 @@ class AiChatServiceConcurrencyTest {
 
         ChatResponse secondResponse = aiChatService.handleChatRequest(buildRequest("conv-1")).get(1, TimeUnit.SECONDS);
         assertFalse(secondResponse.getSuccess());
-        assertEquals("当前会话正在处理中，请稍后再试", secondResponse.getErrorMessage());
+        assertEquals("对话正在处理中，请稍后重试: 当前会话正在处理中，请稍后再试", secondResponse.getErrorMessage());
 
         releaseFirst.countDown();
         ChatResponse firstResponse = firstFuture.get(2, TimeUnit.SECONDS);
@@ -174,7 +199,8 @@ class AiChatServiceConcurrencyTest {
 
         when(sessionContextService.getOrCreateContext(anyString(), anyString(), anyString(), anyString()))
                 .thenReturn(context);
-        when(deepSeekClient.chat(any(), any(), any(), anyList())).thenAnswer(invocation -> {
+        when(deepSeekClient.chat(any(), any(), any(),
+                org.mockito.ArgumentMatchers.<com.lx.governance.aichat.dto.LayeredMemories>any())).thenAnswer(invocation -> {
             ChatRequest request = invocation.getArgument(0);
             DifyResponse response = new DifyResponse();
             response.setAnswer("ok");
@@ -188,6 +214,53 @@ class AiChatServiceConcurrencyTest {
         assertTrue(firstResponse.getSuccess());
         assertTrue(secondResponse.getSuccess());
         verify(chatAsyncProcessingService, times(2)).handleChatCompleted(any(), any(), anyString());
+    }
+
+    @Test
+    void shouldUseRewrittenQueryForMemoryRetrieval() throws Exception {
+        SessionContext context = SessionContext.builder()
+                .conversationId("conv-3")
+                .customerId("customer-1")
+                .groupId("group-1")
+                .currentTopic("减重管理")
+                .userIntent("饮食建议")
+                .conversationPhase("consulting")
+                .complexity("complex")
+                .build();
+
+        when(sessionContextService.getOrCreateContext(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(context);
+        when(retrievalQueryRewriteService.rewrite(anyString(), any(), any()))
+                .thenReturn(RetrievalQuery.builder()
+                        .originalMessage("那我这种情况晚饭怎么吃？")
+                        .rewrittenQuery("减重管理 饮食建议 晚饭怎么吃")
+                        .rewriteSource("RULE")
+                        .rewriteReason("context_enriched")
+                        .build());
+        when(deepSeekClient.chat(any(), any(), any(),
+                org.mockito.ArgumentMatchers.<com.lx.governance.aichat.dto.LayeredMemories>any())).thenAnswer(invocation -> {
+            ChatRequest request = invocation.getArgument(0);
+            DifyResponse response = new DifyResponse();
+            response.setAnswer("ok");
+            response.setConversationId(request.getConversationId());
+            return response;
+        });
+        when(layeredMemoryOrchestrator.loadMemories(eq("group-1"), eq("customer-1"), eq("那我这种情况晚饭怎么吃？"), any(), any(), eq(true), eq(5)))
+                .thenReturn(CompletableFuture.completedFuture(LayeredMemories.builder()
+                        .shortTermMemories(List.of("当前话题: 减重管理"))
+                        .longTermMemories(Collections.emptyList())
+                        .build()));
+
+        ChatRequest request = new ChatRequest();
+        request.setConversationId("conv-3");
+        request.setCustomerId("customer-1");
+        request.setGroupId("group-1");
+        request.setMessage("那我这种情况晚饭怎么吃？");
+
+        ChatResponse response = aiChatService.handleChatRequest(request).get(1, TimeUnit.SECONDS);
+
+        assertTrue(response.getSuccess());
+        verify(layeredMemoryOrchestrator).loadMemories(eq("group-1"), eq("customer-1"), eq("那我这种情况晚饭怎么吃？"), eq(context), any(UserProfileDTO.class), eq(true), eq(5));
     }
 
     private ChatRequest buildRequest(String conversationId) {

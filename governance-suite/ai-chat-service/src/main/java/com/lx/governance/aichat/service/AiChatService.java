@@ -20,6 +20,7 @@ import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.ChatResponse;
 import com.lx.governance.aichat.dto.DiagnosisResult;
 import com.lx.governance.aichat.dto.DifyResponse;
+import com.lx.governance.aichat.dto.LayeredMemories;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.SessionContext;
 import com.lx.governance.aichat.dto.UserProfileDTO;
@@ -52,6 +53,8 @@ public class AiChatService {
     private final QuotaService quotaService;
     private final DegradationManager degradationManager;
     private final DegradationStrategyExecutor degradationStrategyExecutor;
+    private final RetrievalQueryRewriteService retrievalQueryRewriteService;
+    private final LayeredMemoryOrchestrator layeredMemoryOrchestrator;
 
     @Value("${ai-chat.chat-history.auto-recommend-enabled:true}")
     private boolean autoRecommendEnabled;
@@ -151,10 +154,13 @@ public class AiChatService {
                 return followUpResponse;
             }
 
-            return loadMemoriesAsync(request, sessionContext, correlationId)
+            return loadLayeredMemoriesAsync(request, sessionContext, profile, correlationId)
                     .thenApply(memories -> {
-                        log.info("上下文获取完成 - customerId: {}, 记忆数: {}, correlationId: {}",
-                                request.getCustomerId(), memories.size(), correlationId);
+                        log.info("上下文获取完成 - customerId: {}, 短期记忆数: {}, 长期记忆数: {}, correlationId: {}",
+                                request.getCustomerId(),
+                                memories.getShortTermMemories().size(),
+                                memories.getLongTermMemories().size(),
+                                correlationId);
                         return memories;
                     })
                     .thenApply(memories -> deepSeekClient.chat(request, profile, sessionContext, memories))
@@ -232,42 +238,28 @@ public class AiChatService {
         return null;
     }
 
-    private CompletableFuture<List<MemoryItemDTO>> loadMemoriesAsync(
+    private CompletableFuture<LayeredMemories> loadLayeredMemoriesAsync(
             ChatRequest request,
             SessionContext sessionContext,
+            UserProfileDTO profile,
             String correlationId) {
-
-        // 检查降级：是否启用记忆检索
-        if (!degradationManager.isFeatureEnabled("memory")) {
-            log.info("降级模式：跳过记忆检索 - level: {}, correlationId: {}",
+        boolean memoryEnabled = degradationManager.isFeatureEnabled("memory");
+        if (!memoryEnabled) {
+            log.info("降级模式：跳过长期记忆检索 - level: {}, correlationId: {}",
                     degradationManager.getCurrentLevel(), correlationId);
-            return CompletableFuture.completedFuture(java.util.Collections.emptyList());
         }
 
-        boolean shouldRetrieve = MessageValidator.shouldRetrieveMemories(
-                request.getMessage(),
-                sessionContext.getComplexity());
-
-        if (!shouldRetrieve) {
-            log.info("跳过记忆检索 - message: {}, complexity: {}, correlationId: {}",
-                    request.getMessage(), sessionContext.getComplexity(), correlationId);
-            return CompletableFuture.completedFuture(java.util.Collections.emptyList());
-        }
-
-        // 根据降级级别调整检索数量
-        int retrievalCount = degradationStrategyExecutor.getMemoryRetrievalCount();
-        if (retrievalCount == 0) {
-            return CompletableFuture.completedFuture(java.util.Collections.emptyList());
-        }
-
-        log.debug("执行记忆检索 - message: {}, complexity: {}, count: {}, correlationId: {}",
-                request.getMessage(), sessionContext.getComplexity(), retrievalCount, correlationId);
-        return memoryService.retrieveMemories(
+        int retrievalCount = memoryEnabled ? degradationStrategyExecutor.getMemoryRetrievalCount() : 0;
+        return layeredMemoryOrchestrator.loadMemories(
                 request.getGroupId(),
                 request.getCustomerId(),
-                request.getMessage()).whenComplete((memories, ex) -> {
+                request.getMessage(),
+                sessionContext,
+                profile,
+                memoryEnabled,
+                retrievalCount).whenComplete((memories, ex) -> {
                     if (ex == null) {
-                        metrics.recordMemoryRetrieval(() -> memories);
+                        metrics.recordMemoryRetrieval(() -> memories.getLongTermMemories());
                     }
                 });
     }

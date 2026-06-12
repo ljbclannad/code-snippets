@@ -17,6 +17,7 @@ import com.lx.governance.aichat.config.ContextBudgetProperties;
 import com.lx.governance.aichat.context.ContextBudgetManager;
 import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.DifyResponse;
+import com.lx.governance.aichat.dto.LayeredMemories;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.SessionContext;
 import com.lx.governance.aichat.dto.StreamEvent;
@@ -110,6 +111,57 @@ public class DeepSeekClient {
         }
     }
 
+    public DifyResponse chat(ChatRequest request, UserProfileDTO userProfile, SessionContext sessionContext,
+            LayeredMemories layeredMemories) {
+        long startTime = System.currentTimeMillis();
+
+        try {
+            log.info("Calling DeepSeek API for customer: {}, conversationId: {}",
+                    request.getCustomerId(), request.getConversationId());
+
+            String systemPrompt = contextBudgetManager.buildBudgetedSystemPrompt(
+                    userProfile,
+                    sessionContext,
+                    layeredMemories,
+                    request.getCustomerId(),
+                    request.getConversationId(),
+                    request.getMessage());
+            String userMessage = request.getMessage();
+
+            Prompt prompt = new Prompt(
+                    List.of(
+                            new SystemMessage(systemPrompt),
+                            new UserMessage(userMessage)),
+                    OpenAiChatOptions.builder()
+                            .withModel(model)
+                            .withTemperature(0.7)
+                            .withMaxTokens(2000)
+                            .build());
+
+            ChatResponse response = chatModel.call(prompt);
+            String content = response.getResult().getOutput().getContent();
+            var usage = response.getMetadata().getUsage();
+            if (usage == null) {
+                throw new RuntimeException("Missing token usage metadata from API response");
+            }
+
+            long duration = System.currentTimeMillis() - startTime;
+            log.info("DeepSeek API call completed in {}ms, tokens: prompt={}, completion={}, total={}",
+                    duration,
+                    usage.getPromptTokens(),
+                    usage.getGenerationTokens(),
+                    usage.getTotalTokens());
+
+            recordTokenUsage(usage, duration);
+            return convertToDifyResponse(content, usage, request.getConversationId());
+        } catch (Exception e) {
+            long duration = System.currentTimeMillis() - startTime;
+            log.error("DeepSeek API call failed after {}ms for customer: {}",
+                    duration, request.getCustomerId(), e);
+            throw AiServiceException.apiError("DeepSeek API 调用失败", e);
+        }
+    }
+
     /**
      * 流式调用 DeepSeek API
      *
@@ -147,6 +199,68 @@ public class DeepSeekClient {
                 String conversationId = request.getConversationId();
 
                 // Call StreamingChatModel
+                return Flux.concat(
+                        Flux.just(StreamEvent.start(conversationId)),
+                        streamingChatModel.stream(prompt)
+                                .map(response -> {
+                                    String content = response.getResult().getOutput().getContent();
+                                    return StreamEvent.content(content);
+                                })
+                                .doOnComplete(() -> {
+                                    long duration = System.currentTimeMillis() - startTime;
+                                    log.info("DeepSeek API streaming completed in {}ms", duration);
+                                }),
+                        Flux.just(StreamEvent.done(conversationId, null))
+                );
+
+            } catch (Exception e) {
+                long duration = System.currentTimeMillis() - startTime;
+                log.error("DeepSeek API streaming failed after {}ms for customer: {}",
+                        duration, request.getCustomerId(), e);
+                return Flux.just(StreamEvent.error(
+                        "AI 服务调用失败: " + e.getMessage(),
+                        3001
+                ));
+            }
+        }).onErrorResume(e -> {
+            log.error("DeepSeek API streaming error", e);
+            return Flux.just(StreamEvent.error(
+                    "AI 服务调用异常: " + e.getMessage(),
+                    3001
+            ));
+        });
+    }
+
+    public Flux<StreamEvent> chatStream(ChatRequest request, UserProfileDTO userProfile,
+            SessionContext sessionContext, LayeredMemories layeredMemories) {
+        long startTime = System.currentTimeMillis();
+
+        return Flux.defer(() -> {
+            try {
+                log.info("Calling DeepSeek API (streaming) for customer: {}, conversationId: {}",
+                        request.getCustomerId(), request.getConversationId());
+
+                String systemPrompt = contextBudgetManager.buildBudgetedSystemPrompt(
+                        userProfile,
+                        sessionContext,
+                        layeredMemories,
+                        request.getCustomerId(),
+                        request.getConversationId(),
+                        request.getMessage());
+                String userMessage = request.getMessage();
+
+                Prompt prompt = new Prompt(
+                        List.of(
+                                new SystemMessage(systemPrompt),
+                                new UserMessage(userMessage)),
+                        OpenAiChatOptions.builder()
+                                .withModel(model)
+                                .withTemperature(0.7)
+                                .withMaxTokens(2000)
+                                .build());
+
+                String conversationId = request.getConversationId();
+
                 return Flux.concat(
                         Flux.just(StreamEvent.start(conversationId)),
                         streamingChatModel.stream(prompt)

@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 
@@ -41,6 +42,17 @@ public class MemoryService {
             String groupId,
             String customerId,
             String query) {
+        return retrieveMemories(groupId, customerId, query, null, null, null, null);
+    }
+
+    public CompletableFuture<List<MemoryItemDTO>> retrieveMemories(
+            String groupId,
+            String customerId,
+            String query,
+            Set<String> memoryTypes,
+            Double minConfidence,
+            Boolean verifiedOnly,
+            Integer recentDays) {
 
         int maxCount = properties.getMemory().getMaxCount();
         double similarityThreshold = properties.getMemory().getSimilarityThreshold();
@@ -52,7 +64,15 @@ public class MemoryService {
         // 1. 向量检索（请求更多数量以便过滤）
         int fetchCount = maxCount * 2;
 
-        return vectorMemoryClient.requestMemories(groupId, customerId, query, fetchCount)
+        return vectorMemoryClient.requestMemories(
+                        groupId,
+                        customerId,
+                        query,
+                        fetchCount,
+                        memoryTypes,
+                        minConfidence,
+                        verifiedOnly,
+                        recentDays)
                 .thenApply(memories -> {
                     log.info("向量检索返回 {} 条记忆", memories.size());
 

@@ -2,6 +2,7 @@ package com.lx.governance.aichat.integration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.when;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -16,6 +17,7 @@ import com.lx.governance.aichat.client.DeepSeekClient;
 import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.ChatResponse;
 import com.lx.governance.aichat.dto.DifyResponse;
+import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.SessionContext;
 import com.lx.governance.aichat.mapper.AiChatHistoryMapper;
 import com.lx.governance.aichat.repository.ChatHistorySearchRepository;
@@ -76,7 +78,8 @@ class SessionContextIntegrationTest {
         DifyResponse mockResponse = new DifyResponse();
         mockResponse.setAnswer("建议您注意低盐饮食，适量运动，保持良好作息。");
         mockResponse.setConversationId(conversationId);
-        when(deepSeekClient.chat(any(), any(), any(), any())).thenReturn(mockResponse);
+        when(deepSeekClient.chat(any(), any(), any(),
+                org.mockito.ArgumentMatchers.<MemoryItemDTO>anyList())).thenReturn(mockResponse);
 
         // 3. 第一次对话 - 创建会话上下文
         ChatResponse response1 = aiChatService.handleChatRequest(request).get();
@@ -102,7 +105,8 @@ class SessionContextIntegrationTest {
         DifyResponse mockResponse2 = new DifyResponse();
         mockResponse2.setAnswer("建议您先咨询医生，根据血压值和身体状况决定是否需要用药。");
         mockResponse2.setConversationId(conversationId);
-        when(deepSeekClient.chat(any(), any(), any(), any())).thenReturn(mockResponse2);
+        when(deepSeekClient.chat(any(), any(), any(),
+                org.mockito.ArgumentMatchers.<MemoryItemDTO>anyList())).thenReturn(mockResponse2);
 
         ChatResponse response2 = aiChatService.handleChatRequest(request).get();
 
@@ -135,7 +139,8 @@ class SessionContextIntegrationTest {
         DifyResponse mockResponse1 = new DifyResponse();
         mockResponse1.setAnswer("糖尿病是一种慢性代谢疾病...");
         mockResponse1.setConversationId(conv1);
-        when(deepSeekClient.chat(any(), any(), any(), any())).thenReturn(mockResponse1);
+        when(deepSeekClient.chat(any(), any(), any(),
+                org.mockito.ArgumentMatchers.<MemoryItemDTO>anyList())).thenReturn(mockResponse1);
 
         aiChatService.handleChatRequest(request1);
 
@@ -150,7 +155,8 @@ class SessionContextIntegrationTest {
         DifyResponse mockResponse2 = new DifyResponse();
         mockResponse2.setAnswer("高血压是一种常见的心血管疾病...");
         mockResponse2.setConversationId(conv2);
-        when(deepSeekClient.chat(any(), any(), any(), any())).thenReturn(mockResponse2);
+        when(deepSeekClient.chat(any(), any(), any(),
+                org.mockito.ArgumentMatchers.<MemoryItemDTO>anyList())).thenReturn(mockResponse2);
 
         aiChatService.handleChatRequest(request2);
 
@@ -182,7 +188,8 @@ class SessionContextIntegrationTest {
         DifyResponse mockResponse = new DifyResponse();
         mockResponse.setAnswer("测试响应");
         mockResponse.setConversationId(conversationId);
-        when(deepSeekClient.chat(any(), any(), any(), any())).thenReturn(mockResponse);
+        when(deepSeekClient.chat(any(), any(), any(),
+                org.mockito.ArgumentMatchers.<MemoryItemDTO>anyList())).thenReturn(mockResponse);
 
         // 创建会话
         aiChatService.handleChatRequest(request);

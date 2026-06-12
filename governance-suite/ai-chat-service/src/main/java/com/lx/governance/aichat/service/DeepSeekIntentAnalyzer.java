@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lx.governance.aichat.client.DeepSeekClient;
 import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.DifyResponse;
+import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.MessageSummary;
 import com.lx.governance.aichat.dto.SessionContext;
 import lombok.extern.slf4j.Slf4j;
@@ -12,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,7 +42,11 @@ public class DeepSeekIntentAnalyzer {
             chatRequest.setCustomerId("system");
             chatRequest.setConversationId("intent-analysis-" + System.currentTimeMillis());
 
-            DifyResponse response = deepSeekClient.chat(chatRequest, null, null, null);
+            DifyResponse response = deepSeekClient.chat(
+                    chatRequest,
+                    null,
+                    null,
+                    Collections.<MemoryItemDTO>emptyList());
 
             return parseAnalysisResult(response.getAnswer());
 

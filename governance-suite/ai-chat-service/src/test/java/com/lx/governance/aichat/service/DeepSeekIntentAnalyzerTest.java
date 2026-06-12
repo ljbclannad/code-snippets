@@ -3,6 +3,7 @@ package com.lx.governance.aichat.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -20,6 +21,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import com.lx.governance.aichat.client.DeepSeekClient;
 import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.DifyResponse;
+import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.MessageSummary;
 import com.lx.governance.aichat.dto.SessionContext;
 
@@ -48,7 +50,8 @@ class DeepSeekIntentAnalyzerTest {
 
         DifyResponse difyResponse = new DifyResponse();
         difyResponse.setAnswer(mockResponse);
-        when(deepSeekClient.chat(any(ChatRequest.class), isNull(), isNull(), any())).thenReturn(difyResponse);
+        when(deepSeekClient.chat(any(ChatRequest.class), isNull(), isNull(),
+                org.mockito.ArgumentMatchers.<MemoryItemDTO>anyList())).thenReturn(difyResponse);
 
         // When
         SessionContext result = intentAnalyzer.analyzeIntent(message, Collections.emptyList());
@@ -62,7 +65,8 @@ class DeepSeekIntentAnalyzerTest {
         assertEquals(1, result.getMentionedEntities().size());
         assertEquals("血糖", result.getMentionedEntities().get(0));
 
-        verify(deepSeekClient, times(1)).chat(any(ChatRequest.class), isNull(), isNull(), any());
+        verify(deepSeekClient, times(1)).chat(any(ChatRequest.class), isNull(), isNull(),
+                org.mockito.ArgumentMatchers.<MemoryItemDTO>anyList());
     }
 
     @Test
@@ -86,7 +90,8 @@ class DeepSeekIntentAnalyzerTest {
 
         DifyResponse difyResponse = new DifyResponse();
         difyResponse.setAnswer(mockResponse);
-        when(deepSeekClient.chat(any(ChatRequest.class), isNull(), isNull(), any())).thenReturn(difyResponse);
+        when(deepSeekClient.chat(any(ChatRequest.class), isNull(), isNull(),
+                org.mockito.ArgumentMatchers.<MemoryItemDTO>anyList())).thenReturn(difyResponse);
 
         // When
         SessionContext result = intentAnalyzer.analyzeIntent(message, Arrays.asList(history));
@@ -96,14 +101,16 @@ class DeepSeekIntentAnalyzerTest {
         assertEquals("血糖控制方法", result.getCurrentTopic());
         assertEquals("complex", result.getComplexity());
 
-        verify(deepSeekClient, times(1)).chat(any(ChatRequest.class), isNull(), isNull(), any());
+        verify(deepSeekClient, times(1)).chat(any(ChatRequest.class), isNull(), isNull(),
+                org.mockito.ArgumentMatchers.<MemoryItemDTO>anyList());
     }
 
     @Test
     void testAnalyzeIntent_Fallback() {
         // Given
         String message = "测试消息";
-        when(deepSeekClient.chat(any(ChatRequest.class), isNull(), isNull(), any()))
+        when(deepSeekClient.chat(any(ChatRequest.class), isNull(), isNull(),
+                org.mockito.ArgumentMatchers.<MemoryItemDTO>anyList()))
                 .thenThrow(new RuntimeException("API错误"));
 
         // When
