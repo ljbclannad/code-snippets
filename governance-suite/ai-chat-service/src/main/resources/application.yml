@@ -97,6 +97,7 @@ logging:
     com.lx.governance.aichat: INFO
     org.springframework.web: INFO
     org.springframework.amqp: INFO
+    org.springframework.web.servlet.resource.ResourceHttpRequestHandler: ERROR
 
 # AI 上下文管理配置
 ai:
