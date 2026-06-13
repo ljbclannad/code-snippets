@@ -1,6 +1,7 @@
 package com.health.agent.controller;
 
 import com.health.agent.engine.ReActAgentEngine;
+import com.health.agent.metrics.AgentMetrics;
 import com.health.agent.model.AgentResult;
 import com.health.agent.model.AgentSession;
 import com.health.agent.model.PendingTask;
@@ -55,6 +56,9 @@ public class AgentController {
 
     @Autowired
     private PendingTaskService taskService;
+
+    @Autowired
+    private AgentMetrics agentMetrics;
 
     @Autowired
     private AgentAccessGuard accessGuard;
@@ -420,6 +424,7 @@ public class AgentController {
         log.info("批准任务: taskId={}, comment={}", taskId, request.getReviewComment());
 
         taskService.approve(taskId, request.getReviewComment());
+        agentMetrics.recordApprovalDecision("approved", "pending_task");
 
         return ResponseEntity.ok(TaskApprovalResponse.builder()
             .success(true)
@@ -467,6 +472,7 @@ public class AgentController {
         log.info("拒绝任务: taskId={}, comment={}", taskId, request.getReviewComment());
 
         taskService.reject(taskId, request.getReviewComment());
+        agentMetrics.recordApprovalDecision("rejected", "pending_task");
 
         return ResponseEntity.ok(TaskApprovalResponse.builder()
             .success(true)

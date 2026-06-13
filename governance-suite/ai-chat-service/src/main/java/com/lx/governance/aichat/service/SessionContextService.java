@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lx.governance.aichat.dto.MessageSummary;
 import com.lx.governance.aichat.dto.SessionContext;
+import com.lx.governance.aichat.dto.TaskTriggerDecision;
 
 import io.github.resilience4j.retry.annotation.Retry;
 import lombok.extern.slf4j.Slf4j;
@@ -211,6 +212,38 @@ public class SessionContextService {
 
         } catch (Exception e) {
             log.error("更新会话上下文失败: conversationId={}", conversationId, e);
+        }
+    }
+
+    /**
+     * 记录最近一次任务触发判定，便于后续复盘和观测。
+     */
+    public void recordTaskTriggerDecision(String conversationId, TaskTriggerDecision decision) {
+        String key = CONTEXT_KEY_PREFIX + conversationId;
+
+        try {
+            SessionContext context = getFromRedis(key);
+            if (context == null) {
+                log.warn("上下文不存在，跳过记录任务触发判定: conversationId={}", conversationId);
+                return;
+            }
+            if (decision == null) {
+                log.warn("任务触发判定为空，跳过记录: conversationId={}", conversationId);
+                return;
+            }
+
+            context.setLastTaskTriggerRoute(decision.getRoute());
+            context.setLastTaskType(decision.getTaskType());
+            context.setLastTaskTriggerReasons(new ArrayList<>(decision.getReasons()));
+            context.setLastTaskTriggerSummary(decision.getSummary());
+            context.setLastTaskTriggerAt(System.currentTimeMillis());
+            context.setLastUpdateTime(System.currentTimeMillis());
+
+            saveToRedis(key, context);
+            log.debug("记录任务触发判定成功: conversationId={}, route={}, taskType={}",
+                conversationId, decision.getRoute(), decision.getTaskType());
+        } catch (Exception e) {
+            log.error("记录任务触发判定失败: conversationId={}", conversationId, e);
         }
     }
 

@@ -23,6 +23,8 @@ public class AgentMetrics {
     private final Counter executionFailure;
     private final Counter executionPendingApproval;
     private final Counter executionMaxSteps;
+    private final Counter approvalApproved;
+    private final Counter approvalRejected;
 
     public AgentMetrics(MeterRegistry meterRegistry) {
         this.meterRegistry = meterRegistry;
@@ -46,6 +48,14 @@ public class AgentMetrics {
 
         this.executionMaxSteps = Counter.builder("agent.execution.max_steps")
             .description("Agent 达到最大步数次数")
+            .register(meterRegistry);
+
+        this.approvalApproved = Counter.builder("agent.approval.approved")
+            .description("Agent 任务审批通过次数")
+            .register(meterRegistry);
+
+        this.approvalRejected = Counter.builder("agent.approval.rejected")
+            .description("Agent 任务审批驳回次数")
             .register(meterRegistry);
 
     }
@@ -100,6 +110,24 @@ public class AgentMetrics {
             .increment();
 
         log.debug("Agent 等待审批: tool={}", toolName);
+    }
+
+    public void recordApprovalDecision(String decision, String taskType) {
+        String safeDecision = decision == null ? "unknown" : decision;
+        String safeTaskType = taskType == null ? "unknown" : taskType;
+
+        if ("approved".equalsIgnoreCase(safeDecision)) {
+            approvalApproved.increment();
+        } else if ("rejected".equalsIgnoreCase(safeDecision)) {
+            approvalRejected.increment();
+        }
+
+        Counter.builder("agent.approval.by_decision")
+            .tag("decision", safeDecision)
+            .tag("task_type", safeTaskType)
+            .description("Agent 审批结果分布")
+            .register(meterRegistry)
+            .increment();
     }
 
     /**

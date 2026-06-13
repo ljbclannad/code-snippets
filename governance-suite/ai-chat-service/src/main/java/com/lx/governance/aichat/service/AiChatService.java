@@ -20,9 +20,14 @@ import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.ChatResponse;
 import com.lx.governance.aichat.dto.DiagnosisResult;
 import com.lx.governance.aichat.dto.DifyResponse;
+import com.lx.governance.aichat.dto.DoctorAssistantTaskRequest;
+import com.lx.governance.aichat.dto.DoctorAssistantTaskResponse;
+import com.lx.governance.aichat.dto.DoctorAssistantTaskStatus;
 import com.lx.governance.aichat.dto.LayeredMemories;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.SessionContext;
+import com.lx.governance.aichat.dto.TaskTriggerContext;
+import com.lx.governance.aichat.dto.TaskTriggerDecision;
 import com.lx.governance.aichat.dto.UserProfileDTO;
 import com.lx.governance.aichat.exception.AiServiceException;
 import com.lx.governance.aichat.exception.ConversationException;
@@ -55,12 +60,22 @@ public class AiChatService {
     private final DegradationStrategyExecutor degradationStrategyExecutor;
     private final RetrievalQueryRewriteService retrievalQueryRewriteService;
     private final LayeredMemoryOrchestrator layeredMemoryOrchestrator;
+    private final TaskTriggerRouter taskTriggerRouter;
+    private final DoctorAssistantTaskRequestFactory doctorAssistantTaskRequestFactory;
+    private final DoctorAssistantAgentGateway doctorAssistantAgentGateway;
+    private final AgentDispatchPolicy agentDispatchPolicy;
 
     @Value("${ai-chat.chat-history.auto-recommend-enabled:true}")
     private boolean autoRecommendEnabled;
 
     @Value("${ai-chat.chat-history.recommend-count:3}")
     private int recommendCount;
+
+    @Value("${ai-chat.agent.auto-fallback-to-direct-chat:true}")
+    private boolean autoFallbackToDirectChat;
+
+    @Value("${ai-chat.agent.patient-conservative-readonly-mode:true}")
+    private boolean patientConservativeReadonlyMode;
 
     public CompletableFuture<ChatResponse> handleChatRequest(ChatRequest request) {
         // 记录请求
@@ -126,7 +141,34 @@ public class AiChatService {
                     sessionContext.getConversationPhase(),
                     correlationId);
 
-            return processChatAsync(request, sessionContext, sessionId, correlationId, startTime);
+            TaskTriggerDecision triggerDecision = taskTriggerRouter.route(TaskTriggerContext.builder()
+                    .customerId(request.getCustomerId())
+                    .groupId(request.getGroupId())
+                    .conversationId(sessionId)
+                    .message(request.getMessage())
+                    .sessionContext(sessionContext)
+                    .build());
+
+            log.info("TaskTriggerRouter 判定完成 - conversationId: {}, route: {}, taskType: {}, reasons: {}, summary: {}, correlationId: {}",
+                    sessionId,
+                    triggerDecision.getRoute(),
+                    triggerDecision.getTaskType(),
+                    triggerDecision.getReasons(),
+                    triggerDecision.getSummary(),
+                    correlationId);
+
+            metrics.recordTaskTriggerDecision(triggerDecision);
+            sessionContextService.recordTaskTriggerDecision(sessionId, triggerDecision);
+
+            if (triggerDecision.shouldUpgradeToAgent()) {
+                metrics.recordAgentUpgradeTriggered();
+                log.info("患者对话命中 Agent 升级条件 - conversationId: {}, taskType: {}, correlationId: {}",
+                        sessionId,
+                        triggerDecision.getTaskType(),
+                        correlationId);
+            }
+
+            return processChatAsync(request, sessionContext, sessionId, correlationId, startTime, triggerDecision);
         } catch (Exception e) {
             return CompletableFuture.completedFuture(buildErrorResponse(request, correlationId, startTime, e));
         }
@@ -137,7 +179,8 @@ public class AiChatService {
             SessionContext sessionContext,
             String sessionId,
             String correlationId,
-            long startTime) {
+            long startTime,
+            TaskTriggerDecision triggerDecision) {
 
         CompletableFuture<UserProfileDTO> profileFuture = userProfileClient
                 .requestUserProfile(request.getCustomerId())
@@ -155,24 +198,194 @@ public class AiChatService {
             }
 
             return loadLayeredMemoriesAsync(request, sessionContext, profile, correlationId)
-                    .thenApply(memories -> {
+                    .thenCompose(memories -> {
                         log.info("上下文获取完成 - customerId: {}, 短期记忆数: {}, 长期记忆数: {}, correlationId: {}",
                                 request.getCustomerId(),
                                 memories.getShortTermMemories().size(),
                                 memories.getLongTermMemories().size(),
                                 correlationId);
-                        return memories;
-                    })
-                    .thenApply(memories -> deepSeekClient.chat(request, profile, sessionContext, memories))
-                    .thenApply(difyResponse -> buildChatResponse(
-                            request,
-                            sessionContext,
-                            sessionId,
-                            correlationId,
-                            startTime,
-                            difyResponse
-                    ));
+                        if (triggerDecision != null && triggerDecision.shouldUpgradeToAgent()) {
+                            AgentDispatchPolicy.Decision policyDecision = agentDispatchPolicy.evaluate(request, triggerDecision);
+                            if (!policyDecision.invokeAgent()) {
+                                log.info("Agent 灰度/熔断策略未放行，回退普通对话 - conversationId: {}, taskType: {}, reason: {}, correlationId: {}",
+                                        sessionId,
+                                        triggerDecision.getTaskType(),
+                                        policyDecision.reason(),
+                                        correlationId);
+                                return fallbackToDirectChat(
+                                        policyDecision.reason(),
+                                        request,
+                                        sessionContext,
+                                        sessionId,
+                                        correlationId,
+                                        startTime,
+                                        profile,
+                                        memories);
+                            }
+                            return invokeAgentOrFallback(
+                                    request,
+                                    sessionContext,
+                                    sessionId,
+                                    correlationId,
+                                    startTime,
+                                    triggerDecision,
+                                    profile,
+                                    memories);
+                        }
+                        return CompletableFuture.completedFuture(processDirectChat(
+                                request,
+                                sessionContext,
+                                sessionId,
+                                correlationId,
+                                startTime,
+                                profile,
+                                memories));
+                    });
         });
+    }
+
+    private CompletableFuture<ChatResponse> invokeAgentOrFallback(
+            ChatRequest request,
+            SessionContext sessionContext,
+            String sessionId,
+            String correlationId,
+            long startTime,
+            TaskTriggerDecision triggerDecision,
+            UserProfileDTO profile,
+            LayeredMemories memories) {
+        DoctorAssistantTaskRequest agentTaskRequest = doctorAssistantTaskRequestFactory.buildPatientDialogRequest(
+                request,
+                sessionContext,
+                profile,
+                memories,
+                triggerDecision,
+                correlationId);
+
+        log.info("已完成患者对话 -> Agent 请求打包 - conversationId: {}, taskType: {}, source: {}, hasSessionContext: {}, hasProfileSnapshot: {}, hasMemorySnapshot: {}, correlationId: {}",
+                agentTaskRequest.getConversationId(),
+                agentTaskRequest.getTaskType(),
+                agentTaskRequest.getSource(),
+                agentTaskRequest.getSessionContext() != null,
+                agentTaskRequest.getProfileSnapshot() != null,
+                agentTaskRequest.getMemorySnapshot() != null,
+                correlationId);
+
+        long agentStart = System.currentTimeMillis();
+        try {
+            DoctorAssistantTaskResponse agentResponse = doctorAssistantAgentGateway.analyzePatientTask(agentTaskRequest);
+            long durationMs = System.currentTimeMillis() - agentStart;
+            String taskType = triggerDecision.getTaskType() != null ? triggerDecision.getTaskType().name() : "UNKNOWN";
+
+            if (agentResponse.getStatus() == DoctorAssistantTaskStatus.SKIPPED) {
+                metrics.recordAgentInvocation(taskType, "skipped", durationMs);
+                return fallbackToDirectChat(
+                        "agent_skipped",
+                        request,
+                        sessionContext,
+                        sessionId,
+                        correlationId,
+                        startTime,
+                        profile,
+                        memories);
+            }
+
+            if (agentResponse.getStatus() == DoctorAssistantTaskStatus.ERROR
+                    || (agentResponse.getPatientSafeReply() == null || agentResponse.getPatientSafeReply().isBlank())) {
+                metrics.recordAgentInvocation(taskType, "failure", durationMs);
+                return fallbackToDirectChat(
+                        "agent_error",
+                        request,
+                        sessionContext,
+                        sessionId,
+                        correlationId,
+                        startTime,
+                        profile,
+                        memories);
+            }
+
+            metrics.recordAgentInvocation(taskType, "success", durationMs);
+            metrics.recordConversationPathLatency("agent", System.currentTimeMillis() - startTime);
+            return CompletableFuture.completedFuture(buildAgentChatResponse(sessionId, agentResponse));
+        } catch (Exception e) {
+            String taskType = triggerDecision.getTaskType() != null ? triggerDecision.getTaskType().name() : "UNKNOWN";
+            metrics.recordAgentInvocation(taskType, "failure", System.currentTimeMillis() - agentStart);
+            log.error("Agent 调用失败，准备回退普通对话 - conversationId: {}, taskType: {}, correlationId: {}",
+                    sessionId, taskType, correlationId, e);
+            return fallbackToDirectChat(
+                    "agent_exception",
+                    request,
+                    sessionContext,
+                    sessionId,
+                    correlationId,
+                    startTime,
+                    profile,
+                    memories);
+        }
+    }
+
+    private CompletableFuture<ChatResponse> fallbackToDirectChat(
+            String reason,
+            ChatRequest request,
+            SessionContext sessionContext,
+            String sessionId,
+            String correlationId,
+            long startTime,
+            UserProfileDTO profile,
+            LayeredMemories memories) {
+        if (!autoFallbackToDirectChat) {
+            return CompletableFuture.completedFuture(ChatResponse.error("Agent 调用失败且未开启普通对话回退"));
+        }
+
+        log.info("触发 Agent -> 普通对话回退 - conversationId: {}, reason: {}, correlationId: {}",
+                sessionId, reason, correlationId);
+        metrics.recordAgentFallback(reason);
+        metrics.recordConversationPathLatency("direct_chat_fallback", System.currentTimeMillis() - startTime);
+        return CompletableFuture.completedFuture(processDirectChat(
+                request,
+                sessionContext,
+                sessionId,
+                correlationId,
+                startTime,
+                profile,
+                memories));
+    }
+
+    private ChatResponse processDirectChat(
+            ChatRequest request,
+            SessionContext sessionContext,
+            String sessionId,
+            String correlationId,
+            long startTime,
+            UserProfileDTO profile,
+            LayeredMemories memories) {
+        DifyResponse difyResponse = deepSeekClient.chat(request, profile, sessionContext, memories);
+        metrics.recordConversationPathLatency("direct_chat", System.currentTimeMillis() - startTime);
+        return buildChatResponse(
+                request,
+                sessionContext,
+                sessionId,
+                correlationId,
+                startTime,
+                difyResponse
+        );
+    }
+
+    private ChatResponse buildAgentChatResponse(String sessionId, DoctorAssistantTaskResponse agentResponse) {
+        String patientReply = agentResponse.getPatientSafeReply();
+        String taskType = agentResponse.getTaskType() != null ? agentResponse.getTaskType().name() : "UNKNOWN";
+        if (agentResponse.getStructuredResult() != null
+                && agentResponse.getStructuredResult().getUncertainties() != null
+                && agentResponse.getStructuredResult().getUncertainties().stream().anyMatch(item -> item != null && item.contains("触发患者侧安全拦截"))) {
+            metrics.recordPatientSafetyInterception("PATIENT_TASK_SAFETY_RULE");
+        }
+        if (agentResponse.getNeedsHumanReview() != null && agentResponse.getNeedsHumanReview()) {
+            metrics.recordHumanReviewRequest(taskType);
+        }
+        if (patientConservativeReadonlyMode && agentResponse.getNeedsHumanReview() != null
+                && agentResponse.getNeedsHumanReview()) {
+            patientReply = patientReply + "\n\n已同步给医生进一步评估，请先按当前安全建议观察，如有明显不适请及时线下就医。";
+        }
+        return ChatResponse.success(patientReply, sessionId);
     }
 
     private CompletableFuture<ChatResponse> handleProfileCompletionIfNeeded(

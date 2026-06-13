@@ -35,4 +35,30 @@ class AgentMetricsTest {
                 .count()
         );
     }
+
+    @Test
+    void shouldRecordApprovalDecisionMetrics() {
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        AgentMetrics agentMetrics = new AgentMetrics(meterRegistry);
+
+        agentMetrics.recordApprovalDecision("approved", "PATIENT_FOLLOW_UP_ANALYSIS");
+        agentMetrics.recordApprovalDecision("rejected", "RISK_STRATIFICATION_AND_ESCALATION");
+
+        assertEquals(
+            1,
+            meterRegistry.get("agent.approval.by_decision")
+                .tag("decision", "approved")
+                .tag("task_type", "PATIENT_FOLLOW_UP_ANALYSIS")
+                .counter()
+                .count()
+        );
+        assertEquals(
+            1,
+            meterRegistry.get("agent.approval.by_decision")
+                .tag("decision", "rejected")
+                .tag("task_type", "RISK_STRATIFICATION_AND_ESCALATION")
+                .counter()
+                .count()
+        );
+    }
 }

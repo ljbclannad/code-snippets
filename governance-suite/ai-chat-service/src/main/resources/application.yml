@@ -197,6 +197,19 @@ profile-completion:
   rules-config: classpath:profile-completion-rules.yml
 
 ai-chat:
+  agent:
+    enabled: false
+    base-url: ${DOCTOR_ASSISTANT_AGENT_BASE_URL:http://localhost:8200}
+    timeout-ms: 8000
+    auto-fallback-to-direct-chat: true
+    doctor-pilot-mode: true
+    patient-conservative-readonly-mode: true
+    enabled-task-types:
+      - PATIENT_FOLLOW_UP_ANALYSIS
+      - RISK_STRATIFICATION_AND_ESCALATION
+      - NEXT_FOLLOW_UP_ACTION_RECOMMENDATION
+    enabled-group-ids: []
+    circuit-breaker-open: false
   concurrency:
     conversation-lock-timeout-ms: 0
 

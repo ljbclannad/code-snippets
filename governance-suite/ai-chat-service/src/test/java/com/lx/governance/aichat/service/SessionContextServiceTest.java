@@ -2,6 +2,10 @@ package com.lx.governance.aichat.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lx.governance.aichat.dto.SessionContext;
+import com.lx.governance.aichat.dto.TaskTriggerDecision;
+import com.lx.governance.aichat.dto.TaskTriggerReason;
+import com.lx.governance.aichat.dto.TaskTriggerRoute;
+import com.lx.governance.aichat.dto.TaskType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -81,7 +85,8 @@ class SessionContextServiceTest {
             .conversationId(conversationId)
             .customerId("user-001")
             .currentTopic("血糖管理")
-            .messageCount(5)
+            .messageCount(2)
+            .lastUpdateTime(System.currentTimeMillis())
             .build();
 
         String json = objectMapper.writeValueAsString(existingContext);
@@ -94,7 +99,7 @@ class SessionContextServiceTest {
         // Then
         assertNotNull(result);
         assertEquals(conversationId, result.getConversationId());
-        assertEquals(5, result.getMessageCount());
+        assertEquals(2, result.getMessageCount());
 
         verify(valueOperations, times(1)).get(anyString());
         verify(intentAnalyzer, never()).analyzeIntentWithTimeout(anyString(), anyList(), anyLong());
@@ -129,6 +134,34 @@ class SessionContextServiceTest {
         // Then
         verify(valueOperations, times(1)).get(anyString());
         verify(intentAnalyzer, times(1)).analyzeIntent(anyString(), anyList());
+        verify(valueOperations, times(1)).set(anyString(), anyString(), anyLong(), any(TimeUnit.class));
+    }
+
+    @Test
+    void testRecordTaskTriggerDecision_Success() throws Exception {
+        String conversationId = "conv-001";
+        SessionContext existingContext = SessionContext.builder()
+            .conversationId(conversationId)
+            .customerId("user-001")
+            .messageCount(2)
+            .recentSummaries(new ArrayList<>())
+            .build();
+
+        String json = objectMapper.writeValueAsString(existingContext);
+        when(valueOperations.get(anyString())).thenReturn(json);
+
+        TaskTriggerDecision decision = TaskTriggerDecision.builder()
+            .route(TaskTriggerRoute.DOCTOR_ASSISTANT_AGENT)
+            .taskType(TaskType.PATIENT_FOLLOW_UP_ANALYSIS)
+            .reasons(java.util.List.of(
+                TaskTriggerReason.EXPLICIT_ANALYSIS_REQUEST,
+                TaskTriggerReason.TREND_ANALYSIS_REQUEST))
+            .summary("命中随访趋势分析信号")
+            .build();
+
+        sessionContextService.recordTaskTriggerDecision(conversationId, decision);
+
+        verify(valueOperations, times(1)).get(anyString());
         verify(valueOperations, times(1)).set(anyString(), anyString(), anyLong(), any(TimeUnit.class));
     }
 }

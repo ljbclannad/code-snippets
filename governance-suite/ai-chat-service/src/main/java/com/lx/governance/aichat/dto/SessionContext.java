@@ -10,6 +10,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.lx.governance.aichat.dto.TaskTriggerReason;
+import com.lx.governance.aichat.dto.TaskTriggerRoute;
+import com.lx.governance.aichat.dto.TaskType;
+
 @Data
 @Builder
 @NoArgsConstructor
@@ -89,4 +93,30 @@ public class SessionContext {
      * 消息计数
      */
     private Integer messageCount;
+
+    /**
+     * 最近一次任务路由去向。
+     */
+    private TaskTriggerRoute lastTaskTriggerRoute;
+
+    /**
+     * 最近一次任务类型。
+     */
+    private TaskType lastTaskType;
+
+    /**
+     * 最近一次命中的触发原因。
+     */
+    @Builder.Default
+    private List<TaskTriggerReason> lastTaskTriggerReasons = new ArrayList<>();
+
+    /**
+     * 最近一次触发原因摘要。
+     */
+    private String lastTaskTriggerSummary;
+
+    /**
+     * 最近一次任务路由判定时间。
+     */
+    private Long lastTaskTriggerAt;
 }

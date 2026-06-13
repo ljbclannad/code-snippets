@@ -7,6 +7,9 @@ import java.util.function.Supplier;
 
 import org.springframework.stereotype.Component;
 
+import com.lx.governance.aichat.dto.TaskTriggerDecision;
+import com.lx.governance.aichat.dto.TaskTriggerReason;
+
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
@@ -27,7 +30,14 @@ public class AiChatMetrics {
     private final Counter profileCacheMissCounter;
     private final Counter memoryDuplicateCounter;
     private final Counter budgetCompressionCounter;
+    private final Counter agentUpgradeTriggeredCounter;
     private final ConcurrentMap<String, Counter> rewriteCounters = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Counter> taskTriggerRouteCounters = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Counter> taskTriggerReasonCounters = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Counter> agentInvocationOutcomeCounters = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Counter> patientSafetyCounters = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Counter> agentFallbackCounters = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Counter> humanReviewCounters = new ConcurrentHashMap<>();
 
     // 计时器
     private final Timer chatResponseTimer;
@@ -36,6 +46,7 @@ public class AiChatMetrics {
     private final Timer memoryRetrievalTimer;
     private final Timer embeddingTimer;
     private final ConcurrentMap<String, Timer> rewriteTimers = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Timer> agentConversationTimers = new ConcurrentHashMap<>();
 
     // 降级相关指标
     private final io.micrometer.core.instrument.Gauge degradationLevelGauge;
@@ -78,6 +89,10 @@ public class AiChatMetrics {
 
         this.budgetCompressionCounter = Counter.builder("ai.budget.compression")
                 .description("Budget compression triggered")
+                .register(meterRegistry);
+
+        this.agentUpgradeTriggeredCounter = Counter.builder("ai.agent.upgrade.triggered")
+                .description("Agent upgrade triggered count")
                 .register(meterRegistry);
 
         // 初始化计时器
@@ -158,6 +173,10 @@ public class AiChatMetrics {
         budgetCompressionCounter.increment();
     }
 
+    public void recordAgentUpgradeTriggered() {
+        agentUpgradeTriggeredCounter.increment();
+    }
+
     public void recordRewrite(String source, String reason, long durationMs) {
         String safeSource = source == null || source.isBlank() ? "UNKNOWN" : source;
         String safeReason = reason == null || reason.isBlank() ? "unknown" : reason;
@@ -174,6 +193,107 @@ public class AiChatMetrics {
                 .tag("source", safeSource)
                 .register(meterRegistry))
                 .record(java.time.Duration.ofMillis(Math.max(durationMs, 0L)));
+    }
+
+    public void recordTaskTriggerDecision(TaskTriggerDecision decision) {
+        String route = "UNKNOWN";
+        String taskType = "UNKNOWN";
+
+        if (decision != null) {
+            route = decision.getRoute() != null ? decision.getRoute().name() : route;
+            taskType = decision.getTaskType() != null ? decision.getTaskType().name() : taskType;
+        }
+
+        final String safeRoute = route;
+        final String safeTaskType = taskType;
+
+        taskTriggerRouteCounters.computeIfAbsent(safeRoute + "|" + safeTaskType, key -> Counter.builder("ai.task.trigger.decisions")
+                .description("Task trigger decisions by route and task type")
+                .tag("route", safeRoute)
+                .tag("task_type", safeTaskType)
+                .register(meterRegistry))
+                .increment();
+
+        if (decision == null || decision.getReasons() == null || decision.getReasons().isEmpty()) {
+            recordTaskTriggerReason(safeRoute, safeTaskType, "UNKNOWN");
+            return;
+        }
+
+        for (TaskTriggerReason reason : decision.getReasons()) {
+            String safeReason = reason != null ? reason.name() : "UNKNOWN";
+            recordTaskTriggerReason(safeRoute, safeTaskType, safeReason);
+        }
+    }
+
+    private void recordTaskTriggerReason(String route, String taskType, String reason) {
+        taskTriggerReasonCounters.computeIfAbsent(route + "|" + taskType + "|" + reason,
+                key -> Counter.builder("ai.task.trigger.reasons")
+                        .description("Task trigger reason hits by route, task type and reason")
+                        .tag("route", route)
+                        .tag("task_type", taskType)
+                        .tag("reason", reason)
+                        .register(meterRegistry))
+                .increment();
+    }
+
+    public void recordAgentInvocation(String taskType, String outcome, long durationMs) {
+        String safeTaskType = taskType == null || taskType.isBlank() ? "UNKNOWN" : taskType;
+        String safeOutcome = outcome == null || outcome.isBlank() ? "UNKNOWN" : outcome;
+
+        agentInvocationOutcomeCounters.computeIfAbsent(safeTaskType + "|" + safeOutcome,
+                key -> Counter.builder("ai.agent.invocations")
+                        .description("Agent invocation outcome count by task type")
+                        .tag("task_type", safeTaskType)
+                        .tag("outcome", safeOutcome)
+                        .register(meterRegistry))
+                .increment();
+
+        agentConversationTimers.computeIfAbsent(safeOutcome,
+                key -> Timer.builder("ai.agent.response.time")
+                        .description("Agent invocation time by outcome")
+                        .tag("outcome", safeOutcome)
+                        .register(meterRegistry))
+                .record(java.time.Duration.ofMillis(Math.max(durationMs, 0L)));
+    }
+
+    public void recordConversationPathLatency(String path, long durationMs) {
+        String safePath = path == null || path.isBlank() ? "unknown" : path;
+        agentConversationTimers.computeIfAbsent("path:" + safePath,
+                key -> Timer.builder("ai.conversation.path.time")
+                        .description("Conversation latency by path")
+                        .tag("path", safePath)
+                        .register(meterRegistry))
+                .record(java.time.Duration.ofMillis(Math.max(durationMs, 0L)));
+    }
+
+    public void recordPatientSafetyInterception(String category) {
+        String safeCategory = category == null || category.isBlank() ? "UNKNOWN" : category;
+        patientSafetyCounters.computeIfAbsent(safeCategory,
+                key -> Counter.builder("ai.patient.safety.interceptions")
+                        .description("Patient safety interceptions by category")
+                        .tag("category", safeCategory)
+                        .register(meterRegistry))
+                .increment();
+    }
+
+    public void recordAgentFallback(String reason) {
+        String safeReason = reason == null || reason.isBlank() ? "UNKNOWN" : reason;
+        agentFallbackCounters.computeIfAbsent(safeReason,
+                key -> Counter.builder("ai.agent.fallbacks")
+                        .description("Agent fallback count by reason")
+                        .tag("reason", safeReason)
+                        .register(meterRegistry))
+                .increment();
+    }
+
+    public void recordHumanReviewRequest(String taskType) {
+        String safeTaskType = taskType == null || taskType.isBlank() ? "UNKNOWN" : taskType;
+        humanReviewCounters.computeIfAbsent(safeTaskType,
+                key -> Counter.builder("ai.agent.human.review.requests")
+                        .description("Human review requests by task type")
+                        .tag("task_type", safeTaskType)
+                        .register(meterRegistry))
+                .increment();
     }
 
     // 计时器方法
