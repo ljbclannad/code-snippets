@@ -1,0 +1,109 @@
+# 数据库初始化说明
+
+## 快速初始化
+
+```bash
+mysql -h127.0.0.1 -P3306 -uroot -proot < ai/init-databases.sql
+```
+
+## 包含的数据库
+
+### governance
+- **使用服务**: user-profile-service, vector-memory-service, knowledge-base-service
+- **表结构**:
+
+#### 用户画像 (user-profile-service)
+  - `t_customer` - 客户基础档案
+  - `t_health_assessment` - 健康评估
+  - `b_ai_user_memory` - 用户记忆
+  - `b_user_profile_behavior_preference` - 行为偏好
+  - `b_user_profile_candidate_field` - 候选字段
+  - `b_user_profile_field_conflict` - 字段冲突
+
+#### 向量记忆 (vector-memory-service)
+  - `b_ai_group_memory` - 群体记忆
+  - `b_ai_group_memory_candidate` - 群体记忆候选
+  - `b_ai_group_memory_conflict` - 群体记忆冲突
+  - `b_ai_group_memory_review_audit` - 群体记忆审核日志
+  - `b_ai_chat_history` - 对话历史（业务表）
+  - `t_ai_chat_history` - 对话历史（技术表）
+
+#### 知识库 (knowledge-base-service)
+  - `knowledge_base` - 知识库
+  - `knowledge_document` - 知识文档
+  - `knowledge_document_chunk` - 文档分块
+  - `knowledge_document_parse_result` - 文档解析结果
+
+### doctor_assistant
+- **使用服务**: doctor-assistant-agent
+- **表结构**:
+  - `agent_execution_log` - Agent 执行日志
+  - `agent_pending_task` - Agent 待处理任务
+  - `agent_session` - Agent 会话
+  - `chat_message` - 对话消息
+  - `follow_up_task` - 随访任务
+  - `health_knowledge` - 健康知识
+  - `patient_profile` - 患者档案
+  - `prescription_record` - 处方记录
+  - `weight_record` - 体重记录
+
+## 数据库共享说明
+
+### governance 数据库
+`governance` 数据库由多个 AI 服务共享，各服务使用不同的表：
+
+- **user-profile-service**: 主要使用 `t_customer`, `t_health_assessment`, `b_user_profile_*` 表
+- **vector-memory-service**: 主要使用 `b_ai_group_memory*`, `b_ai_chat_history` 表
+- **knowledge-base-service**: 主要使用 `knowledge_*` 表
+
+### 外部存储
+- **ai-chat-service**: 不使用 MySQL，仅使用 Redis、RabbitMQ、Elasticsearch
+- **vector-memory-service**: 同时使用 MySQL (`governance`) 和 Milvus (向量数据库)
+
+## 重建数据库
+
+```bash
+# 删除所有 AI 服务数据库
+mysql -h127.0.0.1 -P3306 -uroot -proot << 'EOF'
+DROP DATABASE IF EXISTS governance;
+DROP DATABASE IF EXISTS doctor_assistant;
+EOF
+
+# 重新初始化
+mysql -h127.0.0.1 -P3306 -uroot -proot < ai/init-databases.sql
+```
+
+## 注意事项
+
+1. **governance 数据库**: 多个服务共享，修改表结构时需要考虑影响范围
+2. **向量数据**: 长期记忆的向量存储在 Milvus 中，MySQL 仅存储元数据
+3. **对话历史**: `b_ai_chat_history` 和 `t_ai_chat_history` 是两张不同用途的表
+4. **Elasticsearch**: ai-chat-service 的对话历史异步同步到 Elasticsearch 用于全文检索
+
+## 与 Milvus 的集成
+
+vector-memory-service 使用 Milvus 存储向量数据：
+
+```bash
+# 检查 Milvus 连接
+docker ps | grep milvus
+
+# Milvus 默认端口
+localhost:19530
+```
+
+Milvus collection 名称：
+- `user_memory_vectors` - 用户记忆向量
+- `group_memory_vectors` - 群体记忆向量
+
+## 与 Elasticsearch 的集成
+
+ai-chat-service 使用 Elasticsearch 存储对话历史：
+
+```bash
+# 检查 Elasticsearch 连接
+curl http://localhost:9200/_cat/indices
+
+# 对话历史索引
+chat_history
+```
