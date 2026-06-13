@@ -14,5 +14,8 @@ public interface AiGroupMemoryConflictMapper {
 
     List<AiGroupMemoryConflictEntity> selectByCandidateId(@Param("candidateId") Long candidateId);
 
-    void updateResolutionStatus(@Param("id") Long id, @Param("resolutionStatus") String resolutionStatus);
+    void updateResolutionStatus(@Param("id") Long id,
+                                @Param("resolutionStatus") String resolutionStatus,
+                                @Param("resolutionReason") String resolutionReason,
+                                @Param("resolutionNote") String resolutionNote);
 }

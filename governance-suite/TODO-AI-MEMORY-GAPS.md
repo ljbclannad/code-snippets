@@ -117,7 +117,7 @@
   - 总装配器只负责预算和顺序控制
 
 ### 7. Redis 最近记忆路径补齐过滤一致性
-- [ ] 让 Redis recent memory 路径和 MySQL/Milvus 路径使用一致的过滤规则
+- [x] 让 Redis recent memory 路径和 MySQL/Milvus 路径使用一致的过滤规则
 - 当前现状：
   Redis 结果解析后直接进入合并去重，没有完整使用 `MemorySearchFilter`
 - 当前问题：
@@ -160,7 +160,7 @@
 ## P2 候选态、冲突治理与审计闭环
 
 ### 10. 记忆冲突系统升级为完整语义冲突系统
-- [ ] 将长期记忆冲突从启发式文本冲突升级为语义冲突系统
+- [x] 将长期记忆冲突从启发式文本冲突升级为语义冲突系统
 - 当前现状：
   [CandidateMemoryService.java](/Users/lejinbo/LLM/code-snippets/governance-suite/vector-memory-service/src/main/java/com/lx/governance/vectormemory/service/CandidateMemoryService.java:182) 里的冲突判定还是前缀 + 文本不等的第一版
 - 当前问题：
@@ -168,13 +168,13 @@
 - 目标结果：
   支持更稳定的语义归一、冲突打分、冲突类型识别
 - 子任务：
-  - [ ] 语义标准化
-  - [ ] 正负极性增强
-  - [ ] 冲突类型建模
-  - [ ] 冲突分数和置信度统一
+  - [x] 语义标准化
+  - [x] 正负极性增强
+  - [x] 冲突类型建模
+  - [x] 冲突分数和置信度统一
 
 ### 11. 画像冲突系统升级为语义冲突系统
-- [ ] 将字段值级别冲突升级为语义冲突系统
+- [x] 将字段值级别冲突升级为语义冲突系统
 - 当前现状：
   [ProfileCandidateFieldService.java](/Users/lejinbo/LLM/code-snippets/governance-suite/user-profile-service/src/main/java/com/lx/governance/profile/service/ProfileCandidateFieldService.java:50) 更偏“同字段不同值”的直接冲突
 - 当前问题：
@@ -183,7 +183,7 @@
   支持字段语义标准化与冲突解释
 
 ### 12. 候选态 review 流程补齐仲裁与审计闭环
-- [ ] 将当前 `confirm/reject` 流程升级为更完整的候选治理流程
+- [x] 将当前 `confirm/reject` 流程升级为更完整的候选治理流程
 - 当前现状：
   记忆和画像两边都已有 review controller / service，但能力还比较薄
 - 当前问题：
@@ -191,11 +191,11 @@
 - 目标结果：
   候选态不只是状态切换，而是完整治理流程
 - 子任务：
-  - [ ] 多候选比较视图
-  - [ ] 人工仲裁结果落库
-  - [ ] 审核操作审计
-  - [ ] 冲突关闭原因与备注
-  - [ ] 候选与正式态版本关系追踪
+  - [x] 多候选比较视图
+  - [x] 人工仲裁结果落库
+  - [x] 审核操作审计
+  - [x] 冲突关闭原因与备注
+  - [x] 候选与正式态版本关系追踪
 
 ### 13. 文档与代码现状持续对齐
 - [ ] 修正文档中过期结论，并持续同步当前实现边界
@@ -220,14 +220,14 @@
 ### 第二阶段：提升检索质量与 Prompt 可扩展性
 - [ ] 5. 完善 LLM Query Rewrite 策略
 - [x] 6. Prompt section pipeline 化
-- [ ] 7. Redis 最近记忆过滤一致性
+- [x] 7. Redis 最近记忆过滤一致性
 - [ ] 8. 自动确认策略分层化
 - [ ] 9. 画像正式回写范围扩展
 
 ### 第三阶段：补齐治理闭环
-- [ ] 10. 记忆语义冲突系统
-- [ ] 11. 画像语义冲突系统
-- [ ] 12. 候选态 review 与审计闭环
+- [x] 10. 记忆语义冲突系统
+- [x] 11. 画像语义冲突系统
+- [x] 12. 候选态 review 与审计闭环
 - [ ] 13. 文档持续对齐
 
 ---

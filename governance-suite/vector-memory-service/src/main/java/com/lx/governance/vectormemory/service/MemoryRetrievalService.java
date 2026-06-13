@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -96,8 +97,8 @@ public class MemoryRetrievalService {
         // 1.1 从 Redis 获取最近记忆
         try {
             if (redisMemoryIndexService != null) {
-                List<String> redisValues = redisMemoryIndexService.getRecentMemories(groupId, fetchCount);
-                recentMemories = parseRedisMemories(redisValues);
+                List<String> redisEntries = redisMemoryIndexService.getRecentMemoryEntries(groupId, fetchCount);
+                recentMemories = loadRecentMemoriesFromRedis(redisEntries, filter);
                 log.debug("Retrieved {} recent memories from Redis", recentMemories.size());
             }
         } catch (Exception e) {
@@ -209,47 +210,51 @@ public class MemoryRetrievalService {
                 || (filter.getRecentDays() != null && filter.getRecentDays() > 0));
     }
 
-    /**
-     * 解析 Redis 记忆值
-     * Redis 格式: "memoryId:content"
-     *
-     * @param redisValues Redis 返回的原始值列表
-     * @return 解析后的 MemoryItemDTO 列表
-     */
-    private List<MemoryItemDTO> parseRedisMemories(List<String> redisValues) {
-        return redisValues.stream()
-                .map(value -> {
-                    try {
-                        // 解析格式: "memoryId:content"
-                        String[] parts = value.split(":", 2);
-                        if (parts.length == 2) {
-                            Long memoryId = Long.parseLong(parts[0]);
-                            String content = parts[1];
-                            return MemoryItemDTO.builder()
-                                    .id(memoryId)
-                                    .content(content)
-                                    .similarity(0.0) // 0.0 表示未计算相似度（来自最近缓存）
-                                    .source("RECENT_CACHE")
-                                    .build();
-                        } else {
-                            // 降级处理：如果格式不符合预期，仅使用 content
-                            log.warn("Unexpected Redis value format: {}", value);
-                            return MemoryItemDTO.builder()
-                                    .content(value)
-                                    .similarity(0.0)
-                                    .source("RECENT_CACHE")
-                                    .build();
-                        }
-                    } catch (NumberFormatException e) {
-                        log.warn("Failed to parse memoryId from Redis value: {}", value, e);
-                        return MemoryItemDTO.builder()
-                                .content(value)
-                                .similarity(0.0)
-                                .source("RECENT_CACHE")
-                                .build();
-                    }
-                })
+    private List<MemoryItemDTO> loadRecentMemoriesFromRedis(List<String> redisEntries, MemorySearchFilter filter) {
+        if (redisEntries == null || redisEntries.isEmpty()) {
+            return List.of();
+        }
+
+        Map<Long, String> contentById = new LinkedHashMap<>();
+        for (String entry : redisEntries) {
+            try {
+                String[] parts = entry.split(":", 2);
+                if (parts.length != 2) {
+                    log.warn("Unexpected Redis value format: {}", entry);
+                    continue;
+                }
+                contentById.put(Long.parseLong(parts[0]), parts[1]);
+            } catch (NumberFormatException e) {
+                log.warn("Failed to parse memoryId from Redis value: {}", entry, e);
+            }
+        }
+
+        if (contentById.isEmpty()) {
+            return List.of();
+        }
+
+        List<AiGroupMemoryEntity> memoryEntities = shouldPushDownFilter(filter)
+                ? memoryMapper.selectByIdsWithFilter(new ArrayList<>(contentById.keySet()), filter)
+                : contentById.keySet().stream()
+                        .map(memoryMapper::selectById)
+                        .filter(entity -> entity != null && entity.getIsDeleted() != null && entity.getIsDeleted() == 0)
+                        .collect(Collectors.toList());
+
+        return memoryEntities.stream()
+                .map(entity -> toRecentMemoryDto(entity, contentById.getOrDefault(entity.getId(), entity.getMemoryContent())))
                 .collect(Collectors.toList());
+    }
+
+    private MemoryItemDTO toRecentMemoryDto(AiGroupMemoryEntity entity, String content) {
+        double confidence = entity.getConfidenceScore() != null ? entity.getConfidenceScore().doubleValue() : 0.0;
+        return MemoryItemDTO.builder()
+                .id(entity.getId())
+                .content(content)
+                .similarity(0.0)
+                .confidenceScore(entity.getConfidenceScore() != null ? confidence : null)
+                .verified(confidence >= 0.8)
+                .source("RECENT_CACHE")
+                .build();
     }
 
     /**

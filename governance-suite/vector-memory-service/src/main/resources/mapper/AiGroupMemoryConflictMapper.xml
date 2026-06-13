@@ -13,6 +13,8 @@
         <result column="conflict_reason" property="conflictReason"/>
         <result column="conflict_score" property="conflictScore"/>
         <result column="resolution_status" property="resolutionStatus"/>
+        <result column="resolution_reason" property="resolutionReason"/>
+        <result column="resolution_note" property="resolutionNote"/>
         <result column="create_time" property="createTime"/>
         <result column="update_time" property="updateTime"/>
     </resultMap>
@@ -36,6 +38,8 @@
     <update id="updateResolutionStatus">
         UPDATE b_ai_group_memory_conflict
         SET resolution_status = #{resolutionStatus},
+            resolution_reason = #{resolutionReason},
+            resolution_note = #{resolutionNote},
             update_time = NOW()
         WHERE id = #{id}
     </update>

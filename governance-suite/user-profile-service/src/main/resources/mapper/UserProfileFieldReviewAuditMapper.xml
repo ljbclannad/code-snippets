@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.lx.governance.profile.mapper.UserProfileFieldReviewAuditMapper">
+
+    <resultMap id="BaseResultMap" type="com.lx.governance.profile.entity.UserProfileFieldReviewAuditEntity">
+        <id column="id" property="id"/>
+        <result column="candidate_field_id" property="candidateFieldId"/>
+        <result column="customer_id" property="customerId"/>
+        <result column="field_path" property="fieldPath"/>
+        <result column="action_type" property="actionType"/>
+        <result column="result_status" property="resultStatus"/>
+        <result column="reviewer" property="reviewer"/>
+        <result column="resolution_reason" property="resolutionReason"/>
+        <result column="remarks" property="remarks"/>
+        <result column="related_formal_value" property="relatedFormalValue"/>
+        <result column="create_time" property="createTime"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.lx.governance.profile.entity.UserProfileFieldReviewAuditEntity" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO b_user_profile_field_review_audit (
+            candidate_field_id, customer_id, field_path, action_type, result_status,
+            reviewer, resolution_reason, remarks, related_formal_value
+        ) VALUES (
+            #{candidateFieldId}, #{customerId}, #{fieldPath}, #{actionType}, #{resultStatus},
+            #{reviewer}, #{resolutionReason}, #{remarks}, #{relatedFormalValue}
+        )
+    </insert>
+
+    <select id="selectByCandidateFieldId" resultMap="BaseResultMap">
+        SELECT * FROM b_user_profile_field_review_audit
+        WHERE candidate_field_id = #{candidateFieldId}
+        ORDER BY create_time DESC
+    </select>
+</mapper>

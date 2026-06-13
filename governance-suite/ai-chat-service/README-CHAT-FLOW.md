@@ -347,7 +347,7 @@
 
 ```mermaid
 sequenceDiagram
-    participant U as User
+    participant U as 用户
     participant C as AiChatController
     participant S as AiChatService
     participant SC as SessionContextService
@@ -360,43 +360,43 @@ sequenceDiagram
     participant AI as DeepSeekClient
     participant AP as ChatAsyncProcessingService
 
-    U->>C: POST /chat
-    C->>S: handleChatRequest(request)
+    U->>C: 发起聊天请求 POST /chat
+    C->>S: 处理聊天请求 handleChatRequest(request)
 
-    S->>SC: getOrCreateContext(conversationId, customerId)
-    SC-->>S: SessionContext
+    S->>SC: 加载或创建会话上下文
+    SC-->>S: 返回 SessionContext
 
-    S->>UP: getUserProfile(customerId)
-    UP-->>S: UserProfileDTO
+    S->>UP: 拉取用户画像
+    UP-->>S: 返回 UserProfileDTO
 
-    S->>PD: diagnose(profile, message, sessionContext)
+    S->>PD: 判断画像信息是否足够
     alt 画像信息不足
-        PD-->>S: followUpQuestion
-        S->>SC: updateContext(..., followUpQuestion)
+        PD-->>S: 返回追问问题
+        S->>SC: 更新会话上下文和待确认问题
         S-->>C: 直接返回追问
-        C-->>U: follow-up response
+        C-->>U: 返回追问内容
     else 可以进入完整回答链路
-        PD-->>S: continue
+        PD-->>S: 允许继续生成回答
 
-        S->>LMO: loadMemories(groupId, customerId, message, sessionContext, profile, ...)
-        LMO->>RQ: rewrite(message, sessionContext, profile)
-        RQ-->>LMO: RetrievalQuery
-        LMO->>LMO: decide intent filter + merge rewrite hints
-        LMO->>MS: retrieveMemories(query, memoryTypes, minConfidence, verifiedOnly, recentDays)
-        MS-->>LMO: longTermMemories
-        LMO-->>S: LayeredMemories
+        S->>LMO: 加载分层记忆
+        LMO->>RQ: 重写长期记忆检索 Query
+        RQ-->>LMO: 返回 RetrievalQuery
+        LMO->>LMO: 计算意图过滤策略并合并 rewrite 建议
+        LMO->>MS: 按过滤条件检索长期记忆
+        MS-->>LMO: 返回长期记忆列表
+        LMO-->>S: 返回 LayeredMemories
 
-        S->>AI: chat(request, profile, sessionContext, layeredMemories)
-        AI->>DB: buildBudgetedSystemPrompt(...)
-        DB-->>AI: systemPrompt
-        AI->>AI: call DeepSeek model
-        AI-->>S: answer + token usage
+        S->>AI: 调用聊天模型 chat(...)
+        AI->>DB: 按预算组装系统提示词
+        DB-->>AI: 返回 systemPrompt
+        AI->>AI: 调用 DeepSeek 模型生成回答
+        AI-->>S: 返回 answer 和 token usage
 
-        S->>SC: updateContext(..., answer)
-        S->>AP: processAsync(request, response)
-        AP->>AP: save chat history / sync ES / trigger memory extraction
+        S->>SC: 写回会话上下文和摘要
+        S->>AP: 触发异步后处理
+        AP->>AP: 保存聊天历史 / 同步 ES / 触发记忆提取
 
-        S-->>C: ChatResponse
-        C-->>U: answer
+        S-->>C: 返回 ChatResponse
+        C-->>U: 返回最终回答
     end
 ```

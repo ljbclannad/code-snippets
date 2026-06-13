@@ -66,6 +66,17 @@ public interface AiGroupMemoryMapper {
             @Param("filter") MemorySearchFilter filter);
 
     /**
+     * 根据主键批量查询，并在 SQL 层执行元数据过滤
+     *
+     * @param ids 主键列表
+     * @param filter 检索过滤条件
+     * @return 记忆列表
+     */
+    List<AiGroupMemoryEntity> selectByIdsWithFilter(
+            @Param("ids") List<Long> ids,
+            @Param("filter") MemorySearchFilter filter);
+
+    /**
      * 检查相似记忆
      *
      * @param groupId 群组ID

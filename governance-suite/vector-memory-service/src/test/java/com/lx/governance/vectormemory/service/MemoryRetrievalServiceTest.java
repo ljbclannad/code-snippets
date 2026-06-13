@@ -142,7 +142,7 @@ class MemoryRetrievalServiceTest {
         when(vectorStoreService.searchGroupMemories(eq("晚饭怎么吃"), eq("group-1"), eq("customer-1"), anyInt()))
                 .thenReturn(documents);
         when(memoryMapper.selectByEmbeddingIds(anyList())).thenReturn(List.of(memory));
-        when(redisMemoryIndexService.getRecentMemories(eq("group-1"), anyInt())).thenReturn(List.of());
+        when(redisMemoryIndexService.getRecentMemoryEntries(eq("group-1"), anyInt())).thenReturn(List.of());
         when(deduplicationService.mergeAndDeduplicate(anyList(), anyList()))
                 .thenAnswer(invocation -> invocation.getArgument(1));
 
@@ -157,6 +157,42 @@ class MemoryRetrievalServiceTest {
         verify(memoryMapper, never()).selectByEmbeddingIdsWithFilter(anyList(), any(MemorySearchFilter.class));
     }
 
+    @Test
+    void shouldApplyConsistentFilterToRedisRecentMemories() {
+        AiGroupMemoryEntity recentDiet = buildEntity(1L, "DIET", 0.91, LocalDateTime.now().minusDays(2));
+        AiGroupMemoryEntity recentOldSymptom = buildEntity(2L, "SYMPTOM", 0.95, LocalDateTime.now().minusDays(20));
+
+        when(redisMemoryIndexService.getRecentMemoryEntries(eq("group-1"), anyInt()))
+                .thenReturn(List.of(
+                        "1:" + recentDiet.getMemoryContent(),
+                        "2:" + recentOldSymptom.getMemoryContent()));
+        when(memoryMapper.selectByIdsWithFilter(anyList(), any(MemorySearchFilter.class)))
+                .thenAnswer(invocation -> applyFilterByIds(
+                        List.of(recentDiet, recentOldSymptom),
+                        invocation.getArgument(0),
+                        invocation.getArgument(1)));
+        when(vectorStoreService.searchGroupMemories(eq("晚饭怎么吃"), eq("group-1"), eq("customer-1"), anyInt()))
+                .thenReturn(List.of());
+        when(deduplicationService.mergeAndDeduplicate(anyList(), anyList()))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+
+        List<MemoryItemDTO> results = memoryRetrievalService.retrieveGroupMemories(
+                "晚饭怎么吃",
+                "group-1",
+                "customer-1",
+                5,
+                Set.of("DIET"),
+                0.8,
+                true,
+                7);
+
+        assertEquals(1, results.size());
+        assertEquals(1L, results.get(0).getId());
+        assertEquals("RECENT_CACHE", results.get(0).getSource());
+        assertTrue(Boolean.TRUE.equals(results.get(0).getVerified()));
+        verify(memoryMapper).selectByIdsWithFilter(anyList(), any(MemorySearchFilter.class));
+    }
+
     private void mockMilvusAndMapper(List<AiGroupMemoryEntity> entities) {
         List<Document> documents = entities.stream()
                 .map(entity -> new Document(
@@ -169,7 +205,7 @@ class MemoryRetrievalServiceTest {
                 .thenReturn(documents);
         when(memoryMapper.selectByEmbeddingIdsWithFilter(anyList(), any(MemorySearchFilter.class)))
                 .thenAnswer(invocation -> applyFilter(entities, invocation.getArgument(1)));
-        when(redisMemoryIndexService.getRecentMemories(eq("group-1"), anyInt())).thenReturn(List.of());
+        when(redisMemoryIndexService.getRecentMemoryEntries(eq("group-1"), anyInt())).thenReturn(List.of());
     }
 
     private List<AiGroupMemoryEntity> applyFilter(List<AiGroupMemoryEntity> entities, MemorySearchFilter filter) {
@@ -201,6 +237,15 @@ class MemoryRetrievalServiceTest {
             results.add(entity);
         }
         return results;
+    }
+
+    private List<AiGroupMemoryEntity> applyFilterByIds(
+            List<AiGroupMemoryEntity> entities,
+            List<Long> ids,
+            MemorySearchFilter filter) {
+        return applyFilter(entities.stream()
+                .filter(entity -> ids.contains(entity.getId()))
+                .toList(), filter);
     }
 
     private AiGroupMemoryEntity buildEntity(Long id, String type, double confidence, LocalDateTime extractedAt) {

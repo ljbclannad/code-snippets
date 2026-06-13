@@ -114,6 +114,19 @@ public class RedisMemoryIndexService {
      * 获取最近记忆
      */
     public List<String> getRecentMemories(String groupId, int limit) {
+        return getRecentMemoryEntries(groupId, limit).stream()
+                .map(s -> {
+                    String[] parts = s.split(MEMORY_FORMAT_SEPARATOR, 2);
+                    return parts.length == 2 ? parts[1] : s;
+                })
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * 获取最近记忆原始条目
+     * 格式: "memoryId:content"
+     */
+    public List<String> getRecentMemoryEntries(String groupId, int limit) {
         if (redisTemplate == null) {
             log.debug("RedisTemplate不可用，返回空列表");
             return List.of();
@@ -132,15 +145,10 @@ public class RedisMemoryIndexService {
 
             return results.stream()
                 .map(Object::toString)
-                .map(s -> {
-                    // 安全地提取content部分，防止数组越界
-                    String[] parts = s.split(MEMORY_FORMAT_SEPARATOR, 2);
-                    return parts.length == 2 ? parts[1] : s;
-                })
                 .collect(Collectors.toList());
 
         } catch (Exception e) {
-            log.error("获取最近记忆失败: groupId={}", groupId, e);
+            log.error("获取最近记忆原始条目失败: groupId={}", groupId, e);
             return List.of();
         }
     }

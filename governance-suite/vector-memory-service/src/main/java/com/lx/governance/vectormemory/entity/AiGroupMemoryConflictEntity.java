@@ -17,6 +17,8 @@ public class AiGroupMemoryConflictEntity {
     private String conflictReason;
     private BigDecimal conflictScore;
     private String resolutionStatus;
+    private String resolutionReason;
+    private String resolutionNote;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 }

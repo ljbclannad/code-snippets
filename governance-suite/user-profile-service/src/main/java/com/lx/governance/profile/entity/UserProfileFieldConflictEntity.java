@@ -14,6 +14,8 @@ public class UserProfileFieldConflictEntity {
     private String conflictTargetValue;
     private String conflictReason;
     private String resolutionStatus;
+    private String resolutionReason;
+    private String resolutionNote;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 }

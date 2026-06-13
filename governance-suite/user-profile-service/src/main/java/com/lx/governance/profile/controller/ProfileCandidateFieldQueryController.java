@@ -16,7 +16,7 @@ import com.lx.governance.profile.service.ProfileCandidateFieldQueryService;
 import lombok.RequiredArgsConstructor;
 
 @RestController
-@RequestMapping("/api/profile-candidate-field")
+@RequestMapping("/api/profile-candidate-field/query")
 @RequiredArgsConstructor
 public class ProfileCandidateFieldQueryController {
 
