@@ -38,18 +38,20 @@ governance-suite/
 │   └── verify/                  # 验证脚本
 ├── docker-compose.yml           # 基础设施编排
 ├── common/                      # 通用模块
-├── gateway/                     # API 网关 (8080)
-├── user-service/                # 用户服务 (8084)
-├── order-service/               # 订单服务 (8081)
-├── payment-service/             # 支付服务 (8082)
-├── inventory-service/           # 库存服务 (8083)
-├── outbox-consumer/             # Outbox消费者 (8090)
-├── appointment-service/         # 预约服务 (8089)
-├── ai-chat-service/             # AI对话服务 (8085)
-├── user-profile-service/        # 用户画像服务 (8086)
-├── vector-memory-service/       # 向量记忆服务 (8087)
-├── doctor-assistant-agent/      # 医生助理Agent (8088)
-└── knowledge-base-service/      # 知识库服务 (8103)
+├── distributed/                 # 🔄 分布式系统治理服务
+│   ├── gateway/                 # API 网关 (8080)
+│   ├── user-service/            # 用户服务 (8084)
+│   ├── order-service/           # 订单服务 (8081)
+│   ├── payment-service/         # 支付服务 (8082)
+│   ├── inventory-service/       # 库存服务 (8083)
+│   ├── outbox-consumer/         # Outbox消费者 (8090)
+│   └── appointment-service/     # 预约服务 (8089)
+└── ai/                          # 🤖 AI 服务体系
+    ├── ai-chat-service/         # AI对话服务 (8085)
+    ├── user-profile-service/    # 用户画像服务 (8086)
+    ├── vector-memory-service/   # 向量记忆服务 (8087)
+    ├── doctor-assistant-agent/  # 医生助理Agent (8088)
+    └── knowledge-base-service/  # 知识库服务 (8103)
 ```
 
 ## 通用前置条件
@@ -115,9 +117,9 @@ mvn -T 1C clean package -DskipTests
 最小启动（用户+订单）：
 
 ```bash
-mvn -q -pl gateway spring-boot:run
-mvn -q -pl user-service spring-boot:run
-mvn -q -pl order-service spring-boot:run
+mvn -q -pl distributed/gateway spring-boot:run
+mvn -q -pl distributed/user-service spring-boot:run
+mvn -q -pl distributed/order-service spring-boot:run
 ```
 
 完整启动（包含支付+库存+消息）：
@@ -187,9 +189,9 @@ curl -X POST http://localhost:8080/api/order/order \
 ### 快速启动
 
 ```bash
-mvn -q -pl user-profile-service spring-boot:run
-mvn -q -pl vector-memory-service spring-boot:run
-mvn -q -pl ai-chat-service spring-boot:run
+mvn -q -pl ai/user-profile-service spring-boot:run
+mvn -q -pl ai/vector-memory-service spring-boot:run
+mvn -q -pl ai/ai-chat-service spring-boot:run
 ```
 
 或使用脚本：
@@ -240,8 +242,8 @@ bash sh/test/test-03-ai-chat.sh
 ### 快速启动
 
 ```bash
-mvn -q -pl doctor-assistant-agent spring-boot:run
-mvn -q -pl knowledge-base-service spring-boot:run
+mvn -q -pl ai/doctor-assistant-agent spring-boot:run
+mvn -q -pl ai/knowledge-base-service spring-boot:run
 ```
 
 ### 相关文档
@@ -267,8 +269,8 @@ mvn -q -pl knowledge-base-service spring-boot:run
 ### 快速启动
 
 ```bash
-mvn -q -pl gateway spring-boot:run
-mvn -q -pl appointment-service spring-boot:run
+mvn -q -pl distributed/gateway spring-boot:run
+mvn -q -pl distributed/appointment-service spring-boot:run
 ```
 
 ### 快速验证

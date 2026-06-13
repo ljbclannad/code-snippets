@@ -27,37 +27,37 @@ echo ""
 
 # 启动网关
 echo "启动 Gateway (端口 8080)..."
-nohup mvn -q -pl gateway spring-boot:run > logs/gateway.log 2>&1 &
+nohup mvn -q -pl distributed/gateway spring-boot:run > logs/gateway.log 2>&1 &
 GATEWAY_PID=$!
 echo "Gateway PID: $GATEWAY_PID"
 
 # 启动用户服务
 echo "启动 User Service (端口 8084)..."
-nohup mvn -q -pl user-service spring-boot:run > logs/user-service.log 2>&1 &
+nohup mvn -q -pl distributed/user-service spring-boot:run > logs/user-service.log 2>&1 &
 USER_PID=$!
 echo "User Service PID: $USER_PID"
 
 # 启动订单服务
 echo "启动 Order Service (端口 8081) - 重点观察 Seata 日志..."
-nohup mvn -q -pl order-service spring-boot:run > logs/order-service.log 2>&1 &
+nohup mvn -q -pl distributed/order-service spring-boot:run > logs/order-service.log 2>&1 &
 ORDER_PID=$!
 echo "Order Service PID: $ORDER_PID"
 
 # 启动支付服务
 echo "启动 Payment Service (端口 8082)..."
-nohup mvn -q -pl payment-service spring-boot:run > logs/payment-service.log 2>&1 &
+nohup mvn -q -pl distributed/payment-service spring-boot:run > logs/payment-service.log 2>&1 &
 PAYMENT_PID=$!
 echo "Payment Service PID: $PAYMENT_PID"
 
 # 启动库存服务
 echo "启动 Inventory Service (端口 8083)..."
-nohup mvn -q -pl inventory-service spring-boot:run > logs/inventory-service.log 2>&1 &
+nohup mvn -q -pl distributed/inventory-service spring-boot:run > logs/inventory-service.log 2>&1 &
 INVENTORY_PID=$!
 echo "Inventory Service PID: $INVENTORY_PID"
 
 # 启动 Outbox 消费者
 echo "启动 Outbox Consumer (端口 8090)..."
-nohup mvn -q -pl outbox-consumer spring-boot:run > logs/outbox-consumer.log 2>&1 &
+nohup mvn -q -pl distributed/outbox-consumer spring-boot:run > logs/outbox-consumer.log 2>&1 &
 OUTBOX_PID=$!
 echo "Outbox Consumer PID: $OUTBOX_PID"
 

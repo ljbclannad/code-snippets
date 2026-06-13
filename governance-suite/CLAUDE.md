@@ -81,8 +81,9 @@ Treat these as separate subprojects that happen to share infrastructure and some
 
 - Prefer:
   - `mvn -f common/pom.xml compile`
-  - `mvn -f order-service/pom.xml spring-boot:run`
-  - `mvn -f payment-service/pom.xml test`
+  - `mvn -f distributed/order-service/pom.xml spring-boot:run`
+  - `mvn -f distributed/payment-service/pom.xml test`
+  - `mvn -f ai/ai-chat-service/pom.xml compile`
 - Avoid broad reactor builds when a single module build is enough.
 
 ### Runtime verification
@@ -120,24 +121,24 @@ mvn -T 1C clean package -DskipTests
 ### Common service runs
 
 ```bash
-mvn -q -pl gateway spring-boot:run
-mvn -q -pl user-service spring-boot:run
-mvn -q -pl order-service spring-boot:run
-mvn -q -pl payment-service spring-boot:run
-mvn -q -pl inventory-service spring-boot:run
-mvn -q -pl appointment-service spring-boot:run
-mvn -q -pl outbox-consumer spring-boot:run
-mvn -q -pl doctor-assistant-agent spring-boot:run
-mvn -q -pl knowledge-base-service spring-boot:run
+mvn -q -pl distributed/gateway spring-boot:run
+mvn -q -pl distributed/user-service spring-boot:run
+mvn -q -pl distributed/order-service spring-boot:run
+mvn -q -pl distributed/payment-service spring-boot:run
+mvn -q -pl distributed/inventory-service spring-boot:run
+mvn -q -pl distributed/appointment-service spring-boot:run
+mvn -q -pl distributed/outbox-consumer spring-boot:run
+mvn -q -pl ai/doctor-assistant-agent spring-boot:run
+mvn -q -pl ai/knowledge-base-service spring-boot:run
 ```
 
 ### Failure injection
 
 ```bash
-LAB_FAIL_INVENTORY_DEDUCT=true mvn -q -pl inventory-service spring-boot:run
-LAB_FAIL_PAYMENT_PREPARE=true  mvn -q -pl payment-service spring-boot:run
-LAB_FAIL_PAYMENT_CONFIRM=true  mvn -q -pl payment-service spring-boot:run
-LAB_FAIL_OUTBOX_PUBLISH=true   mvn -q -pl outbox-consumer spring-boot:run
+LAB_FAIL_INVENTORY_DEDUCT=true mvn -q -pl distributed/inventory-service spring-boot:run
+LAB_FAIL_PAYMENT_PREPARE=true  mvn -q -pl distributed/payment-service spring-boot:run
+LAB_FAIL_PAYMENT_CONFIRM=true  mvn -q -pl distributed/payment-service spring-boot:run
+LAB_FAIL_OUTBOX_PUBLISH=true   mvn -q -pl distributed/outbox-consumer spring-boot:run
 ```
 
 ## Verification Sources

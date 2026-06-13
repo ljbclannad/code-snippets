@@ -9,18 +9,22 @@
 
   <modules>
     <module>common</module>
-    <module>gateway</module>
-    <module>user-service</module>
-    <module>order-service</module>
-    <module>payment-service</module>
-    <module>inventory-service</module>
-    <module>outbox-consumer</module>
-    <module>user-profile-service</module>
-    <module>vector-memory-service</module>
-    <module>ai-chat-service</module>
-    <module>doctor-assistant-agent</module>
-    <module>appointment-service</module>
-    <module>knowledge-base-service</module>
+
+    <!-- Distributed Services -->
+    <module>distributed/gateway</module>
+    <module>distributed/user-service</module>
+    <module>distributed/order-service</module>
+    <module>distributed/payment-service</module>
+    <module>distributed/inventory-service</module>
+    <module>distributed/outbox-consumer</module>
+    <module>distributed/appointment-service</module>
+
+    <!-- AI Services -->
+    <module>ai/ai-chat-service</module>
+    <module>ai/user-profile-service</module>
+    <module>ai/vector-memory-service</module>
+    <module>ai/doctor-assistant-agent</module>
+    <module>ai/knowledge-base-service</module>
   </modules>
 
   <properties>

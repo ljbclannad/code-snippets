@@ -171,7 +171,7 @@ start_service() {
   fi
 
   echo "启动 ${service} (${port})..."
-  nohup mvn -q -pl "${service}" spring-boot:run > "${log_file}" 2>&1 &
+  nohup mvn -q -pl "ai/${service}" spring-boot:run > "${log_file}" 2>&1 &
   local pid=$!
   echo "${pid}" > "${pid_file}"
 

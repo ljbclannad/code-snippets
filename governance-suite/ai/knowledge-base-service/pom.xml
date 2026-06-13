@@ -9,6 +9,7 @@
         <groupId>com.lx.governance</groupId>
         <artifactId>governance-suite</artifactId>
         <version>1.0.0</version>
+    <relativePath>../../pom.xml</relativePath>
     </parent>
 
     <artifactId>knowledge-base-service</artifactId>
