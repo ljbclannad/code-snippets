@@ -15,6 +15,7 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
 import com.lx.governance.aichat.client.DeepSeekClient;
+import com.lx.governance.aichat.client.UserProfileClientFixed;
 import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.LayeredMemories;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
@@ -31,6 +32,8 @@ class AiChatStreamServiceTest {
 
     @Mock
     private DeepSeekClient deepSeekClient;
+    @Mock
+    private UserProfileClientFixed userProfileClient;
     @Mock
     private SessionContextService sessionContextService;
     @Mock
@@ -49,6 +52,7 @@ class AiChatStreamServiceTest {
         MockitoAnnotations.openMocks(this);
         aiChatStreamService = new AiChatStreamService(
                 deepSeekClient,
+                userProfileClient,
                 sessionContextService,
                 memoryService,
                 chatAsyncProcessingService,
@@ -70,6 +74,8 @@ class AiChatStreamServiceTest {
 
         when(sessionContextService.getOrCreateContext(anyString(), anyString(), anyString(), anyString()))
                 .thenReturn(sessionContext);
+        when(userProfileClient.requestUserProfile("customer-1"))
+                .thenReturn(CompletableFuture.completedFuture(new UserProfileDTO()));
         when(layeredMemoryOrchestrator.loadMemories(eq("group-1"), eq("customer-1"), eq("那我这种情况晚饭怎么吃？"), any(), any(), eq(true), eq(5)))
                 .thenReturn(CompletableFuture.completedFuture(LayeredMemories.builder()
                         .shortTermMemories(List.of("当前话题: 减重管理"))
@@ -90,6 +96,45 @@ class AiChatStreamServiceTest {
 
         aiChatStreamService.handleChatStreamRequest(request).collectList().block();
 
+        verify(userProfileClient).requestUserProfile("customer-1");
         verify(layeredMemoryOrchestrator).loadMemories(eq("group-1"), eq("customer-1"), eq("那我这种情况晚饭怎么吃？"), eq(sessionContext), any(UserProfileDTO.class), eq(true), eq(5));
+        verify(sessionContextService).updateContext("conv-1", "那我这种情况晚饭怎么吃？", "建议清淡饮食");
+    }
+
+    @Test
+    void shouldFallbackToEmptyProfileWhenProfileFetchFails() {
+        SessionContext sessionContext = SessionContext.builder()
+                .conversationId("conv-2")
+                .customerId("customer-2")
+                .groupId("group-2")
+                .userIntent("一般咨询")
+                .build();
+
+        when(sessionContextService.getOrCreateContext(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(sessionContext);
+        CompletableFuture<UserProfileDTO> failed = new CompletableFuture<>();
+        failed.completeExceptionally(new RuntimeException("profile fetch failed"));
+        when(userProfileClient.requestUserProfile("customer-2")).thenReturn(failed);
+        when(layeredMemoryOrchestrator.loadMemories(eq("group-2"), eq("customer-2"), eq("最近睡不好怎么办"), any(), any(), eq(true), eq(5)))
+                .thenReturn(CompletableFuture.completedFuture(LayeredMemories.builder().build()));
+        when(deepSeekClient.chatStream(any(), any(), any(),
+                org.mockito.ArgumentMatchers.<LayeredMemories>any()))
+                .thenReturn(Flux.just(
+                        StreamEvent.start("conv-2"),
+                        StreamEvent.content("先规律作息"),
+                        StreamEvent.done("conv-2", null)));
+
+        ChatRequest request = new ChatRequest();
+        request.setConversationId("conv-2");
+        request.setCustomerId("customer-2");
+        request.setGroupId("group-2");
+        request.setMessage("最近睡不好怎么办");
+
+        aiChatStreamService.handleChatStreamRequest(request).collectList().block();
+
+        verify(layeredMemoryOrchestrator).loadMemories(eq("group-2"), eq("customer-2"), eq("最近睡不好怎么办"),
+                eq(sessionContext), any(UserProfileDTO.class), eq(true), eq(5));
+        verify(sessionContextService).updateContext("conv-2", "最近睡不好怎么办", "先规律作息");
+        verify(chatAsyncProcessingService).handleChatCompleted(any(), any(), anyString());
     }
 }

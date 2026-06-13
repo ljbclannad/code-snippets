@@ -1,7 +1,9 @@
 package com.lx.governance.aichat.client;
 
+import java.net.SocketTimeoutException;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.TimeoutException;
 
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
@@ -107,6 +109,9 @@ public class DeepSeekClient {
             long duration = System.currentTimeMillis() - startTime;
             log.error("DeepSeek API call failed after {}ms for customer: {}",
                     duration, request.getCustomerId(), e);
+            if (isTimeoutException(e)) {
+                throw AiServiceException.timeout("DeepSeek API 调用超时");
+            }
             throw AiServiceException.apiError("DeepSeek API 调用失败", e);
         }
     }
@@ -158,6 +163,9 @@ public class DeepSeekClient {
             long duration = System.currentTimeMillis() - startTime;
             log.error("DeepSeek API call failed after {}ms for customer: {}",
                     duration, request.getCustomerId(), e);
+            if (isTimeoutException(e)) {
+                throw AiServiceException.timeout("DeepSeek API 调用超时");
+            }
             throw AiServiceException.apiError("DeepSeek API 调用失败", e);
         }
     }
@@ -348,6 +356,17 @@ public class DeepSeekClient {
 
         // 记录到监控系统
         tokenMonitor.recordTokenUsage(metrics);
+    }
+
+    private boolean isTimeoutException(Throwable throwable) {
+        Throwable current = throwable;
+        while (current != null) {
+            if (current instanceof SocketTimeoutException || current instanceof TimeoutException) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     /**

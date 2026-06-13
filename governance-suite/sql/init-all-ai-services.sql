@@ -57,25 +57,23 @@ CREATE TABLE `b_ai_user_memory` (
   KEY `idx_verified` (`verified`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI用户全局记忆表';
 
--- 3. 聊天历史表
-DROP TABLE IF EXISTS `b_ai_chat_history`;
-CREATE TABLE `b_ai_chat_history` (
+-- 3. 聊天历史表（对齐 ai-chat-service 当前实体 t_ai_chat_history）
+DROP TABLE IF EXISTS `t_ai_chat_history`;
+CREATE TABLE `t_ai_chat_history` (
   `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键',
   `customer_id` VARCHAR(64) NOT NULL COMMENT '用户ID',
-  `group_id` VARCHAR(64) NOT NULL COMMENT '群组ID',
-  `conversation_id` VARCHAR(128) NOT NULL COMMENT 'Dify会话ID',
+  `conversation_id` VARCHAR(64) NOT NULL COMMENT '会话ID',
   `user_message` TEXT NOT NULL COMMENT '用户消息',
-  `ai_response` TEXT COMMENT 'AI回复',
-  `role` VARCHAR(32) COMMENT '角色类型: doctor/nutritionist/customer',
-  `trace_id` VARCHAR(64) COMMENT '追踪ID',
-  `response_time` INT COMMENT '响应时间(毫秒)',
+  `ai_response` TEXT NOT NULL COMMENT 'AI回复',
+  `prompt_tokens` INT DEFAULT NULL COMMENT 'Prompt tokens',
+  `completion_tokens` INT DEFAULT NULL COMMENT 'Completion tokens',
+  `total_tokens` INT DEFAULT NULL COMMENT 'Total tokens',
   `is_deleted` TINYINT DEFAULT 0 COMMENT '逻辑删除: 0=有效, 1=已删除',
   `create_time` DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   PRIMARY KEY (`id`),
-  KEY `idx_customer_group` (`customer_id`, `group_id`, `is_deleted`),
-  KEY `idx_conversation` (`conversation_id`),
-  KEY `idx_trace_id` (`trace_id`),
-  KEY `idx_create_time` (`create_time`)
+  KEY `idx_customer_conversation` (`customer_id`, `conversation_id`),
+  KEY `idx_customer_deleted_time` (`customer_id`, `is_deleted`, `create_time`),
+  KEY `idx_conversation_time` (`conversation_id`, `create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI聊天历史表';
 
 -- =============================================
@@ -177,7 +175,7 @@ SELECT
 UNION ALL
 SELECT 'b_ai_user_memory', COUNT(*) FROM b_ai_user_memory WHERE is_deleted = 0
 UNION ALL
-SELECT 'b_ai_chat_history', COUNT(*) FROM b_ai_chat_history WHERE is_deleted = 0
+SELECT 't_ai_chat_history', COUNT(*) FROM t_ai_chat_history WHERE is_deleted = 0
 UNION ALL
 SELECT 't_customer', COUNT(*) FROM t_customer WHERE is_deleted = 0
 UNION ALL

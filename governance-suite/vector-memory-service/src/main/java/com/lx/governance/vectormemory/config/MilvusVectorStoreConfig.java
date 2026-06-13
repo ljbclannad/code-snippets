@@ -12,9 +12,17 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 
 import io.milvus.client.MilvusServiceClient;
+import io.milvus.grpc.DataType;
+import io.milvus.grpc.DescribeIndexResponse;
 import io.milvus.param.ConnectParam;
 import io.milvus.param.IndexType;
 import io.milvus.param.MetricType;
+import io.milvus.param.collection.CreateCollectionParam;
+import io.milvus.param.collection.FieldType;
+import io.milvus.param.collection.HasCollectionParam;
+import io.milvus.param.collection.LoadCollectionParam;
+import io.milvus.param.index.CreateIndexParam;
+import io.milvus.param.index.DescribeIndexParam;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -85,6 +93,9 @@ public class MilvusVectorStoreConfig {
     @Value("${spring.ai.vectorstore.milvus.embedding-dimension:1024}")
     private int embeddingDimension;
 
+    @Value("${milvus.reset-collections-on-startup:false}")
+    private boolean resetCollectionsOnStartup;
+
     /**
      * 创建 Milvus 客户端
      */
@@ -100,7 +111,12 @@ public class MilvusVectorStoreConfig {
                         .withDatabaseName(databaseName)
                         .build());
 
-        // 删除旧集合（如果存在）以确保使用新的维度配置
+        if (!resetCollectionsOnStartup) {
+            log.info("保留现有 Milvus collections；如需重建请设置 milvus.reset-collections-on-startup=true");
+            return client;
+        }
+
+        // 仅在显式开启时删除旧集合，避免每次启动都触发重新建索引和噪音日志。
         try {
             if (client.hasCollection(io.milvus.param.collection.HasCollectionParam.newBuilder()
                     .withCollectionName("ai_group_memories").build()).getData()) {
@@ -150,8 +166,10 @@ public class MilvusVectorStoreConfig {
                 .withEmbeddingDimension(embeddingDimension)
                 .build();
 
+        ensureCollectionAndTriggerAsyncLoad(milvusServiceClient, "ai_group_memories");
+
         BatchingStrategy batchingStrategy = new TokenCountBatchingStrategy();
-        return new MilvusVectorStore(milvusServiceClient, embeddingModel, config, true, batchingStrategy);
+        return new MilvusVectorStore(milvusServiceClient, embeddingModel, config, false, batchingStrategy);
     }
 
     /**
@@ -177,7 +195,125 @@ public class MilvusVectorStoreConfig {
                 .withEmbeddingDimension(embeddingDimension)
                 .build();
 
+        ensureCollectionAndTriggerAsyncLoad(milvusServiceClient, "ai_user_memories");
+
         BatchingStrategy batchingStrategy = new TokenCountBatchingStrategy();
-        return new MilvusVectorStore(milvusServiceClient, embeddingModel, config, true, batchingStrategy);
+        return new MilvusVectorStore(milvusServiceClient, embeddingModel, config, false, batchingStrategy);
+    }
+
+    private void ensureCollectionAndTriggerAsyncLoad(
+            MilvusServiceClient milvusServiceClient,
+            String collectionName) {
+
+        if (!hasCollection(milvusServiceClient, collectionName)) {
+            log.info("Milvus collection 不存在，开始创建: {}", collectionName);
+            createCollection(milvusServiceClient, collectionName);
+        }
+
+        if (!hasIndex(milvusServiceClient, collectionName)) {
+            log.info("Milvus index 不存在，开始创建: {}", collectionName);
+            createIndex(milvusServiceClient, collectionName);
+        }
+
+        triggerAsyncLoad(milvusServiceClient, collectionName);
+    }
+
+    private boolean hasCollection(MilvusServiceClient milvusServiceClient, String collectionName) {
+        return milvusServiceClient.hasCollection(HasCollectionParam.newBuilder()
+                .withDatabaseName(databaseName)
+                .withCollectionName(collectionName)
+                .build()).getData();
+    }
+
+    private boolean hasIndex(MilvusServiceClient milvusServiceClient, String collectionName) {
+        try {
+            var response = milvusServiceClient.describeIndex(DescribeIndexParam.newBuilder()
+                    .withDatabaseName(databaseName)
+                    .withCollectionName(collectionName)
+                    .build());
+            DescribeIndexResponse data = response.getData();
+            return data != null && data.getIndexDescriptionsCount() > 0;
+        } catch (Exception e) {
+            log.info("Milvus index 尚不存在: collection={}", collectionName);
+            return false;
+        }
+    }
+
+    private void createCollection(
+            MilvusServiceClient milvusServiceClient,
+            String collectionName) {
+
+        FieldType docIdFieldType = FieldType.newBuilder()
+                .withName(MilvusVectorStore.DOC_ID_FIELD_NAME)
+                .withDataType(DataType.VarChar)
+                .withMaxLength(36)
+                .withPrimaryKey(true)
+                .withAutoID(false)
+                .build();
+        FieldType contentFieldType = FieldType.newBuilder()
+                .withName(MilvusVectorStore.CONTENT_FIELD_NAME)
+                .withDataType(DataType.VarChar)
+                .withMaxLength(65535)
+                .build();
+        FieldType metadataFieldType = FieldType.newBuilder()
+                .withName(MilvusVectorStore.METADATA_FIELD_NAME)
+                .withDataType(DataType.JSON)
+                .build();
+        FieldType embeddingFieldType = FieldType.newBuilder()
+                .withName(MilvusVectorStore.EMBEDDING_FIELD_NAME)
+                .withDataType(DataType.FloatVector)
+                .withDimension(embeddingDimension)
+                .build();
+
+        CreateCollectionParam createCollectionReq = CreateCollectionParam.newBuilder()
+                .withDatabaseName(databaseName)
+                .withCollectionName(collectionName)
+                .withDescription("Spring AI Vector Store")
+                .addFieldType(docIdFieldType)
+                .addFieldType(contentFieldType)
+                .addFieldType(metadataFieldType)
+                .addFieldType(embeddingFieldType)
+                .build();
+
+        var status = milvusServiceClient.createCollection(createCollectionReq);
+        if (status.getException() != null) {
+            throw new RuntimeException("Failed to create Milvus collection " + collectionName,
+                    status.getException());
+        }
+    }
+
+    private void createIndex(
+            MilvusServiceClient milvusServiceClient,
+            String collectionName) {
+
+        var status = milvusServiceClient.createIndex(CreateIndexParam.newBuilder()
+                .withDatabaseName(databaseName)
+                .withCollectionName(collectionName)
+                .withFieldName(MilvusVectorStore.EMBEDDING_FIELD_NAME)
+                .withIndexType(IndexType.IVF_FLAT)
+                .withMetricType(MetricType.COSINE)
+                .withExtraParam("{\"nlist\":1024}")
+                .withSyncMode(Boolean.FALSE)
+                .build());
+
+        if (status.getException() != null) {
+            throw new RuntimeException("Failed to create Milvus index " + collectionName,
+                    status.getException());
+        }
+    }
+
+    private void triggerAsyncLoad(MilvusServiceClient milvusServiceClient, String collectionName) {
+        var status = milvusServiceClient.loadCollection(LoadCollectionParam.newBuilder()
+                .withDatabaseName(databaseName)
+                .withCollectionName(collectionName)
+                .withSyncLoad(Boolean.FALSE)
+                .build());
+
+        if (status.getException() != null) {
+            throw new RuntimeException("Failed to trigger async load for " + collectionName,
+                    status.getException());
+        }
+
+        log.info("已触发 Milvus collection 异步加载: {}", collectionName);
     }
 }

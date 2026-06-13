@@ -5,6 +5,7 @@ import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import com.lx.governance.profile.entity.UserProfileCandidateFieldEntity;
@@ -32,6 +33,7 @@ public class ProfileCandidateFieldService {
     private static final int AUTO_CONFIRM_HIT_THRESHOLD = 5;
     private static final double AUTO_CONFIRM_CONFIDENCE_THRESHOLD = 0.8;
 
+    @Autowired
     public ProfileCandidateFieldService(
             UserProfileCandidateFieldMapper candidateFieldMapper,
             UserProfileFieldConflictMapper conflictMapper,

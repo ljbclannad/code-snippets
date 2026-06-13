@@ -5,7 +5,7 @@ spring:
   application:
     name: ai-chat-service
   datasource:
-    url: jdbc:mysql://localhost:3306/ai_memory_db?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    url: jdbc:mysql://localhost:3306/governance?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
     username: root
     password: root
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -39,10 +39,12 @@ spring:
   ai:
     openai:
       api-key: ${DEEPSEEK_API_KEY}
-      base-url: https://api.deepseek.com/v1
+      base-url: https://api.deepseek.com
+      connect-timeout: 5s
+      read-timeout: 60s
       chat:
         options:
-          model: ${DEEPSEEK_MODEL:deepseek-chat}
+          model: ${DEEPSEEK_MODEL:deepseek-v4-pro}
           temperature: 0.7
           max-tokens: 2000
 
@@ -100,51 +102,51 @@ logging:
 ai:
   context:
     # Token 预算配置（基础配置，会根据对话复杂度动态调整）
-    total-budget: 4000              # 总预算
-    user-message-reserve: 500       # 为用户消息预留
+    total-budget: 4000 # 总预算
+    user-message-reserve: 500 # 为用户消息预留
 
     # 各部分预算分配（按优先级）
     # 注意：这些是基础预算，实际使用时会根据 SessionContext.complexity 动态调整
     # - simple: 各部分预算 * 0.5-0.75（简单对话，减少上下文）
     # - medium: 使用基础预算（默认）
     # - complex: 各部分预算 * 1.25-1.5（复杂对话，增加上下文）
-    core-profile-budget: 800        # 核心画像（必须）
-    relevant-memories-budget: 1200  # 相关记忆（重要）
+    core-profile-budget: 800 # 核心画像（必须）
+    relevant-memories-budget: 1200 # 相关记忆（重要）
     conversation-history-budget: 600 # 对话历史（重要）
-    extended-profile-budget: 400    # 扩展画像（可选）
+    extended-profile-budget: 400 # 扩展画像（可选）
 
     # 记忆检索配置
     memory:
-      max-count: 10                 # 最多检索数量
-      similarity-threshold: 0.7     # 相似度阈值
-      short-term-days: 3            # 短期记忆天数
-      mid-term-days: 30             # 中期记忆天数
-      enable-deduplication: true    # 启用去重
+      max-count: 10 # 最多检索数量
+      similarity-threshold: 0.7 # 相似度阈值
+      short-term-days: 3 # 短期记忆天数
+      mid-term-days: 30 # 中期记忆天数
+      enable-deduplication: true # 启用去重
       rewrite:
-        enabled: true               # 启用 LLM Query Rewrite
-        complex-only: true          # 复杂问题仍强制走 LLM Rewrite
+        enabled: true # 启用 LLM Query Rewrite
+        complex-only: true # 复杂问题仍强制走 LLM Rewrite
         contextual-signals-enabled: true # 简单问题也可按上下文依赖信号触发
         short-message-threshold: 18 # 短追问判定阈值
-        temperature: 0.0            # 尽量稳定输出
-        max-tokens: 64              # Rewrite 输出上限
-        max-query-length: 80        # 检索 query 最大长度
+        temperature: 0.0 # 尽量稳定输出
+        max-tokens: 64 # Rewrite 输出上限
+        max-query-length: 80 # 检索 query 最大长度
 
       # 智能过滤配置（混合方案：规则 + 意图分析）
       smart-filter:
-        enabled: true               # 是否启用智能过滤
-        min-message-length: 3       # 最小消息长度
+        enabled: true # 是否启用智能过滤
+        min-message-length: 3 # 最小消息长度
         skip-simple-complexity: true # 是否跳过 simple 复杂度的消息
 
     # 对话历史配置
     conversation:
-      max-rounds: 5                 # 最多保留轮数
-      enabled: true                 # 是否启用对话历史
+      max-rounds: 5 # 最多保留轮数
+      enabled: true # 是否启用对话历史
 
     # 告警配置
     alert:
-      enabled: true                 # 是否启用告警
-      prompt-tokens-threshold: 6000  # Prompt tokens 告警阈值
-      total-tokens-threshold: 28000  # Total tokens 告警阈值
+      enabled: true # 是否启用告警
+      prompt-tokens-threshold: 6000 # Prompt tokens 告警阈值
+      total-tokens-threshold: 28000 # Total tokens 告警阈值
 
 # 对话历史同步配置
 chat:
@@ -180,9 +182,9 @@ profile-completion:
 
   # 追问控制
   follow-up:
-    max-rounds: 3                    # 最多追问轮数
-    max-questions-per-round: 2       # 每轮最多追问问题数
-    timeout-minutes: 10              # 追问超时时间（分钟）
+    max-rounds: 3 # 最多追问轮数
+    max-questions-per-round: 2 # 每轮最多追问问题数
+    timeout-minutes: 10 # 追问超时时间（分钟）
 
   # 规则配置文件路径
   rules-config: classpath:profile-completion-rules.yml
@@ -199,14 +201,14 @@ ai-chat:
   # 配额管理配置
   quota:
     enabled: true
-    default-type: daily           # 默认配额类型: daily, monthly, total
-    default-limit: 100000         # 默认配额限制（tokens）
+    default-type: daily # 默认配额类型: daily, monthly, total
+    default-limit: 100000 # 默认配额限制（tokens）
 
   # 降级配置
   degradation:
-    enabled: true                 # 是否启用降级功能
-    auto-enabled: true            # 是否启用自动降级
-    check-interval-seconds: 10    # 降级检查间隔（秒）
+    enabled: true # 是否启用降级功能
+    auto-enabled: true # 是否启用自动降级
+    check-interval-seconds: 10 # 降级检查间隔（秒）
 
     # 降级阈值配置
     thresholds:
@@ -247,5 +249,5 @@ ai-chat:
 
     # 恢复阈值配置
     recovery:
-      factor: 0.8                 # 恢复因子（需降到降级阈值的 80%）
-      duration-seconds: 30        # 持续时间（秒）
+      factor: 0.8 # 恢复因子（需降到降级阈值的 80%）
+      duration-seconds: 30 # 持续时间（秒）

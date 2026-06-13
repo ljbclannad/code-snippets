@@ -1,10 +1,15 @@
 package com.lx.governance.aichat.config;
 
+import java.time.Duration;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.ClientHttpRequestFactory;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.boot.web.client.ClientHttpRequestFactories;
+import org.springframework.boot.web.client.ClientHttpRequestFactorySettings;
+import org.springframework.boot.web.client.RestClientCustomizer;
 import org.springframework.web.client.RestClient;
 
 /**
@@ -22,6 +27,12 @@ public class RestClientConfig {
     @Value("${dify.api.timeout:30000}")
     private int difyTimeout;
 
+    @Value("${spring.ai.openai.connect-timeout:5s}")
+    private Duration openAiConnectTimeout;
+
+    @Value("${spring.ai.openai.read-timeout:60s}")
+    private Duration openAiReadTimeout;
+
     /**
      * Create RestClient bean for Dify API calls
      */
@@ -33,6 +44,17 @@ public class RestClientConfig {
                 .defaultHeader("Content-Type", "application/json")
                 .requestFactory(clientHttpRequestFactory(difyTimeout))
                 .build();
+    }
+
+    /**
+     * Customize the prototype RestClient.Builder used by Spring AI's OpenAI client.
+     */
+    @Bean
+    public RestClientCustomizer openAiRestClientCustomizer() {
+        return builder -> builder.requestFactory(ClientHttpRequestFactories.get(
+                ClientHttpRequestFactorySettings.DEFAULTS
+                        .withConnectTimeout(openAiConnectTimeout)
+                        .withReadTimeout(openAiReadTimeout)));
     }
 
     /**

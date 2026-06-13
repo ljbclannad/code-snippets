@@ -1,6 +1,7 @@
 package com.lx.governance.aichat.service;
 
 import com.lx.governance.aichat.client.DeepSeekClient;
+import com.lx.governance.aichat.client.UserProfileClientFixed;
 import com.lx.governance.aichat.dto.*;
 import com.lx.governance.aichat.metrics.AiChatMetrics;
 import com.lx.governance.aichat.quota.QuotaService;
@@ -23,6 +24,7 @@ import java.util.UUID;
 public class AiChatStreamService {
 
     private final DeepSeekClient deepSeekClient;
+    private final UserProfileClientFixed userProfileClient;
     private final SessionContextService sessionContextService;
     private final MemoryService memoryService;
     private final ChatAsyncProcessingService chatAsyncProcessingService;
@@ -51,6 +53,9 @@ public class AiChatStreamService {
                 .doOnNext(event -> {
                     // 累积每个事件
                     accumulator.accumulate(event);
+                    if (event.getType() == StreamEvent.EventType.DONE) {
+                        handleStreamCompleted(request, sessionId, accumulator);
+                    }
                 })
                 .doFinally(signal -> {
                     long duration = System.currentTimeMillis() - startTime;
@@ -187,13 +192,7 @@ public class AiChatStreamService {
                 )
                 .flatMapMany(memories -> {
                     // 调用 AI 流式接口
-                    return deepSeekClient.chatStream(request, profile, sessionContext, memories)
-                            .doOnNext(event -> {
-                                // 累积完整响应用于保存
-                                if (event.getType() == StreamEvent.EventType.DONE) {
-                                    handleStreamCompleted(request, sessionContext, sessionId);
-                                }
-                            });
+                    return deepSeekClient.chatStream(request, profile, sessionContext, memories);
                 });
             });
         });
@@ -201,8 +200,7 @@ public class AiChatStreamService {
 
     private UserProfileDTO fetchUserProfile(String customerId) {
         try {
-            // TODO: 实现真实的用户画像获取
-            return new UserProfileDTO();
+            return userProfileClient.requestUserProfile(customerId).join();
         } catch (Exception e) {
             log.warn("获取用户画像失败，使用空画像 - customerId: {}", customerId, e);
             return new UserProfileDTO();
@@ -232,17 +230,18 @@ public class AiChatStreamService {
 
     private void handleStreamCompleted(
             ChatRequest request,
-            SessionContext sessionContext,
-            String sessionId) {
+            String sessionId,
+            StreamResponseAccumulator accumulator) {
         try {
-            // 更新会话上下文（实际响应需要在流处理中累积）
+            String fullContent = accumulator.getFullContent();
             sessionContextService.updateContext(
                     sessionId,
                     request.getMessage(),
-                    "" // 流式响应的完整内容需要在外部累积
+                    fullContent
             );
 
-            log.debug("会话上下文已更新 - sessionId: {}", sessionId);
+            log.debug("会话上下文已更新 - sessionId: {}, assistantLength: {}", sessionId,
+                    fullContent != null ? fullContent.length() : 0);
         } catch (Exception e) {
             log.error("更新会话上下文失败 - sessionId: {}", sessionId, e);
         }

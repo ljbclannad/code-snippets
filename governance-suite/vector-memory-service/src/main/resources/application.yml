@@ -63,10 +63,10 @@ spring:
           host: localhost
           port: 19530
         database-name: default
-        collection-name: user_memory_vectors_v3  # v3: 1024-dim (text-embedding-v3)
+        collection-name: user_memory_vectors_v3 # v3: 1024-dim (text-embedding-v3)
         embedding-dimension: 1024
         index-type: IVF_FLAT
-        metric-type: COSINE  # COSINE preferred over L2 for text embeddings (measures angular similarity)
+        metric-type: COSINE # COSINE preferred over L2 for text embeddings (measures angular similarity)
         nlist: 1024
 
     # 通义千问 Embedding 配置
@@ -79,10 +79,10 @@ spring:
     # DeepSeek 配置 (OpenAI 兼容)
     openai:
       api-key: ${DEEPSEEK_API_KEY:your-deepseek-api-key}
-      base-url: https://api.deepseek.com/v1
+      base-url: https://api.deepseek.com
       chat:
         options:
-          model: deepseek-chat
+          model: deepseek-v4-pro
           temperature: 0.7
           max-tokens: 2000
 
@@ -136,3 +136,7 @@ memory:
   redis:
     dedup:
       enabled: true
+
+milvus:
+  # 默认保留已有 collection 和 index，避免每次启动都删库重建并触发首次建索引告警。
+  reset-collections-on-startup: false

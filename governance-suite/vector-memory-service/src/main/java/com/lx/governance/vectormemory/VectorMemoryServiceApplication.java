@@ -16,7 +16,10 @@ import org.springframework.scheduling.annotation.EnableAsync;
 })
 @EnableAsync
 @EnableRetry
-@MapperScan("com.lx.governance.vectormemory.mapper")
+@MapperScan({
+        "com.lx.governance.vectormemory.mapper",
+        "com.lx.governance.vectormemory.repo"
+})
 public class VectorMemoryServiceApplication {
 
     public static void main(String[] args) {

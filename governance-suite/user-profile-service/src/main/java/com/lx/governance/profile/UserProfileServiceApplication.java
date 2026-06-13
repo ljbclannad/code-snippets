@@ -7,7 +7,10 @@ import org.springframework.cache.annotation.EnableCaching;
 
 @SpringBootApplication
 @EnableCaching
-@MapperScan("com.lx.governance.profile.mapper")
+@MapperScan({
+        "com.lx.governance.profile.mapper",
+        "com.lx.governance.profile.repo"
+})
 public class UserProfileServiceApplication {
     
     public static void main(String[] args) {

@@ -22,7 +22,7 @@ import org.springframework.test.context.TestPropertySource;
 @SpringBootTest
 @TestPropertySource(properties = {
         "spring.ai.openai.api-key=test-key",
-        "spring.ai.openai.base-url=https://api.deepseek.com/v1",
+        "spring.ai.openai.base-url=https://api.deepseek.com",
         "spring.ai.openai.chat.options.model=deepseek-chat"
 })
 class DeepSeekClientSpringAiIntegrationTest {

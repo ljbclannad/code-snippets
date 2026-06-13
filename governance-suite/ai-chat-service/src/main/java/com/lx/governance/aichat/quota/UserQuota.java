@@ -1,5 +1,6 @@
 package com.lx.governance.aichat.quota;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -59,6 +60,7 @@ public class UserQuota {
     /**
      * 获取剩余配额
      */
+    @JsonIgnore
     public int getRemaining() {
         return Math.max(0, quotaLimit - quotaUsed);
     }
@@ -66,6 +68,7 @@ public class UserQuota {
     /**
      * 是否超额
      */
+    @JsonIgnore
     public boolean isExceeded() {
         return quotaUsed >= quotaLimit;
     }

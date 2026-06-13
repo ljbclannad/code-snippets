@@ -50,7 +50,7 @@
   - 单测能验证策略分支
 
 ### 3. 流式链路接入真实画像拉取
-- [ ] 让流式聊天链路使用真实用户画像，而不是空画像
+- [x] 让流式聊天链路使用真实用户画像，而不是空画像
 - 当前现状：
   [AiChatStreamService.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai-chat-service/src/main/java/com/lx/governance/aichat/service/AiChatStreamService.java:202) 中 `fetchUserProfile(...)` 仍是 `TODO`
 - 当前问题：
@@ -66,7 +66,7 @@
   - 流式测试覆盖成功与降级场景
 
 ### 4. 流式链路写回完整 assistant 响应
-- [ ] 流式回答完成后，把完整 assistant 内容写回会话上下文和历史
+- [x] 流式回答完成后，把完整 assistant 内容写回会话上下文和历史
 - 当前现状：
   [AiChatStreamService.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai-chat-service/src/main/java/com/lx/governance/aichat/service/AiChatStreamService.java:238) 更新上下文时传的是空字符串
 - 当前问题：
@@ -212,13 +212,13 @@
 ## 推荐开发顺序
 
 ### 第一阶段：保证主链路一致性
-- [ ] 1. 长期记忆过滤 SQL 下推
-- [ ] 2. 按意图类型动态设置长期记忆过滤策略
-- [ ] 3. 流式链路接入真实画像拉取
-- [ ] 4. 流式链路写回完整 assistant 响应
+- [x] 1. 长期记忆过滤 SQL 下推
+- [x] 2. 按意图类型动态设置长期记忆过滤策略
+- [x] 3. 流式链路接入真实画像拉取
+- [x] 4. 流式链路写回完整 assistant 响应
 
 ### 第二阶段：提升检索质量与 Prompt 可扩展性
-- [ ] 5. 完善 LLM Query Rewrite 策略
+- [x] 5. 完善 LLM Query Rewrite 策略
 - [x] 6. Prompt section pipeline 化
 - [x] 7. Redis 最近记忆过滤一致性
 - [ ] 8. 自动确认策略分层化
