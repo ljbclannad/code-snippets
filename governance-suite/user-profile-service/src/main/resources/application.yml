@@ -59,6 +59,19 @@ management:
   health:
     redis:
       enabled: false
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    tags:
+      application: ${spring.application.name}
+      environment: ${ENVIRONMENT:dev}
+    enable:
+      jvm: true
+      process: true
+      system: true
+      logback: true
+      tomcat: true
 
 logging:
   level:
