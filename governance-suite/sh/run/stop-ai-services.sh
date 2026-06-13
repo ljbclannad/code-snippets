@@ -10,6 +10,7 @@ SERVICES=(
   "user-profile-service:8101"
   "vector-memory-service:8102"
   "ai-chat-service:8100"
+  "doctor-assistant-agent:8088"
 )
 
 stop_pid_if_running() {
@@ -55,7 +56,7 @@ force_kill_port() {
   done <<< "${pids}"
 }
 
-echo "=== 停止 AI 对话服务 ==="
+echo "=== 停止 AI 主链路服务 ==="
 
 for entry in "${SERVICES[@]}"; do
   IFS=":" read -r service port <<< "${entry}"

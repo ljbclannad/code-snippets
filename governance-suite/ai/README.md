@@ -73,11 +73,21 @@ ai/
 # 方式 1: 使用脚本（推荐）
 bash sh/run/start-ai-services.sh
 
-# 方式 2: 手动启动各服务
+# 方式 2: 手动启动主链路服务
 mvn -q -pl ai/user-profile-service spring-boot:run
 mvn -q -pl ai/vector-memory-service spring-boot:run
 mvn -q -pl ai/ai-chat-service spring-boot:run
+mvn -q -pl ai/doctor-assistant-agent spring-boot:run
 ```
+
+说明：
+
+- `start-ai-services.sh` 当前会启动 AI 主链路依赖的 4 个服务：
+  - `user-profile-service`
+  - `vector-memory-service`
+  - `ai-chat-service`
+  - `doctor-assistant-agent`
+- `knowledge-base-service` 仍然保持独立启动，避免把知识库任务耦合进默认对话链路
 
 ### 环境变量
 
@@ -222,6 +232,13 @@ tail -f logs/ai-services/*.log
 ```bash
 bash sh/run/stop-ai-services.sh
 ```
+
+该脚本会同时停止：
+
+- `user-profile-service`
+- `vector-memory-service`
+- `ai-chat-service`
+- `doctor-assistant-agent`
 
 ## 技术栈
 

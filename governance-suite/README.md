@@ -83,6 +83,8 @@ export DIFY_API_KEY=your-key
 bash sh/run/start-ai-services.sh
 ```
 
+说明：该脚本默认启动 AI 主链路依赖的 `user-profile-service`、`vector-memory-service`、`ai-chat-service` 和 `doctor-assistant-agent`；`knowledge-base-service` 仍需按需单独启动。
+
 ### 4. 验证运行
 
 **分布式系统：**

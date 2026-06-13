@@ -11,6 +11,7 @@ SERVICES=(
   "user-profile-service:8101:/actuator/health"
   "vector-memory-service:8102:/actuator/health"
   "ai-chat-service:8100:/actuator/health"
+  "doctor-assistant-agent:8088:/actuator/health"
 )
 
 REQUIRED_CONTAINERS=(
@@ -27,7 +28,7 @@ usage() {
   ./sh/run/start-ai-services.sh [--restart]
 
 参数:
-  --restart   先停止并清理 8100~8102 对应服务，再重新启动
+  --restart   先停止并清理 8088、8100~8102 对应服务，再重新启动
 EOF
 }
 
@@ -182,7 +183,7 @@ start_service() {
   fi
 }
 
-echo "=== 启动 AI 对话服务 ==="
+echo "=== 启动 AI 主链路服务 ==="
 echo "项目目录: ${ROOT_DIR}"
 
 while [[ $# -gt 0 ]]; do
@@ -234,6 +235,7 @@ echo "=== 启动完成 ==="
 echo "user-profile-service: http://localhost:8101"
 echo "vector-memory-service: http://localhost:8102"
 echo "ai-chat-service: http://localhost:8100"
+echo "doctor-assistant-agent: http://localhost:8088"
 echo ""
 echo "日志目录: ${LOG_DIR}"
 echo "查看日志: tail -f ${LOG_DIR}/*.log"
