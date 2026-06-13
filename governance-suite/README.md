@@ -129,9 +129,9 @@ governance-suite/
 └── ai/                          # 🤖 AI 服务体系
     ├── README.md                # AI 服务详细文档
     ├── CLAUDE.md                # AI 服务开发规范
-    ├── ai-chat-service/         # AI对话服务 (8085)
-    ├── user-profile-service/    # 用户画像服务 (8086)
-    ├── vector-memory-service/   # 向量记忆服务 (8087)
+    ├── ai-chat-service/         # AI对话服务 (8100)
+    ├── user-profile-service/    # 用户画像服务 (8101)
+    ├── vector-memory-service/   # 向量记忆服务 (8102)
     ├── doctor-assistant-agent/  # 医生助理Agent (8088)
     └── knowledge-base-service/  # 知识库服务 (8103)
 ```
@@ -168,9 +168,9 @@ governance-suite/
 
 | 服务 | 端口 |
 |-----|------|
-| ai-chat-service | 8085 |
-| user-profile-service | 8086 |
-| vector-memory-service | 8087 |
+| ai-chat-service | 8100 |
+| user-profile-service | 8101 |
+| vector-memory-service | 8102 |
 | doctor-assistant-agent | 8088 |
 | knowledge-base-service | 8103 |
 
@@ -292,7 +292,7 @@ docker compose up -d
 
 1. 检查 API Key 是否配置：`echo $DEEPSEEK_API_KEY`
 2. 检查大模型 API 是否可用
-3. 查看降级指标：`curl http://localhost:8085/actuator/prometheus | grep degradation`
+3. 查看降级指标：`curl http://localhost:8100/actuator/prometheus | grep degradation`
 
 ## 技术栈总览
 

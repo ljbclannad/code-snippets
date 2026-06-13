@@ -326,7 +326,7 @@ management:
 1. **启动服务并产生数据**
    ```bash
    # 启动 ai-chat-service
-   mvn -q -pl ai-chat-service spring-boot:run
+   mvn -q -pl ai/ai-chat-service spring-boot:run
    
    # 发送测试请求
    curl -X POST http://localhost:8100/api/chat \

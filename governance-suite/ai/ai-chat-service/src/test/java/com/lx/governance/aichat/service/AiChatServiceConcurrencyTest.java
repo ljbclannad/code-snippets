@@ -349,6 +349,40 @@ class AiChatServiceConcurrencyTest {
         verify(doctorAssistantAgentGateway).analyzePatientTask(any());
     }
 
+    @Test
+    void shouldUpdateContextAndTriggerAsyncProcessingWhenAgentReturnsSuccess() throws Exception {
+        SessionContext context = SessionContext.builder()
+                .conversationId("conv-5")
+                .customerId("customer-1")
+                .groupId("group-1")
+                .conversationPhase("follow_up")
+                .userIntent("随访分析")
+                .complexity("complex")
+                .build();
+
+        when(sessionContextService.getOrCreateContext(anyString(), anyString(), anyString(), anyString()))
+                .thenReturn(context);
+        when(taskTriggerRouter.route(any())).thenReturn(TaskTriggerDecision.builder()
+                .route(TaskTriggerRoute.DOCTOR_ASSISTANT_AGENT)
+                .taskType(TaskType.PATIENT_FOLLOW_UP_ANALYSIS)
+                .reasons(List.of(TaskTriggerReason.EXPLICIT_ANALYSIS_REQUEST))
+                .summary("命中随访分析升级条件")
+                .build());
+
+        ChatRequest request = new ChatRequest();
+        request.setConversationId("conv-5");
+        request.setCustomerId("customer-1");
+        request.setGroupId("group-1");
+        request.setMessage("请帮我分析一下最近一周的体重变化");
+
+        ChatResponse response = aiChatService.handleChatRequest(request).get(1, TimeUnit.SECONDS);
+
+        assertTrue(response.getSuccess());
+        assertEquals("建议继续观察并补充近一周血糖记录。", response.getMessage());
+        verify(sessionContextService).updateContext("conv-5", "请帮我分析一下最近一周的体重变化", "建议继续观察并补充近一周血糖记录。");
+        verify(chatAsyncProcessingService).handleChatCompleted(eq(request), any(DifyResponse.class), anyString());
+    }
+
     private ChatRequest buildRequest(String conversationId) {
         ChatRequest request = new ChatRequest();
         request.setConversationId(conversationId);

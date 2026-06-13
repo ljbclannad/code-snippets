@@ -463,13 +463,13 @@ doctor-assistant-agent/
 ### 构建
 
 ```bash
-mvn -f doctor-assistant-agent/pom.xml clean package
+mvn -f ai/doctor-assistant-agent/pom.xml clean package
 ```
 
 ### 运行
 
 ```bash
-mvn -f doctor-assistant-agent/pom.xml spring-boot:run
+mvn -f ai/doctor-assistant-agent/pom.xml spring-boot:run
 ```
 
 ---
@@ -479,7 +479,7 @@ mvn -f doctor-assistant-agent/pom.xml spring-boot:run
 当前建议优先运行模块级测试：
 
 ```bash
-mvn -f doctor-assistant-agent/pom.xml test
+mvn -f ai/doctor-assistant-agent/pom.xml test
 ```
 
 关键测试方向：

@@ -46,7 +46,7 @@ if curl -s http://localhost:8100/actuator/prometheus > /dev/null 2>&1; then
     echo "   可用指标数量: $(curl -s http://localhost:8100/actuator/prometheus | grep -c '^ai_')"
 else
     echo "   ✗ ai-chat-service 未启动或未暴露指标"
-    echo "   启动命令: mvn -q -pl ai-chat-service spring-boot:run"
+    echo "   启动命令: mvn -q -pl ai/ai-chat-service spring-boot:run"
 fi
 echo ""
 

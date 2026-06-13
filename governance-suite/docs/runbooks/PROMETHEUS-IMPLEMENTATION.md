@@ -100,13 +100,13 @@ mvn clean package -DskipTests -T 1C
 docker compose up -d
 
 # 启动各个服务（每个在独立终端）
-mvn -q -pl gateway spring-boot:run          # 端口 8080
-mvn -q -pl order-service spring-boot:run    # 端口 8081
-mvn -q -pl payment-service spring-boot:run  # 端口 8082
-mvn -q -pl inventory-service spring-boot:run # 端口 8083
-mvn -q -pl user-service spring-boot:run     # 端口 8084
-mvn -q -pl outbox-consumer spring-boot:run  # 端口 8090
-mvn -q -pl ai-chat-service spring-boot:run  # 端口 8100
+mvn -q -pl distributed/gateway spring-boot:run          # 端口 8080
+mvn -q -pl distributed/order-service spring-boot:run    # 端口 8081
+mvn -q -pl distributed/payment-service spring-boot:run  # 端口 8082
+mvn -q -pl distributed/inventory-service spring-boot:run # 端口 8083
+mvn -q -pl distributed/user-service spring-boot:run     # 端口 8084
+mvn -q -pl distributed/outbox-consumer spring-boot:run  # 端口 8090
+mvn -q -pl ai/ai-chat-service spring-boot:run           # 端口 8100
 
 # 验证监控端点
 ./sh/verify/verify-monitoring.sh

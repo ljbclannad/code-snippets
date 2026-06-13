@@ -17,7 +17,7 @@
    | 变量名 | 默认值 | 说明 |
    |--------|--------|------|
    | `base_url` | `http://localhost:8080` | 网关地址 |
-   | `ai_chat_url` | `http://localhost:8085` | AI 对话服务地址 |
+| `ai_chat_url` | `http://localhost:8100` | AI 对话服务地址 |
    | `auth_token` | (自动设置) | 登录后自动保存 |
    | `user_id` | (自动设置) | 注册/登录后自动保存 |
    | `order_no` | (自动设置) | 创建订单后自动保存 |
@@ -74,13 +74,13 @@ Governance Suite API
 #### 准备工作
 ```bash
 # 1. 创建用户画像
-POST http://localhost:8086/api/profile
+POST http://localhost:8101/api/profile
 
 # 2. 添加向量记忆
-POST http://localhost:8087/api/memory
+POST http://localhost:8102/api/memory
 
 # 3. 发起对话（自动检索画像和记忆）
-POST http://localhost:8085/api/chat
+POST http://localhost:8100/api/chat
 ```
 
 ### 3. 使用测试场景

@@ -1,21 +1,43 @@
 # AI 服务体系
 
-AI 服务体系包含三个独立但相互协作的系统：
+AI 子目录当前承载三类能力，但运行主线已经演进为一条整合链路：
 
-1. **AI 记忆系统** - 对话管理、用户画像、向量记忆
-2. **医生助手 Agent** - 任务型智能分析与人机协同
-3. **知识库服务** - 医疗知识检索与管理
+1. **AI 记忆系统**：负责患者对话、会话上下文、用户画像、短期/长期记忆
+2. **医生助手 Agent**：负责对高价值患者对话做任务升级、结构化分析和人工复核承接
+3. **知识库服务**：负责独立的医疗知识管理与语义检索
+
+如果你是第一次进入这个目录，建议先看“整合后的主链路”，再按模块深入。
 
 ## 目录结构
 
 ```
 ai/
-├── ai-chat-service/         # AI对话服务 (8085)
-├── user-profile-service/    # 用户画像服务 (8086)
-├── vector-memory-service/   # 向量记忆服务 (8087)
+├── ai-chat-service/         # AI对话服务 (8100)
+├── user-profile-service/    # 用户画像服务 (8101)
+├── vector-memory-service/   # 向量记忆服务 (8102)
 ├── doctor-assistant-agent/  # 医生助理Agent (8088)
 └── knowledge-base-service/  # 知识库服务 (8103)
 ```
+
+## 当前整合重点
+
+### ai-chat-service x doctor-assistant-agent
+
+当前最重要的链路不是单个模块，而是 `ai-chat-service` 与 `doctor-assistant-agent` 的协同：
+
+1. `ai-chat-service` 先做会话上下文分析、画像装载、短期/长期记忆装载
+2. `TaskTriggerRouter` 判断当前消息是否需要从“普通对话”升级到“任务型 Agent”
+3. 命中升级条件后，`DoctorAssistantTaskRequestFactory` 会把上下文、画像、记忆快照一起打包
+4. `doctor-assistant-agent` 输出三层结果：
+   - `patientSafeReply`
+   - `structuredResult`
+   - `doctorWorkbenchPayload`
+5. 如果 Agent 不可用、灰度未放行或响应异常，则自动回退普通对话
+
+整合后详细时序图见：
+
+- [AI Chat x Doctor Assistant Agent 整合时序图](AI_CHAT_AGENT_INTEGRATION_SEQUENCE.md)
+- [患者对话 Agent 协同系统](../docs/patient-dialog-agent/README.md)
 
 ## Part 1: AI 记忆系统
 
@@ -31,9 +53,9 @@ ai/
 
 | 服务 | 端口 | 说明 |
 |-----|------|-----|
-| ai-chat-service | 8085 | AI对话服务 |
-| user-profile-service | 8086 | 用户画像服务 |
-| vector-memory-service | 8087 | 向量记忆服务 |
+| ai-chat-service | 8100 | AI对话服务 |
+| user-profile-service | 8101 | 用户画像服务 |
+| vector-memory-service | 8102 | 向量记忆服务 |
 
 ### 基础设施依赖
 
@@ -75,15 +97,24 @@ bash sh/test/test-02-vector-memory.sh
 bash sh/test/test-03-ai-chat.sh
 ```
 
-### 架构说明
+### 主链路说明
 
-**对话流程：**
+普通对话链路当前是：
 
-1. 用户消息 → ai-chat-service
-2. 加载用户画像（user-profile-service）
-3. 检索长期记忆（vector-memory-service）
-4. 构建上下文 → 调用大模型
-5. 返回响应 + 更新记忆
+1. 用户消息进入 `ai-chat-service`
+2. `SessionContextService` 从 Redis 读取或重建会话上下文
+3. `user-profile-service` 通过 RabbitMQ RPC 返回画像快照
+4. `LayeredMemoryOrchestrator` 提取短期记忆，并按需向 `vector-memory-service` 检索长期记忆
+5. 未命中升级条件时，直接调用大模型生成回复
+6. 对话完成后异步执行历史落库、索引同步和记忆提取
+
+升级到 Agent 的链路在上面的基础上多出：
+
+1. `TaskTriggerRouter` 做任务升级判定
+2. `AgentDispatchPolicy` 做灰度、熔断和放行判断
+3. `doctor-assistant-agent` 返回患者安全回复、结构化分析结果和工作台载荷
+4. Agent 成功后，`patientSafeReply` 会继续进入患者对话主链路，参与上下文更新、历史落库和记忆提取
+5. 高风险场景进入人工复核闭环
 
 **降级策略（5级）：**
 
@@ -96,6 +127,7 @@ bash sh/test/test-03-ai-chat.sh
 ### 相关文档
 
 - [AI 服务体系文档](../docs/ai-services/README.md)
+- [AI Chat x Doctor Assistant Agent 整合时序图](AI_CHAT_AGENT_INTEGRATION_SEQUENCE.md)
 - [AI Chat Flow 详解](ai-chat-service/README-CHAT-FLOW.md)
 - [降级指南](../docs/ai-services/guides/degradation-guide.md)
 - [动态 Token Budget](../docs/analysis/dynamic-token-budget.md)
@@ -110,6 +142,14 @@ bash sh/test/test-03-ai-chat.sh
 - **ai-chat-service**: 负责"聊"（对话编排）
 - **doctor-assistant-agent**: 负责"办事"（任务分析）
 - **医生工作台**: 负责"治理与执行"
+
+### 当前协同边界
+
+- `ai-chat-service` 保留患者入口、上下文、画像、记忆和普通对话主链路
+- `doctor-assistant-agent` 只接收已经判定需要升级的任务型请求
+- 患者侧只看 `patientSafeReply`，并且只有这部分会写回患者上下文、历史和记忆链路
+- 医生侧和工作台消费 `structuredResult` 与 `doctorWorkbenchPayload`
+- Agent 失败时默认回退普通对话，避免患者链路中断
 
 ### 模块与端口
 
@@ -135,6 +175,7 @@ mvn -q -pl ai/knowledge-base-service spring-boot:run
 
 ### 相关文档
 
+- [AI Chat x Doctor Assistant Agent 整合时序图](AI_CHAT_AGENT_INTEGRATION_SEQUENCE.md)
 - [患者对话 Agent 协同系统](../docs/patient-dialog-agent/README.md)
 - [演进计划完整文档](../docs/patient-dialog-agent/evolution-plan.md)
 - [Doctor Assistant Agent 说明](doctor-assistant-agent/README.md)
@@ -221,9 +262,9 @@ docker compose ps
 **检查端口占用：**
 
 ```bash
-lsof -i :8085
-lsof -i :8086
-lsof -i :8087
+lsof -i :8100
+lsof -i :8101
+lsof -i :8102
 ```
 
 ### 2. 服务注册到 Nacos 失败
@@ -246,7 +287,7 @@ curl https://api.deepseek.com/v1/models \
 查看降级指标：
 
 ```bash
-curl http://localhost:8085/actuator/prometheus | grep degradation
+curl http://localhost:8100/actuator/prometheus | grep degradation
 ```
 
 ### 4. 向量检索无结果
@@ -260,7 +301,7 @@ docker logs gov-milvus
 检查向量数据是否已导入：
 
 ```bash
-curl http://localhost:8087/actuator/health
+curl http://localhost:8102/actuator/health
 ```
 
 ## 开发指南

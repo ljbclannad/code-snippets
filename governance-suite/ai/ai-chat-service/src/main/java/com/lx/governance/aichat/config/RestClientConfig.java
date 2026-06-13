@@ -27,7 +27,7 @@ public class RestClientConfig {
     @Value("${dify.api.timeout:30000}")
     private int difyTimeout;
 
-    @Value("${ai-chat.agent.base-url:http://localhost:8200}")
+    @Value("${ai-chat.agent.base-url:http://localhost:8088}")
     private String doctorAssistantAgentBaseUrl;
 
     @Value("${ai-chat.agent.timeout-ms:8000}")

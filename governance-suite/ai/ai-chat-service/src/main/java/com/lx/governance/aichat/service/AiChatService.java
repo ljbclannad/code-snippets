@@ -305,7 +305,12 @@ public class AiChatService {
 
             metrics.recordAgentInvocation(taskType, "success", durationMs);
             metrics.recordConversationPathLatency("agent", System.currentTimeMillis() - startTime);
-            return CompletableFuture.completedFuture(buildAgentChatResponse(sessionId, agentResponse));
+            return CompletableFuture.completedFuture(buildAgentChatResponse(
+                    request,
+                    sessionContext,
+                    sessionId,
+                    correlationId,
+                    agentResponse));
         } catch (Exception e) {
             String taskType = triggerDecision.getTaskType() != null ? triggerDecision.getTaskType().name() : "UNKNOWN";
             metrics.recordAgentInvocation(taskType, "failure", System.currentTimeMillis() - agentStart);
@@ -370,7 +375,12 @@ public class AiChatService {
         );
     }
 
-    private ChatResponse buildAgentChatResponse(String sessionId, DoctorAssistantTaskResponse agentResponse) {
+    private ChatResponse buildAgentChatResponse(
+            ChatRequest request,
+            SessionContext sessionContext,
+            String sessionId,
+            String correlationId,
+            DoctorAssistantTaskResponse agentResponse) {
         String patientReply = agentResponse.getPatientSafeReply();
         String taskType = agentResponse.getTaskType() != null ? agentResponse.getTaskType().name() : "UNKNOWN";
         if (agentResponse.getStructuredResult() != null
@@ -385,6 +395,17 @@ public class AiChatService {
                 && agentResponse.getNeedsHumanReview()) {
             patientReply = patientReply + "\n\n已同步给医生进一步评估，请先按当前安全建议观察，如有明显不适请及时线下就医。";
         }
+
+        // Agent 成功分支也要并回患者对话主链路，但仅使用患者可见回复，避免把医生侧内部载荷写入上下文或记忆。
+        sessionContextService.updateContext(sessionId, request.getMessage(), patientReply);
+        log.debug("Agent 成功后已更新会话上下文 - sessionId: {}, correlationId: {}", sessionId, correlationId);
+
+        DifyResponse agentConversationResponse = new DifyResponse();
+        agentConversationResponse.setAnswer(patientReply);
+        agentConversationResponse.setConversationId(sessionId);
+        agentConversationResponse.setMessageId(agentResponse.getTaskId());
+        chatAsyncProcessingService.handleChatCompleted(request, agentConversationResponse, correlationId);
+
         return ChatResponse.success(patientReply, sessionId);
     }
 

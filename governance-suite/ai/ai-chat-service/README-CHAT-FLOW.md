@@ -332,16 +332,16 @@
 
 ## 相关代码入口
 
-- [AiChatService.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai-chat-service/src/main/java/com/lx/governance/aichat/service/AiChatService.java:1)
-- [AiChatStreamService.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai-chat-service/src/main/java/com/lx/governance/aichat/service/AiChatStreamService.java:1)
-- [SessionContextService.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai-chat-service/src/main/java/com/lx/governance/aichat/service/SessionContextService.java:1)
-- [RetrievalQueryRewriteService.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai-chat-service/src/main/java/com/lx/governance/aichat/service/RetrievalQueryRewriteService.java:1)
-- [LayeredMemoryOrchestrator.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai-chat-service/src/main/java/com/lx/governance/aichat/service/LayeredMemoryOrchestrator.java:1)
-- [IntentMemoryFilterStrategy.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai-chat-service/src/main/java/com/lx/governance/aichat/service/IntentMemoryFilterStrategy.java:1)
-- [ContextBudgetManager.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai-chat-service/src/main/java/com/lx/governance/aichat/context/ContextBudgetManager.java:1)
-- [PromptSectionBuilder.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai-chat-service/src/main/java/com/lx/governance/aichat/context/PromptSectionBuilder.java:1)
-- [PromptSectionSupport.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai-chat-service/src/main/java/com/lx/governance/aichat/context/PromptSectionSupport.java:1)
-- [DeepSeekClient.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai-chat-service/src/main/java/com/lx/governance/aichat/client/DeepSeekClient.java:1)
+- [AiChatService.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/ai-chat-service/src/main/java/com/lx/governance/aichat/service/AiChatService.java:1)
+- [AiChatStreamService.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/ai-chat-service/src/main/java/com/lx/governance/aichat/service/AiChatStreamService.java:1)
+- [SessionContextService.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/ai-chat-service/src/main/java/com/lx/governance/aichat/service/SessionContextService.java:1)
+- [RetrievalQueryRewriteService.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/ai-chat-service/src/main/java/com/lx/governance/aichat/service/RetrievalQueryRewriteService.java:1)
+- [LayeredMemoryOrchestrator.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/ai-chat-service/src/main/java/com/lx/governance/aichat/service/LayeredMemoryOrchestrator.java:1)
+- [IntentMemoryFilterStrategy.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/ai-chat-service/src/main/java/com/lx/governance/aichat/service/IntentMemoryFilterStrategy.java:1)
+- [ContextBudgetManager.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/ai-chat-service/src/main/java/com/lx/governance/aichat/context/ContextBudgetManager.java:1)
+- [PromptSectionBuilder.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/ai-chat-service/src/main/java/com/lx/governance/aichat/context/PromptSectionBuilder.java:1)
+- [PromptSectionSupport.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/ai-chat-service/src/main/java/com/lx/governance/aichat/context/PromptSectionSupport.java:1)
+- [DeepSeekClient.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/ai-chat-service/src/main/java/com/lx/governance/aichat/client/DeepSeekClient.java:1)
 
 ## chat 调用时序图
 

@@ -74,7 +74,7 @@ docker compose up -d prometheus grafana
 ### 1. 启动 ai-chat-service 并验证指标
 ```bash
 # 启动服务
-mvn -q -pl ai-chat-service spring-boot:run
+mvn -q -pl ai/ai-chat-service spring-boot:run
 
 # 等待服务启动后，发送测试请求
 curl -X POST http://localhost:8100/api/chat \

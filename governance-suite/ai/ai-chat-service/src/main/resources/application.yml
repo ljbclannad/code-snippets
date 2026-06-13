@@ -199,7 +199,7 @@ profile-completion:
 ai-chat:
   agent:
     enabled: false
-    base-url: ${DOCTOR_ASSISTANT_AGENT_BASE_URL:http://localhost:8200}
+    base-url: ${DOCTOR_ASSISTANT_AGENT_BASE_URL:http://localhost:8088}
     timeout-ms: 8000
     auto-fallback-to-direct-chat: true
     doctor-pilot-mode: true

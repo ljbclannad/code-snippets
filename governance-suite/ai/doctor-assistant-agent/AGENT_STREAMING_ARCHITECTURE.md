@@ -96,7 +96,7 @@
 ### `DeepSeekClient`
 
 位置：
-[doctor-assistant-agent/src/main/java/com/health/agent/client/DeepSeekClient.java](/Users/lejinbo/LLM/code-snippets/governance-suite/doctor-assistant-agent/src/main/java/com/health/agent/client/DeepSeekClient.java)
+[DeepSeekClient.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/doctor-assistant-agent/src/main/java/com/health/agent/client/DeepSeekClient.java)
 
 当前同时支持：
 
@@ -118,7 +118,7 @@
 ### `ReActAgentEngine`
 
 位置：
-[doctor-assistant-agent/src/main/java/com/health/agent/engine/ReActAgentEngine.java](/Users/lejinbo/LLM/code-snippets/governance-suite/doctor-assistant-agent/src/main/java/com/health/agent/engine/ReActAgentEngine.java)
+[ReActAgentEngine.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/doctor-assistant-agent/src/main/java/com/health/agent/engine/ReActAgentEngine.java)
 
 新增的流式职责：
 
@@ -137,7 +137,7 @@
 ### `AgentController`
 
 位置：
-[doctor-assistant-agent/src/main/java/com/health/agent/controller/AgentController.java](/Users/lejinbo/LLM/code-snippets/governance-suite/doctor-assistant-agent/src/main/java/com/health/agent/controller/AgentController.java)
+[AgentController.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/doctor-assistant-agent/src/main/java/com/health/agent/controller/AgentController.java)
 
 当前 `execute` 和 `resume` 已切到 `SseEmitter`。
 
@@ -149,7 +149,7 @@ controller 只做两件事：
 ## 5. 当前事件模型
 
 位置：
-[doctor-assistant-agent/src/main/java/com/health/agent/model/AgentStreamEventType.java](/Users/lejinbo/LLM/code-snippets/governance-suite/doctor-assistant-agent/src/main/java/com/health/agent/model/AgentStreamEventType.java)
+[AgentStreamEventType.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/doctor-assistant-agent/src/main/java/com/health/agent/model/AgentStreamEventType.java)
 
 ### 增量事件
 
@@ -307,4 +307,3 @@ curl -N -X POST "http://localhost:8080/api/agent/execute" \
 ```
 
 如果链路正常，会先看到 `thinking_delta`，然后再看到结构化事件。
-

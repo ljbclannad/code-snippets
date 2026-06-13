@@ -193,7 +193,7 @@ It is rejected for:
 ## Local Run
 
 ```bash
-mvn -q -pl knowledge-base-service spring-boot:run
+mvn -q -pl ai/knowledge-base-service spring-boot:run
 ```
 
 ## Verification
@@ -201,7 +201,7 @@ mvn -q -pl knowledge-base-service spring-boot:run
 Module tests:
 
 ```bash
-mvn -pl knowledge-base-service test
+mvn -pl ai/knowledge-base-service test
 ```
 
 Smoke test:
@@ -213,4 +213,4 @@ bash sh/test/test_knowledge_base_service.sh
 ## Notes
 
 - Database schema in the current local setup was patched directly in Docker MySQL rather than maintained via a migration script.
-- `knowledge-base-service/src/main/resources/db/init_kb_service.sql` reflects the intended current schema for fresh initialization.
+- `ai/knowledge-base-service/src/main/resources/db/init_kb_service.sql` reflects the intended current schema for fresh initialization.
