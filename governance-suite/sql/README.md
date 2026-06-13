@@ -6,7 +6,7 @@
 
 ```
 governance-suite/
-├── nacos-schema.sql           # Nacos 配置中心表结构（基础设施）
+├── mysql-schema.sql           # Nacos 配置中心表结构（基础设施）
 ├── distributed/
 │   └── init-databases.sql     # 分布式系统数据库初始化
 └── ai/
@@ -18,7 +18,7 @@ governance-suite/
 ### 1. 初始化基础设施（Nacos）
 
 ```bash
-mysql -h127.0.0.1 -P3306 -uroot -proot < nacos-schema.sql
+mysql -h127.0.0.1 -P3306 -uroot -proot < mysql-schema.sql
 ```
 
 ### 2. 初始化分布式系统
@@ -48,7 +48,7 @@ mysql -h127.0.0.1 -P3306 -uroot -proot < ai/init-databases.sql
 
 ```bash
 # 一次性初始化所有数据库
-mysql -h127.0.0.1 -P3306 -uroot -proot < nacos-schema.sql
+mysql -h127.0.0.1 -P3306 -uroot -proot < mysql-schema.sql
 mysql -h127.0.0.1 -P3306 -uroot -proot < distributed/init-databases.sql
 mysql -h127.0.0.1 -P3306 -uroot -proot < ai/init-databases.sql
 ```
@@ -65,31 +65,31 @@ docker compose up -d
 
 ### 分布式系统服务
 
-| 服务 | 数据库 | 表 |
-|-----|--------|---|
-| order-service | order_db | t_order_0, t_order_1, t_outbox, t_payment_event_consume, t_seckill_order_guard, undo_log |
-| payment-service | payment_db | t_payment_0, t_payment_1, t_id_segment, undo_log |
-| inventory-service | inventory_db | t_stock, undo_log |
-| user-service | user_db | t_user_0, t_user_1, t_user_account, t_id_segment |
-| appointment-service | order_db | t_appointment_order, t_appointment_idempotency, t_department, t_doctor, t_schedule, t_quota_refund_log, t_id_segment |
-| outbox-consumer | order_db | t_outbox (只读) |
+| 服务                | 数据库       | 表                                                                                                                   |
+| ------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------- |
+| order-service       | order_db     | t_order_0, t_order_1, t_outbox, t_payment_event_consume, t_seckill_order_guard, undo_log                             |
+| payment-service     | payment_db   | t_payment_0, t_payment_1, t_id_segment, undo_log                                                                     |
+| inventory-service   | inventory_db | t_stock, undo_log                                                                                                    |
+| user-service        | user_db      | t_user_0, t_user_1, t_user_account, t_id_segment                                                                     |
+| appointment-service | order_db     | t_appointment_order, t_appointment_idempotency, t_department, t_doctor, t_schedule, t_quota_refund_log, t_id_segment |
+| outbox-consumer     | order_db     | t_outbox (只读)                                                                                                      |
 
 ### AI 服务
 
-| 服务 | 数据库 | 表 |
-|-----|--------|---|
-| user-profile-service | governance | t_customer, t_health_assessment, b_ai_user_memory, b_user_profile_* |
-| vector-memory-service | governance | b_ai_group_memory*, b_ai_chat_history, t_ai_chat_history |
-| ai-chat-service | - | 无（仅使用 Redis/RabbitMQ/Elasticsearch） |
+| 服务                   | 数据库           | 表                                                                                                           |
+| ---------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------ |
+| user-profile-service   | governance       | t_customer, t_health_assessment, b_ai_user_memory, b_user_profile_*                                          |
+| vector-memory-service  | governance       | b_ai_group_memory*, b_ai_chat_history, t_ai_chat_history                                                     |
+| ai-chat-service        | -                | 无（仅使用 Redis/RabbitMQ/Elasticsearch）                                                                    |
 | doctor-assistant-agent | doctor_assistant | agent_*, chat_message, follow_up_task, health_knowledge, patient_profile, prescription_record, weight_record |
-| knowledge-base-service | governance | knowledge_base, knowledge_document, knowledge_document_chunk, knowledge_document_parse_result |
+| knowledge-base-service | governance       | knowledge_base, knowledge_document, knowledge_document_chunk, knowledge_document_parse_result                |
 
 ### 基础设施
 
-| 组件 | 数据库 | 说明 |
-|-----|--------|------|
-| Nacos | nacos | 配置中心和服务注册中心 |
-| Seata | seata | 分布式事务协调器 |
+| 组件  | 数据库 | 说明                   |
+| ----- | ------ | ---------------------- |
+| Nacos | nacos  | 配置中心和服务注册中心 |
+| Seata | seata  | 分布式事务协调器       |
 
 ## 重建数据库
 
