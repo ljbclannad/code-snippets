@@ -1,15 +1,16 @@
 package com.lx.governance.aichat.metrics;
 
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.function.Supplier;
+
+import org.springframework.stereotype.Component;
+
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Component;
-
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.CompletableFuture;
-import java.util.function.Supplier;
 
 @Component
 @Slf4j
@@ -46,68 +47,70 @@ public class AiChatMetrics {
         this.meterRegistry = meterRegistry;
 
         // 初始化计数器
+        // Micrometer 会自动将 . 转换为 _，并为 Counter 类型添加 _total 后缀
         this.chatRequestCounter = Counter.builder("ai.chat.requests")
-            .description("Total chat requests")
-            .register(meterRegistry);
+                .description("Total chat requests")
+                .register(meterRegistry);
 
         this.chatErrorCounter = Counter.builder("ai.chat.errors")
-            .description("Total chat errors")
-            .register(meterRegistry);
+                .description("Total chat errors")
+                .register(meterRegistry);
 
         this.contextCacheHitCounter = Counter.builder("ai.context.cache.hit")
-            .description("Context cache hits")
-            .register(meterRegistry);
+                .description("Context cache hits")
+                .register(meterRegistry);
 
         this.contextCacheMissCounter = Counter.builder("ai.context.cache.miss")
-            .description("Context cache misses")
-            .register(meterRegistry);
+                .description("Context cache misses")
+                .register(meterRegistry);
 
         this.profileCacheHitCounter = Counter.builder("ai.profile.cache.hit")
-            .description("Profile cache hits")
-            .register(meterRegistry);
+                .description("Profile cache hits")
+                .register(meterRegistry);
 
         this.profileCacheMissCounter = Counter.builder("ai.profile.cache.miss")
-            .description("Profile cache misses")
-            .register(meterRegistry);
+                .description("Profile cache misses")
+                .register(meterRegistry);
 
         this.memoryDuplicateCounter = Counter.builder("ai.memory.duplicate")
-            .description("Duplicate memories filtered")
-            .register(meterRegistry);
+                .description("Duplicate memories filtered")
+                .register(meterRegistry);
 
         this.budgetCompressionCounter = Counter.builder("ai.budget.compression")
-            .description("Budget compression triggered")
-            .register(meterRegistry);
+                .description("Budget compression triggered")
+                .register(meterRegistry);
 
         // 初始化计时器
         this.chatResponseTimer = Timer.builder("ai.chat.response.time")
-            .description("Chat response time")
-            .register(meterRegistry);
+                .description("Chat response time")
+                .register(meterRegistry);
 
         this.contextAnalysisTimer = Timer.builder("ai.context.analysis.time")
-            .description("Context analysis time")
-            .register(meterRegistry);
+                .description("Context analysis time")
+                .register(meterRegistry);
 
         this.profileFetchTimer = Timer.builder("ai.profile.fetch.time")
-            .description("Profile fetch time")
-            .register(meterRegistry);
+                .description("Profile fetch time")
+                .register(meterRegistry);
 
         this.memoryRetrievalTimer = Timer.builder("ai.memory.retrieval.time")
-            .description("Memory retrieval time")
-            .register(meterRegistry);
+                .description("Memory retrieval time")
+                .register(meterRegistry);
 
         this.embeddingTimer = Timer.builder("ai.embedding.time")
-            .description("Embedding generation time")
-            .register(meterRegistry);
+                .description("Embedding generation time")
+                .register(meterRegistry);
 
         // 降级指标
         this.degradationLevelGauge = io.micrometer.core.instrument.Gauge.builder(
                 "ai.degradation.level", this, AiChatMetrics::getCurrentDegradationLevel)
-            .description("Current degradation level (0=NORMAL, 1=LIGHT, 2=MEDIUM, 3=HEAVY, 4=CRITICAL, 5=CIRCUIT_BREAK)")
-            .register(meterRegistry);
+                .description(
+                        "Current degradation level (0=NORMAL, 1=LIGHT, 2=MEDIUM, 3=HEAVY, 4=CRITICAL, 5=CIRCUIT_BREAK)")
+                .register(meterRegistry);
 
         this.degradationTriggerCounter = Counter.builder("ai.degradation.triggers")
-            .description("Degradation trigger count")
-            .register(meterRegistry);
+                .description("Degradation trigger count")
+                .register(meterRegistry);
     }
 
     private double getCurrentDegradationLevel() {
@@ -159,19 +162,17 @@ public class AiChatMetrics {
         String safeSource = source == null || source.isBlank() ? "UNKNOWN" : source;
         String safeReason = reason == null || reason.isBlank() ? "unknown" : reason;
 
-        rewriteCounters.computeIfAbsent(safeSource + "|" + safeReason, key ->
-                Counter.builder("ai.rewrite.requests")
-                        .description("Retrieval rewrite requests by source and reason")
-                        .tag("source", safeSource)
-                        .tag("reason", safeReason)
-                        .register(meterRegistry))
+        rewriteCounters.computeIfAbsent(safeSource + "|" + safeReason, key -> Counter.builder("ai.rewrite.requests")
+                .description("Retrieval rewrite requests by source and reason")
+                .tag("source", safeSource)
+                .tag("reason", safeReason)
+                .register(meterRegistry))
                 .increment();
 
-        rewriteTimers.computeIfAbsent(safeSource, key ->
-                Timer.builder("ai.rewrite.time")
-                        .description("Retrieval rewrite processing time by source")
-                        .tag("source", safeSource)
-                        .register(meterRegistry))
+        rewriteTimers.computeIfAbsent(safeSource, key -> Timer.builder("ai.rewrite.time")
+                .description("Retrieval rewrite processing time by source")
+                .tag("source", safeSource)
+                .register(meterRegistry))
                 .record(java.time.Duration.ofMillis(Math.max(durationMs, 0L)));
     }
 
