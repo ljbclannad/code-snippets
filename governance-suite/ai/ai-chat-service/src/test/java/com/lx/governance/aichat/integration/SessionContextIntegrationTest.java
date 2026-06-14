@@ -16,7 +16,7 @@ import org.springframework.test.context.ActiveProfiles;
 import com.lx.governance.aichat.client.DeepSeekClient;
 import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.ChatResponse;
-import com.lx.governance.aichat.dto.DifyResponse;
+import com.lx.governance.aichat.dto.ChatGenerationResult;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.SessionContext;
 import com.lx.governance.aichat.mapper.AiChatHistoryMapper;
@@ -75,7 +75,7 @@ class SessionContextIntegrationTest {
         request.setMessage(userMessage);
 
         // 2. Mock DeepSeek响应
-        DifyResponse mockResponse = new DifyResponse();
+        ChatGenerationResult mockResponse = new ChatGenerationResult();
         mockResponse.setAnswer("建议您注意低盐饮食，适量运动，保持良好作息。");
         mockResponse.setConversationId(conversationId);
         when(deepSeekClient.chat(any(), any(), any(),
@@ -102,7 +102,7 @@ class SessionContextIntegrationTest {
         String userMessage2 = "那我需要吃药吗？";
         request.setMessage(userMessage2);
 
-        DifyResponse mockResponse2 = new DifyResponse();
+        ChatGenerationResult mockResponse2 = new ChatGenerationResult();
         mockResponse2.setAnswer("建议您先咨询医生，根据血压值和身体状况决定是否需要用药。");
         mockResponse2.setConversationId(conversationId);
         when(deepSeekClient.chat(any(), any(), any(),
@@ -136,7 +136,7 @@ class SessionContextIntegrationTest {
         request1.setGroupId(groupId);
         request1.setMessage("我想了解糖尿病");
 
-        DifyResponse mockResponse1 = new DifyResponse();
+        ChatGenerationResult mockResponse1 = new ChatGenerationResult();
         mockResponse1.setAnswer("糖尿病是一种慢性代谢疾病...");
         mockResponse1.setConversationId(conv1);
         when(deepSeekClient.chat(any(), any(), any(),
@@ -152,7 +152,7 @@ class SessionContextIntegrationTest {
         request2.setGroupId(groupId);
         request2.setMessage("我想了解高血压");
 
-        DifyResponse mockResponse2 = new DifyResponse();
+        ChatGenerationResult mockResponse2 = new ChatGenerationResult();
         mockResponse2.setAnswer("高血压是一种常见的心血管疾病...");
         mockResponse2.setConversationId(conv2);
         when(deepSeekClient.chat(any(), any(), any(),
@@ -185,7 +185,7 @@ class SessionContextIntegrationTest {
         request.setGroupId(groupId);
         request.setMessage(userMessage);
 
-        DifyResponse mockResponse = new DifyResponse();
+        ChatGenerationResult mockResponse = new ChatGenerationResult();
         mockResponse.setAnswer("测试响应");
         mockResponse.setConversationId(conversationId);
         when(deepSeekClient.chat(any(), any(), any(),

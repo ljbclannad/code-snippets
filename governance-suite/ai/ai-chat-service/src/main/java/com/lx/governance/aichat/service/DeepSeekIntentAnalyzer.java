@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lx.governance.aichat.client.DeepSeekClient;
 import com.lx.governance.aichat.dto.ChatRequest;
-import com.lx.governance.aichat.dto.DifyResponse;
+import com.lx.governance.aichat.dto.ChatGenerationResult;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.MessageSummary;
 import com.lx.governance.aichat.dto.SessionContext;
@@ -42,7 +42,7 @@ public class DeepSeekIntentAnalyzer {
             chatRequest.setCustomerId("system");
             chatRequest.setConversationId("intent-analysis-" + System.currentTimeMillis());
 
-            DifyResponse response = deepSeekClient.chat(
+            ChatGenerationResult response = deepSeekClient.chat(
                     chatRequest,
                     null,
                     null,

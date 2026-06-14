@@ -4,10 +4,10 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 
 /**
- * Dify API response DTO
+ * Unified chat generation result DTO.
  */
 @Data
-public class DifyResponse {
+public class ChatGenerationResult {
 
     private String answer;
 

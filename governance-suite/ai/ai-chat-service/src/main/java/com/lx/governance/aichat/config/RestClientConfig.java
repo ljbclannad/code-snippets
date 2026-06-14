@@ -18,15 +18,6 @@ import org.springframework.web.client.RestClient;
 @Configuration
 public class RestClientConfig {
 
-    @Value("${dify.api.base-url}")
-    private String difyBaseUrl;
-
-    @Value("${dify.api.key}")
-    private String difyApiKey;
-
-    @Value("${dify.api.timeout:30000}")
-    private int difyTimeout;
-
     @Value("${ai-chat.agent.base-url:http://localhost:8088}")
     private String doctorAssistantAgentBaseUrl;
 
@@ -38,19 +29,6 @@ public class RestClientConfig {
 
     @Value("${spring.ai.openai.read-timeout:60s}")
     private Duration openAiReadTimeout;
-
-    /**
-     * Create RestClient bean for Dify API calls
-     */
-    @Bean
-    public RestClient difyRestClient() {
-        return RestClient.builder()
-                .baseUrl(difyBaseUrl)
-                .defaultHeader("Authorization", "Bearer " + difyApiKey)
-                .defaultHeader("Content-Type", "application/json")
-                .requestFactory(clientHttpRequestFactory(difyTimeout))
-                .build();
-    }
 
     @Bean
     public RestClient doctorAssistantAgentRestClient() {

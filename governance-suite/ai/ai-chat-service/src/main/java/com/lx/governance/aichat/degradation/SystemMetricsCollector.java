@@ -1,17 +1,16 @@
 package com.lx.governance.aichat.degradation;
 
-import com.lx.governance.aichat.metrics.AiChatMetrics;
-import io.micrometer.core.instrument.MeterRegistry;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.core.RedisTemplate;
-import org.springframework.stereotype.Component;
-
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
 import java.lang.management.OperatingSystemMXBean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.stereotype.Component;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * 系统指标采集器
@@ -24,7 +23,6 @@ import java.util.concurrent.atomic.AtomicLong;
 public class SystemMetricsCollector {
 
     private final RedisTemplate<String, Object> redisTemplate;
-    private final MeterRegistry meterRegistry;
 
     // 并发请求计数
     private final AtomicInteger concurrentRequests = new AtomicInteger(0);
@@ -115,8 +113,7 @@ public class SystemMetricsCollector {
             if (load < 0) {
                 // 某些系统不支持 load average，使用进程 CPU
                 if (osBean instanceof com.sun.management.OperatingSystemMXBean) {
-                    com.sun.management.OperatingSystemMXBean sunOsBean =
-                            (com.sun.management.OperatingSystemMXBean) osBean;
+                    com.sun.management.OperatingSystemMXBean sunOsBean = (com.sun.management.OperatingSystemMXBean) osBean;
                     return sunOsBean.getProcessCpuLoad() * 100;
                 }
                 return 0.0;

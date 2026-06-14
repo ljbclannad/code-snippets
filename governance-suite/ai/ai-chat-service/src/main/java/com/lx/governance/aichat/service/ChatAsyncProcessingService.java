@@ -12,7 +12,7 @@ import org.springframework.stereotype.Service;
 import com.lx.governance.aichat.config.RabbitMQConfig;
 import com.lx.governance.aichat.dto.ChatHistorySyncMessage;
 import com.lx.governance.aichat.dto.ChatRequest;
-import com.lx.governance.aichat.dto.DifyResponse;
+import com.lx.governance.aichat.dto.ChatGenerationResult;
 import com.lx.governance.aichat.entity.AiChatHistory;
 import com.lx.governance.aichat.mapper.AiChatHistoryMapper;
 
@@ -41,7 +41,7 @@ public class ChatAsyncProcessingService {
         this.memoryExtractExecutor = memoryExtractExecutor;
     }
 
-    public void handleChatCompleted(ChatRequest request, DifyResponse response, String correlationId) {
+    public void handleChatCompleted(ChatRequest request, ChatGenerationResult response, String correlationId) {
         CompletableFuture.runAsync(() -> {
             try {
                 AiChatHistory history = saveConversationHistory(request, response);
@@ -56,7 +56,7 @@ public class ChatAsyncProcessingService {
         }, memoryExtractExecutor);
     }
 
-    private AiChatHistory saveConversationHistory(ChatRequest request, DifyResponse response) {
+    private AiChatHistory saveConversationHistory(ChatRequest request, ChatGenerationResult response) {
         try {
             AiChatHistory history = new AiChatHistory();
             history.setCustomerId(request.getCustomerId());
@@ -100,7 +100,7 @@ public class ChatAsyncProcessingService {
         }
     }
 
-    private void triggerMemoryExtraction(ChatRequest request, DifyResponse response, String correlationId) {
+    private void triggerMemoryExtraction(ChatRequest request, ChatGenerationResult response, String correlationId) {
         try {
             memoryService.extractMemory(
                     request.getGroupId(),

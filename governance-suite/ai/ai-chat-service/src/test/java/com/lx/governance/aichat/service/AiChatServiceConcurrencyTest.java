@@ -37,7 +37,7 @@ import com.lx.governance.aichat.degradation.DegradationManager;
 import com.lx.governance.aichat.degradation.DegradationStrategyExecutor;
 import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.ChatResponse;
-import com.lx.governance.aichat.dto.DifyResponse;
+import com.lx.governance.aichat.dto.ChatGenerationResult;
 import com.lx.governance.aichat.dto.LayeredMemories;
 import com.lx.governance.aichat.dto.RetrievalQuery;
 import com.lx.governance.aichat.dto.SessionContext;
@@ -206,7 +206,7 @@ class AiChatServiceConcurrencyTest {
         when(deepSeekClient.chat(any(), any(), any(),
                 org.mockito.ArgumentMatchers.<com.lx.governance.aichat.dto.LayeredMemories>any())).thenAnswer(invocation -> {
             ChatRequest request = invocation.getArgument(0);
-            DifyResponse response = new DifyResponse();
+            ChatGenerationResult response = new ChatGenerationResult();
             response.setAnswer("ok");
             response.setConversationId(request.getConversationId());
             return response;
@@ -245,7 +245,7 @@ class AiChatServiceConcurrencyTest {
         when(deepSeekClient.chat(any(), any(), any(),
                 org.mockito.ArgumentMatchers.<com.lx.governance.aichat.dto.LayeredMemories>any())).thenAnswer(invocation -> {
             ChatRequest request = invocation.getArgument(0);
-            DifyResponse response = new DifyResponse();
+            ChatGenerationResult response = new ChatGenerationResult();
             response.setAnswer("ok");
             response.setConversationId(request.getConversationId());
             return response;
@@ -283,7 +283,7 @@ class AiChatServiceConcurrencyTest {
         when(deepSeekClient.chat(any(), any(), any(),
                 org.mockito.ArgumentMatchers.<com.lx.governance.aichat.dto.LayeredMemories>any())).thenAnswer(invocation -> {
             ChatRequest request = invocation.getArgument(0);
-            DifyResponse response = new DifyResponse();
+            ChatGenerationResult response = new ChatGenerationResult();
             response.setAnswer("ok");
             response.setConversationId(request.getConversationId());
             return response;
@@ -328,7 +328,7 @@ class AiChatServiceConcurrencyTest {
         when(deepSeekClient.chat(any(), any(), any(),
                 org.mockito.ArgumentMatchers.<com.lx.governance.aichat.dto.LayeredMemories>any())).thenAnswer(invocation -> {
             ChatRequest request = invocation.getArgument(0);
-            DifyResponse response = new DifyResponse();
+            ChatGenerationResult response = new ChatGenerationResult();
             response.setAnswer("已先按普通对话回复");
             response.setConversationId(request.getConversationId());
             return response;
@@ -380,7 +380,7 @@ class AiChatServiceConcurrencyTest {
         assertTrue(response.getSuccess());
         assertEquals("建议继续观察并补充近一周血糖记录。", response.getMessage());
         verify(sessionContextService).updateContext("conv-5", "请帮我分析一下最近一周的体重变化", "建议继续观察并补充近一周血糖记录。");
-        verify(chatAsyncProcessingService).handleChatCompleted(eq(request), any(DifyResponse.class), anyString());
+        verify(chatAsyncProcessingService).handleChatCompleted(eq(request), any(ChatGenerationResult.class), anyString());
     }
 
     private ChatRequest buildRequest(String conversationId) {

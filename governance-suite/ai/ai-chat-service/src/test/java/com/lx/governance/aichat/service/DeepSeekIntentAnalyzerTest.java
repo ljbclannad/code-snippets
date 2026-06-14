@@ -20,7 +20,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.lx.governance.aichat.client.DeepSeekClient;
 import com.lx.governance.aichat.dto.ChatRequest;
-import com.lx.governance.aichat.dto.DifyResponse;
+import com.lx.governance.aichat.dto.ChatGenerationResult;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.MessageSummary;
 import com.lx.governance.aichat.dto.SessionContext;
@@ -48,10 +48,10 @@ class DeepSeekIntentAnalyzerTest {
                 "  \"complexity\": \"simple\"\n" +
                 "}";
 
-        DifyResponse difyResponse = new DifyResponse();
-        difyResponse.setAnswer(mockResponse);
+        ChatGenerationResult chatResult = new ChatGenerationResult();
+        chatResult.setAnswer(mockResponse);
         when(deepSeekClient.chat(any(ChatRequest.class), isNull(), isNull(),
-                org.mockito.ArgumentMatchers.<MemoryItemDTO>anyList())).thenReturn(difyResponse);
+                org.mockito.ArgumentMatchers.<MemoryItemDTO>anyList())).thenReturn(chatResult);
 
         // When
         SessionContext result = intentAnalyzer.analyzeIntent(message, Collections.emptyList());
@@ -88,10 +88,10 @@ class DeepSeekIntentAnalyzerTest {
                 "  \"complexity\": \"complex\"\n" +
                 "}";
 
-        DifyResponse difyResponse = new DifyResponse();
-        difyResponse.setAnswer(mockResponse);
+        ChatGenerationResult chatResult = new ChatGenerationResult();
+        chatResult.setAnswer(mockResponse);
         when(deepSeekClient.chat(any(ChatRequest.class), isNull(), isNull(),
-                org.mockito.ArgumentMatchers.<MemoryItemDTO>anyList())).thenReturn(difyResponse);
+                org.mockito.ArgumentMatchers.<MemoryItemDTO>anyList())).thenReturn(chatResult);
 
         // When
         SessionContext result = intentAnalyzer.analyzeIntent(message, Arrays.asList(history));

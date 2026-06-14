@@ -95,8 +95,8 @@ public class AiChatStreamService {
                 return;
             }
 
-            // 构建 DifyResponse 用于保存
-            DifyResponse response = new DifyResponse();
+            // 构建统一聊天结果用于保存
+            ChatGenerationResult response = new ChatGenerationResult();
             response.setAnswer(fullContent);
             response.setConversationId(conversationId);
             response.setMessageId("msg-" + UUID.randomUUID().toString());
@@ -104,7 +104,7 @@ public class AiChatStreamService {
             // 如果有 token 使用信息，添加到 metadata
             StreamEvent.TokenUsage tokenUsage = accumulator.getTokenUsage();
             if (tokenUsage != null) {
-                DifyResponse.Metadata metadata = new DifyResponse.Metadata();
+                ChatGenerationResult.Metadata metadata = new ChatGenerationResult.Metadata();
                 metadata.setUsage(String.format("prompt_tokens=%d, completion_tokens=%d, total_tokens=%d",
                         tokenUsage.getPromptTokens(),
                         tokenUsage.getCompletionTokens(),

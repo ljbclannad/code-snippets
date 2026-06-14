@@ -16,15 +16,14 @@ import com.lx.governance.aichat.degradation.DegradationLevel;
 import com.lx.governance.aichat.degradation.DegradationManager;
 import com.lx.governance.aichat.degradation.DegradationStrategyExecutor;
 import com.lx.governance.aichat.document.ChatHistoryDocument;
+import com.lx.governance.aichat.dto.ChatGenerationResult;
 import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.ChatResponse;
 import com.lx.governance.aichat.dto.DiagnosisResult;
-import com.lx.governance.aichat.dto.DifyResponse;
 import com.lx.governance.aichat.dto.DoctorAssistantTaskRequest;
 import com.lx.governance.aichat.dto.DoctorAssistantTaskResponse;
 import com.lx.governance.aichat.dto.DoctorAssistantTaskStatus;
 import com.lx.governance.aichat.dto.LayeredMemories;
-import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.SessionContext;
 import com.lx.governance.aichat.dto.TaskTriggerContext;
 import com.lx.governance.aichat.dto.TaskTriggerDecision;
@@ -33,7 +32,6 @@ import com.lx.governance.aichat.exception.AiServiceException;
 import com.lx.governance.aichat.exception.ConversationException;
 import com.lx.governance.aichat.metrics.AiChatMetrics;
 import com.lx.governance.aichat.quota.QuotaService;
-import com.lx.governance.aichat.util.MessageValidator;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -87,14 +85,12 @@ public class AiChatService {
         if (degradationManager.getCurrentLevel() == DegradationLevel.CIRCUIT_BREAK) {
             log.warn("服务熔断中 - customerId: {}", request.getCustomerId());
             return CompletableFuture.completedFuture(
-                    degradationStrategyExecutor.getCircuitBreakResponse(sessionId)
-            );
+                    degradationStrategyExecutor.getCircuitBreakResponse(sessionId));
         }
 
         // 尝试使用缓存响应（极限降级时）
         ChatResponse cachedResponse = degradationStrategyExecutor.getCachedResponse(
-                request.getCustomerId(), request.getMessage()
-        );
+                request.getCustomerId(), request.getMessage());
         if (cachedResponse != null) {
             return CompletableFuture.completedFuture(cachedResponse);
         }
@@ -149,7 +145,8 @@ public class AiChatService {
                     .sessionContext(sessionContext)
                     .build());
 
-            log.info("TaskTriggerRouter 判定完成 - conversationId: {}, route: {}, taskType: {}, reasons: {}, summary: {}, correlationId: {}",
+            log.info(
+                    "TaskTriggerRouter 判定完成 - conversationId: {}, route: {}, taskType: {}, reasons: {}, summary: {}, correlationId: {}",
                     sessionId,
                     triggerDecision.getRoute(),
                     triggerDecision.getTaskType(),
@@ -205,9 +202,11 @@ public class AiChatService {
                                 memories.getLongTermMemories().size(),
                                 correlationId);
                         if (triggerDecision != null && triggerDecision.shouldUpgradeToAgent()) {
-                            AgentDispatchPolicy.Decision policyDecision = agentDispatchPolicy.evaluate(request, triggerDecision);
+                            AgentDispatchPolicy.Decision policyDecision = agentDispatchPolicy.evaluate(request,
+                                    triggerDecision);
                             if (!policyDecision.invokeAgent()) {
-                                log.info("Agent 灰度/熔断策略未放行，回退普通对话 - conversationId: {}, taskType: {}, reason: {}, correlationId: {}",
+                                log.info(
+                                        "Agent 灰度/熔断策略未放行，回退普通对话 - conversationId: {}, taskType: {}, reason: {}, correlationId: {}",
                                         sessionId,
                                         triggerDecision.getTaskType(),
                                         policyDecision.reason(),
@@ -261,7 +260,8 @@ public class AiChatService {
                 triggerDecision,
                 correlationId);
 
-        log.info("已完成患者对话 -> Agent 请求打包 - conversationId: {}, taskType: {}, source: {}, hasSessionContext: {}, hasProfileSnapshot: {}, hasMemorySnapshot: {}, correlationId: {}",
+        log.info(
+                "已完成患者对话 -> Agent 请求打包 - conversationId: {}, taskType: {}, source: {}, hasSessionContext: {}, hasProfileSnapshot: {}, hasMemorySnapshot: {}, correlationId: {}",
                 agentTaskRequest.getConversationId(),
                 agentTaskRequest.getTaskType(),
                 agentTaskRequest.getSource(),
@@ -272,7 +272,8 @@ public class AiChatService {
 
         long agentStart = System.currentTimeMillis();
         try {
-            DoctorAssistantTaskResponse agentResponse = doctorAssistantAgentGateway.analyzePatientTask(agentTaskRequest);
+            DoctorAssistantTaskResponse agentResponse = doctorAssistantAgentGateway
+                    .analyzePatientTask(agentTaskRequest);
             long durationMs = System.currentTimeMillis() - agentStart;
             String taskType = triggerDecision.getTaskType() != null ? triggerDecision.getTaskType().name() : "UNKNOWN";
 
@@ -363,7 +364,7 @@ public class AiChatService {
             long startTime,
             UserProfileDTO profile,
             LayeredMemories memories) {
-        DifyResponse difyResponse = deepSeekClient.chat(request, profile, sessionContext, memories);
+        ChatGenerationResult chatResult = deepSeekClient.chat(request, profile, sessionContext, memories);
         metrics.recordConversationPathLatency("direct_chat", System.currentTimeMillis() - startTime);
         return buildChatResponse(
                 request,
@@ -371,8 +372,7 @@ public class AiChatService {
                 sessionId,
                 correlationId,
                 startTime,
-                difyResponse
-        );
+                chatResult);
     }
 
     private ChatResponse buildAgentChatResponse(
@@ -385,7 +385,8 @@ public class AiChatService {
         String taskType = agentResponse.getTaskType() != null ? agentResponse.getTaskType().name() : "UNKNOWN";
         if (agentResponse.getStructuredResult() != null
                 && agentResponse.getStructuredResult().getUncertainties() != null
-                && agentResponse.getStructuredResult().getUncertainties().stream().anyMatch(item -> item != null && item.contains("触发患者侧安全拦截"))) {
+                && agentResponse.getStructuredResult().getUncertainties().stream()
+                        .anyMatch(item -> item != null && item.contains("触发患者侧安全拦截"))) {
             metrics.recordPatientSafetyInterception("PATIENT_TASK_SAFETY_RULE");
         }
         if (agentResponse.getNeedsHumanReview() != null && agentResponse.getNeedsHumanReview()) {
@@ -400,11 +401,11 @@ public class AiChatService {
         sessionContextService.updateContext(sessionId, request.getMessage(), patientReply);
         log.debug("Agent 成功后已更新会话上下文 - sessionId: {}, correlationId: {}", sessionId, correlationId);
 
-        DifyResponse agentConversationResponse = new DifyResponse();
-        agentConversationResponse.setAnswer(patientReply);
-        agentConversationResponse.setConversationId(sessionId);
-        agentConversationResponse.setMessageId(agentResponse.getTaskId());
-        chatAsyncProcessingService.handleChatCompleted(request, agentConversationResponse, correlationId);
+        ChatGenerationResult agentConversationResult = new ChatGenerationResult();
+        agentConversationResult.setAnswer(patientReply);
+        agentConversationResult.setConversationId(sessionId);
+        agentConversationResult.setMessageId(agentResponse.getTaskId());
+        chatAsyncProcessingService.handleChatCompleted(request, agentConversationResult, correlationId);
 
         return ChatResponse.success(patientReply, sessionId);
     }
@@ -420,16 +421,14 @@ public class AiChatService {
         DiagnosisResult diagnosis = profileDiagnosisService.diagnoseProfile(
                 profile,
                 sessionContext,
-                request.getMessage()
-        );
+                request.getMessage());
 
         if (diagnosis.isNeedsCompletion() &&
                 !followUpStateManager.shouldStopFollowUp(sessionContext.getConversationId())) {
 
             List<String> questions = profileDiagnosisService.generateFollowUpQuestions(
                     diagnosis,
-                    profileCompletionProperties.getFollowUp().getMaxQuestionsPerRound()
-            );
+                    profileCompletionProperties.getFollowUp().getMaxQuestionsPerRound());
 
             List<String> fieldPaths = diagnosis.getMissingFields().stream()
                     .map(DiagnosisResult.MissingField::getFieldPath)
@@ -438,20 +437,17 @@ public class AiChatService {
             followUpStateManager.recordFollowUp(
                     sessionContext.getConversationId(),
                     questions,
-                    fieldPaths
-            );
+                    fieldPaths);
 
             sessionContext.setPendingQuestions(questions);
             sessionContextService.updateContext(
                     sessionContext.getConversationId(),
                     request.getMessage(),
-                    ""
-            );
+                    "");
 
             String followUpMessage = followUpResponseBuilder.buildFollowUpMessage(
                     questions,
-                    diagnosis
-            );
+                    diagnosis);
 
             saveFollowUpHistory(request, followUpMessage, sessionContext.getConversationId());
 
@@ -461,8 +457,7 @@ public class AiChatService {
                     questions.size());
 
             return CompletableFuture.completedFuture(
-                    ChatResponse.success(followUpMessage, sessionContext.getConversationId())
-            );
+                    ChatResponse.success(followUpMessage, sessionContext.getConversationId()));
         }
 
         if (!diagnosis.isNeedsCompletion()) {
@@ -504,16 +499,16 @@ public class AiChatService {
             String sessionId,
             String correlationId,
             long startTime,
-            DifyResponse difyResponse) {
-        sessionContextService.updateContext(sessionId, request.getMessage(), difyResponse.getAnswer());
+            ChatGenerationResult chatResult) {
+        sessionContextService.updateContext(sessionId, request.getMessage(), chatResult.getAnswer());
         log.debug("会话上下文已更新 - sessionId: {}, correlationId: {}", sessionId, correlationId);
 
-        chatAsyncProcessingService.handleChatCompleted(request, difyResponse, correlationId);
+        chatAsyncProcessingService.handleChatCompleted(request, chatResult, correlationId);
 
         // 从响应中提取 token 使用情况并更新配额
         try {
-            if (difyResponse.getMetadata() != null && difyResponse.getMetadata().getUsage() != null) {
-                String usage = difyResponse.getMetadata().getUsage();
+            if (chatResult.getMetadata() != null && chatResult.getMetadata().getUsage() != null) {
+                String usage = chatResult.getMetadata().getUsage();
                 // 解析 token 使用情况（格式: "prompt_tokens=X, completion_tokens=Y, total_tokens=Z"）
                 int promptTokens = extractTokenValue(usage, "prompt_tokens");
                 int completionTokens = extractTokenValue(usage, "completion_tokens");
@@ -521,11 +516,10 @@ public class AiChatService {
                 if (promptTokens > 0 && completionTokens > 0) {
                     quotaService.consumeQuota(
                             request.getCustomerId(),
-                            difyResponse.getConversationId(),
-                            difyResponse.getMessageId(),
+                            chatResult.getConversationId(),
+                            chatResult.getMessageId(),
                             promptTokens,
-                            completionTokens
-                    );
+                            completionTokens);
                 }
             }
         } catch (Exception e) {
@@ -547,8 +541,8 @@ public class AiChatService {
                 if (!recommendations.isEmpty()) {
                     log.debug("获取到 {} 条相似对话推荐", recommendations.size());
                     ChatResponse response = ChatResponse.successWithRecommendations(
-                            difyResponse.getAnswer(),
-                            difyResponse.getConversationId(),
+                            chatResult.getAnswer(),
+                            chatResult.getConversationId(),
                             recommendations);
 
                     // 添加降级提示
@@ -565,7 +559,7 @@ public class AiChatService {
             }
         }
 
-        ChatResponse response = ChatResponse.success(difyResponse.getAnswer(), difyResponse.getConversationId());
+        ChatResponse response = ChatResponse.success(chatResult.getAnswer(), chatResult.getConversationId());
 
         // 添加降级提示
         addDegradationNotice(response);
@@ -594,8 +588,7 @@ public class AiChatService {
             degradationStrategyExecutor.cacheResponse(
                     request.getCustomerId(),
                     request.getMessage(),
-                    response
-            );
+                    response);
         }
     }
 
@@ -635,7 +628,7 @@ public class AiChatService {
      */
     private void saveFollowUpHistory(ChatRequest request, String followUpMessage, String conversationId) {
         try {
-            DifyResponse response = new DifyResponse();
+            ChatGenerationResult response = new ChatGenerationResult();
             response.setAnswer(followUpMessage);
             response.setConversationId(conversationId);
             chatAsyncProcessingService.handleChatCompleted(request, response, "follow-up");

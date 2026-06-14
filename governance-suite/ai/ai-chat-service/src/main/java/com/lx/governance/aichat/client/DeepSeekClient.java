@@ -18,7 +18,7 @@ import org.springframework.stereotype.Component;
 import com.lx.governance.aichat.config.ContextBudgetProperties;
 import com.lx.governance.aichat.context.ContextBudgetManager;
 import com.lx.governance.aichat.dto.ChatRequest;
-import com.lx.governance.aichat.dto.DifyResponse;
+import com.lx.governance.aichat.dto.ChatGenerationResult;
 import com.lx.governance.aichat.dto.LayeredMemories;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.SessionContext;
@@ -56,9 +56,9 @@ public class DeepSeekClient {
      * @param userProfile    user profile (nullable)
      * @param sessionContext session context (nullable)
      * @param memories       memory items (nullable)
-     * @return DifyResponse (compatible format)
+     * @return unified chat generation result
      */
-    public DifyResponse chat(ChatRequest request, UserProfileDTO userProfile, SessionContext sessionContext,
+    public ChatGenerationResult chat(ChatRequest request, UserProfileDTO userProfile, SessionContext sessionContext,
             List<MemoryItemDTO> memories) {
         long startTime = System.currentTimeMillis();
 
@@ -102,8 +102,8 @@ public class DeepSeekClient {
             // Record token usage with monitoring logic
             recordTokenUsage(usage, duration);
 
-            // Convert to DifyResponse format
-            return convertToDifyResponse(content, usage, request.getConversationId());
+            // Convert to the internal unified result format
+            return buildChatGenerationResult(content, usage, request.getConversationId());
 
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - startTime;
@@ -116,7 +116,7 @@ public class DeepSeekClient {
         }
     }
 
-    public DifyResponse chat(ChatRequest request, UserProfileDTO userProfile, SessionContext sessionContext,
+    public ChatGenerationResult chat(ChatRequest request, UserProfileDTO userProfile, SessionContext sessionContext,
             LayeredMemories layeredMemories) {
         long startTime = System.currentTimeMillis();
 
@@ -158,7 +158,7 @@ public class DeepSeekClient {
                     usage.getTotalTokens());
 
             recordTokenUsage(usage, duration);
-            return convertToDifyResponse(content, usage, request.getConversationId());
+            return buildChatGenerationResult(content, usage, request.getConversationId());
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - startTime;
             log.error("DeepSeek API call failed after {}ms for customer: {}",
@@ -370,30 +370,30 @@ public class DeepSeekClient {
     }
 
     /**
-     * Convert Spring AI response to Dify response format
+     * Convert Spring AI response to the internal chat result format.
      */
-    private DifyResponse convertToDifyResponse(String content, org.springframework.ai.chat.metadata.Usage usage,
+    private ChatGenerationResult buildChatGenerationResult(String content, org.springframework.ai.chat.metadata.Usage usage,
             String conversationId) {
-        DifyResponse difyResponse = new DifyResponse();
+        ChatGenerationResult chatResult = new ChatGenerationResult();
 
-        difyResponse.setAnswer(content);
+        chatResult.setAnswer(content);
 
         // Use existing conversationId or generate new one
-        difyResponse
+        chatResult
                 .setConversationId(conversationId != null ? conversationId : "conv-" + UUID.randomUUID().toString());
-        difyResponse.setMessageId("msg-" + UUID.randomUUID().toString());
+        chatResult.setMessageId("msg-" + UUID.randomUUID().toString());
 
         // Set metadata
-        DifyResponse.Metadata metadata = new DifyResponse.Metadata();
+        ChatGenerationResult.Metadata metadata = new ChatGenerationResult.Metadata();
         if (usage != null) {
             metadata.setUsage(String.format("prompt_tokens=%d, completion_tokens=%d, total_tokens=%d",
                     usage.getPromptTokens().intValue(),
                     usage.getGenerationTokens().intValue(),
                     usage.getTotalTokens().intValue()));
         }
-        difyResponse.setMetadata(metadata);
+        chatResult.setMetadata(metadata);
 
-        return difyResponse;
+        return chatResult;
     }
 
     // ==================== No longer needed - using Spring AI ====================
