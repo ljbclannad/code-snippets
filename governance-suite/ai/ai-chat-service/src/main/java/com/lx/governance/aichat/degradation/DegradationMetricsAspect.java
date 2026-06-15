@@ -1,17 +1,25 @@
 package com.lx.governance.aichat.degradation;
 
-import com.lx.governance.aichat.metrics.AiChatMetrics;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
+
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.springframework.stereotype.Component;
 
+import com.lx.governance.aichat.dto.ChatResponse;
+import com.lx.governance.aichat.dto.StreamEvent;
+import com.lx.governance.aichat.metrics.AiChatMetrics;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.SignalType;
+
 /**
  * 降级指标采集切面
- * 自动采集请求的并发、错误率、响应时间
- * 集成现有的 AiChatMetrics
+ * 按请求真实完成时机采集并发、错误率、响应时间
  */
 @Slf4j
 @Aspect
@@ -22,71 +30,110 @@ public class DegradationMetricsAspect {
     private final SystemMetricsCollector metricsCollector;
     private final AiChatMetrics aiChatMetrics;
 
-    /**
-     * 拦截聊天服务方法，采集指标
-     */
     @Around("execution(* com.lx.governance.aichat.service.AiChatService.handleChatRequest(..))")
     public Object collectMetrics(ProceedingJoinPoint joinPoint) throws Throwable {
         long startTime = System.currentTimeMillis();
-
-        // 增加并发计数
         metricsCollector.incrementConcurrent();
 
         try {
             Object result = joinPoint.proceed();
+            if (result instanceof CompletableFuture<?> future) {
+                return future.whenComplete((response, ex) -> finishAsyncMetric(startTime, response, ex));
+            }
 
-            // 记录成功请求
             metricsCollector.recordRequest();
-
+            metricsCollector.decrementConcurrent();
+            metricsCollector.recordResponseTime(System.currentTimeMillis() - startTime);
             return result;
-
         } catch (Throwable e) {
-            // 记录错误
             metricsCollector.recordError();
             aiChatMetrics.recordChatError();
-            throw e;
-
-        } finally {
-            // 减少并发计数
             metricsCollector.decrementConcurrent();
-
-            // 记录响应时间
-            long responseTime = System.currentTimeMillis() - startTime;
-            metricsCollector.recordResponseTime(responseTime);
+            metricsCollector.recordResponseTime(System.currentTimeMillis() - startTime);
+            throw e;
+        } finally {
+            if (Thread.currentThread().isInterrupted()) {
+                log.debug("聊天请求指标采集线程被中断");
+            }
         }
     }
 
-    /**
-     * 拦截流式聊天服务方法，采集指标
-     */
     @Around("execution(* com.lx.governance.aichat.service.AiChatStreamService.handleChatStreamRequest(..))")
     public Object collectStreamMetrics(ProceedingJoinPoint joinPoint) throws Throwable {
-        long startTime = System.currentTimeMillis();
-
-        // 增加并发计数
-        metricsCollector.incrementConcurrent();
-
         try {
             Object result = joinPoint.proceed();
+            if (!(result instanceof Flux<?> flux)) {
+                return result;
+            }
 
-            // 记录成功请求
-            metricsCollector.recordRequest();
+            long startTime = System.currentTimeMillis();
+            AtomicBoolean subscribed = new AtomicBoolean(false);
+            AtomicBoolean completed = new AtomicBoolean(false);
+            AtomicBoolean hasErrorEvent = new AtomicBoolean(false);
 
-            return result;
-
+            return flux.doOnSubscribe(subscription -> {
+                        subscribed.set(true);
+                        metricsCollector.incrementConcurrent();
+                    })
+                    .doOnNext(item -> {
+                        if (item instanceof StreamEvent event) {
+                            if (event.getType() == StreamEvent.EventType.ERROR) {
+                                hasErrorEvent.set(true);
+                            } else if (event.getType() == StreamEvent.EventType.DONE) {
+                                completed.set(true);
+                            }
+                        }
+                    })
+                    .doOnError(ex -> {
+                        hasErrorEvent.set(true);
+                        aiChatMetrics.recordChatError();
+                    })
+                    .doFinally(signalType -> finishStreamMetric(
+                            startTime, subscribed.get(), completed.get(), hasErrorEvent.get(), signalType));
         } catch (Throwable e) {
-            // 记录错误
             metricsCollector.recordError();
             aiChatMetrics.recordChatError();
             throw e;
+        }
+    }
 
+    private void finishAsyncMetric(long startTime, Object response, Throwable ex) {
+        try {
+            if (ex != null) {
+                metricsCollector.recordError();
+                aiChatMetrics.recordChatError();
+                return;
+            }
+
+            if (response instanceof ChatResponse chatResponse && !Boolean.TRUE.equals(chatResponse.getSuccess())) {
+                metricsCollector.recordError();
+                aiChatMetrics.recordChatError();
+                return;
+            }
+
+            metricsCollector.recordRequest();
         } finally {
-            // 减少并发计数
             metricsCollector.decrementConcurrent();
+            metricsCollector.recordResponseTime(System.currentTimeMillis() - startTime);
+        }
+    }
 
-            // 记录响应时间
-            long responseTime = System.currentTimeMillis() - startTime;
-            metricsCollector.recordResponseTime(responseTime);
+    private void finishStreamMetric(long startTime, boolean subscribed, boolean completed,
+            boolean hasErrorEvent, SignalType signalType) {
+        if (!subscribed) {
+            return;
+        }
+
+        try {
+            if (hasErrorEvent || signalType == SignalType.ON_ERROR || signalType == SignalType.CANCEL || !completed) {
+                metricsCollector.recordError();
+                aiChatMetrics.recordChatError();
+            } else {
+                metricsCollector.recordRequest();
+            }
+        } finally {
+            metricsCollector.decrementConcurrent();
+            metricsCollector.recordResponseTime(System.currentTimeMillis() - startTime);
         }
     }
 }

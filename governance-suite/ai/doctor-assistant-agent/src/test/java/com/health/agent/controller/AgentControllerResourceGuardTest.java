@@ -2,6 +2,8 @@ package com.health.agent.controller;
 
 import com.health.agent.engine.ReActAgentEngine;
 import com.health.agent.exception.AgentException;
+import com.health.agent.model.AgentSession;
+import com.health.agent.service.AgentSessionService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -18,14 +20,17 @@ import static org.mockito.Mockito.when;
 class AgentControllerResourceGuardTest {
 
     private AgentAccessGuard accessGuard;
+    private AgentSessionService sessionService;
     private AgentController controller;
 
     @BeforeEach
     void setUp() {
         accessGuard = mock(AgentAccessGuard.class);
+        sessionService = mock(AgentSessionService.class);
         controller = new AgentController();
         ReflectionTestUtils.setField(controller, "agentEngine", mock(ReActAgentEngine.class));
         ReflectionTestUtils.setField(controller, "accessGuard", accessGuard);
+        ReflectionTestUtils.setField(controller, "sessionService", sessionService);
         ReflectionTestUtils.setField(controller, "sseTimeoutMillis", 1234L);
     }
 
@@ -58,5 +63,23 @@ class AgentControllerResourceGuardTest {
         AgentException exception = assertThrows(AgentException.class, () -> controller.execute(request));
 
         assertEquals("RATE_LIMITED: 当前医生请求过于频繁，请稍后重试", exception.getMessage());
+    }
+
+    @Test
+    void shouldAcquireResumePermitWithDoctorIdFromSession() {
+        AgentAccessGuard.AccessPermit permit = mock(AgentAccessGuard.AccessPermit.class);
+        AgentSession session = AgentSession.builder().id("1").doctorId("D001").build();
+        when(sessionService.getById("1")).thenReturn(session);
+        when(accessGuard.acquire(eq("D001"), anyBoolean())).thenReturn(permit);
+
+        AgentController.AgentResumeRequest request = new AgentController.AgentResumeRequest();
+        request.setSessionId("1");
+        request.setApprovedTaskId(101L);
+
+        SseEmitter emitter = controller.resume(request);
+
+        assertEquals(1234L, emitter.getTimeout());
+        verify(sessionService).getById("1");
+        verify(accessGuard).acquire("D001", true);
     }
 }

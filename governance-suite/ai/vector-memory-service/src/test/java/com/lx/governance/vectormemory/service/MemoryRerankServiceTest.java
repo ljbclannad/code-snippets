@@ -1,12 +1,14 @@
 package com.lx.governance.vectormemory.service;
 
+import com.lx.governance.vectormemory.config.MemoryRetrievalProperties;
 import com.lx.governance.vectormemory.dto.MemoryItemDTO;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -14,6 +16,8 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 /**
@@ -23,13 +27,17 @@ import static org.mockito.Mockito.when;
  * @since 2026-05-25
  */
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 class MemoryRerankServiceTest {
 
     @Mock
     private EmbeddingService embeddingService;
 
-    @InjectMocks
+    @Mock
+    private BgeRerankClient bgeRerankClient;
+
     private MemoryRerankService rerankService;
+    private MemoryRetrievalProperties properties;
 
     private List<MemoryItemDTO> testMemories;
     private String testQuery;
@@ -37,6 +45,8 @@ class MemoryRerankServiceTest {
     @BeforeEach
     void setUp() {
         testQuery = "如何实现分布式事务？";
+        properties = new MemoryRetrievalProperties();
+        rerankService = new MemoryRerankService(embeddingService, bgeRerankClient, properties);
 
         testMemories = new ArrayList<>();
 
@@ -168,5 +178,42 @@ class MemoryRerankServiceTest {
         assertEquals(1L, result.get(0).getId());
         assertEquals(2L, result.get(1).getId());
         assertEquals(3L, result.get(2).getId());
+    }
+
+    @Test
+    void testRerank_shouldUseExternalProviderWhenConfigured() {
+        properties.getRerank().setProvider("bge-http");
+        List<MemoryItemDTO> expected = List.of(testMemories.get(2), testMemories.get(3));
+        when(bgeRerankClient.rerank(eq(testQuery), anyList(), anyInt())).thenReturn(expected);
+
+        List<MemoryItemDTO> result = rerankService.rerank(testQuery, testMemories, 2);
+
+        assertEquals(expected, result);
+    }
+
+    @Test
+    void testRerank_shouldFallbackToEmbeddingWhenExternalProviderFails() {
+        properties.getRerank().setProvider("bge-http");
+        properties.getRerank().setFallbackToEmbedding(true);
+
+        float[] queryVector = new float[]{0.1f, 0.2f, 0.3f};
+        List<float[]> memoryVectors = List.of(
+                new float[]{0.05f, 0.1f, 0.15f},
+                new float[]{0.08f, 0.12f, 0.18f},
+                new float[]{0.09f, 0.18f, 0.27f},
+                new float[]{0.08f, 0.16f, 0.24f}
+        );
+
+        when(bgeRerankClient.rerank(eq(testQuery), anyList(), anyInt()))
+                .thenThrow(new RuntimeException("remote rerank error"));
+        when(embeddingService.generateEmbedding(testQuery)).thenReturn(queryVector);
+        when(embeddingService.generateEmbeddings(anyList())).thenReturn(memoryVectors);
+        when(embeddingService.cosineSimilarity(any(), any())).thenReturn(0.3, 0.25, 0.95, 0.90);
+
+        List<MemoryItemDTO> result = rerankService.rerank(testQuery, testMemories, 2);
+
+        assertEquals(2, result.size());
+        assertEquals(3L, result.get(0).getId());
+        assertEquals(4L, result.get(1).getId());
     }
 }

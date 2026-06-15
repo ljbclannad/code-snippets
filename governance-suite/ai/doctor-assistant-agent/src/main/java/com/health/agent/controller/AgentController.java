@@ -17,6 +17,8 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.annotation.PreDestroy;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -181,11 +183,16 @@ public class AgentController {
         @ApiResponse(responseCode = "400", description = "会话状态不正确或任务未审批")
     })
     @PostMapping(value = "/resume", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter resume(@RequestBody AgentResumeRequest request) {
+    public SseEmitter resume(@Valid @RequestBody AgentResumeRequest request) {
         log.info("恢复Agent执行: sessionId={}, taskId={}",
             request.getSessionId(), request.getApprovedTaskId());
 
-        AgentAccessGuard.AccessPermit permit = accessGuard.acquire(request.getSessionId(), true);
+        AgentSession session = sessionService.getById(request.getSessionId());
+        if (session == null) {
+            throw new com.health.agent.exception.AgentException("会话不存在: " + request.getSessionId());
+        }
+
+        AgentAccessGuard.AccessPermit permit = accessGuard.acquire(session.getDoctorId(), true);
         AtomicReference<CompletableFuture<?>> streamFuture = new AtomicReference<>();
         SseEmitter emitter = createGuardedEmitter(permit, streamFuture);
         streamFuture.set(CompletableFuture.runAsync(() -> streamToEmitter(emitter, () -> agentEngine.resumeStream(
@@ -490,12 +497,15 @@ public class AgentController {
     @Schema(description = "Agent 执行请求")
     public static class AgentExecuteRequest {
         @Schema(description = "执行目标（自然语言描述）", example = "患者最近体重增加明显，帮我分析一下原因并给出建议", required = true)
+        @NotBlank(message = "goal 不能为空")
         private String goal;
 
         @Schema(description = "患者 ID", example = "1001", required = true)
+        @NotBlank(message = "customerId 不能为空")
         private String customerId;
 
         @Schema(description = "医生 ID", example = "2001", required = true)
+        @NotBlank(message = "doctorId 不能为空")
         private String doctorId;
     }
 
@@ -506,9 +516,11 @@ public class AgentController {
     @Schema(description = "Agent 恢复执行请求")
     public static class AgentResumeRequest {
         @Schema(description = "会话 ID", example = "1234567890", required = true)
+        @NotBlank(message = "sessionId 不能为空")
         private String sessionId;
 
         @Schema(description = "已批准的任务 ID", example = "101", required = true)
+        @NotNull(message = "approvedTaskId 不能为空")
         private Long approvedTaskId;
     }
 

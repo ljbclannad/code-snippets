@@ -116,7 +116,7 @@ public class DegradationManager {
         if (targetLevel != currentLevel) {
             if (targetLevel.isMoreSevereThan(currentLevel)) {
                 // 需要降级
-                degradeTo(targetLevel, "系统负载过高: " + describeMetrics(metrics), false, null);
+                degradeTo(targetLevel, buildReason(targetLevel, metrics), false, null, metrics);
             } else {
                 // 可能恢复
                 checkRecovery(targetLevel, metrics);
@@ -144,12 +144,18 @@ public class DegradationManager {
      * 执行降级
      */
     private void degradeTo(DegradationLevel level, String reason, boolean manual, String operator) {
+        degradeTo(level, reason, manual, operator, null);
+    }
+
+    private void degradeTo(DegradationLevel level, String reason, boolean manual, String operator,
+            DegradationContext.SystemMetrics systemMetrics) {
         DegradationLevel oldLevel = getCurrentLevel();
 
         DegradationContext newContext = DegradationContext.builder()
                 .level(level)
                 .reason(reason)
                 .triggerTime(LocalDateTime.now())
+                .metrics(systemMetrics)
                 .manualTrigger(manual)
                 .triggeredBy(operator)
                 .build();
@@ -179,7 +185,7 @@ public class DegradationManager {
         int requiredCount = properties.getRecovery().getDurationSeconds() / properties.getCheckIntervalSeconds();
 
         if (recoveryCounter >= requiredCount) {
-            degradeTo(targetLevel, "系统负载恢复: " + describeMetrics(metrics), false, null);
+            degradeTo(targetLevel, "系统负载恢复: " + describeMetrics(metrics), false, null, metrics);
             recoveryCounter = 0;
         } else {
             log.debug("恢复检查中: {}/{}, 目标级别: {}", recoveryCounter, requiredCount, targetLevel.getName());
@@ -190,6 +196,11 @@ public class DegradationManager {
      * 根据指标计算目标降级级别
      */
     private DegradationLevel calculateTargetLevel(DegradationContext.SystemMetrics metrics) {
+        DegradationLevel dependencyLevel = calculateDependencyLevel(metrics);
+        if (dependencyLevel != null) {
+            return dependencyLevel;
+        }
+
         DegradationProperties.Thresholds thresholds = properties.getThresholds();
         DegradationLevel currentLevel = getCurrentLevel();
         double factor = currentLevel.isDegraded() ? properties.getRecovery().getFactor() : 1.0;
@@ -212,6 +223,19 @@ public class DegradationManager {
         }
 
         return DegradationLevel.NORMAL;
+    }
+
+    private DegradationLevel calculateDependencyLevel(DegradationContext.SystemMetrics metrics) {
+        if (Boolean.FALSE.equals(metrics.getAiApiAvailable())) {
+            return DegradationLevel.CIRCUIT_BREAK;
+        }
+        if (Boolean.FALSE.equals(metrics.getRedisAvailable())) {
+            return DegradationLevel.CRITICAL;
+        }
+        if (Boolean.FALSE.equals(metrics.getMemoryServiceAvailable())) {
+            return DegradationLevel.MEDIUM;
+        }
+        return null;
     }
 
     /**
@@ -246,11 +270,28 @@ public class DegradationManager {
      * 描述系统指标
      */
     private String describeMetrics(DegradationContext.SystemMetrics metrics) {
-        return String.format("CPU=%.1f%%, Memory=%.1f%%, Concurrent=%d, ErrorRate=%.1f%%, AvgRT=%dms",
+        return String.format(
+                "CPU=%.1f%%, Memory=%.1f%%, Concurrent=%d, ErrorRate=%.1f%%, AvgRT=%dms, AiApi=%s, MemoryService=%s, Redis=%s",
                 metrics.getCpuUsage() != null ? metrics.getCpuUsage() : 0.0,
                 metrics.getMemoryUsage() != null ? metrics.getMemoryUsage() : 0.0,
                 metrics.getConcurrentRequests() != null ? metrics.getConcurrentRequests() : 0,
                 metrics.getErrorRate() != null ? metrics.getErrorRate() : 0.0,
-                metrics.getAvgResponseTime() != null ? metrics.getAvgResponseTime() : 0L);
+                metrics.getAvgResponseTime() != null ? metrics.getAvgResponseTime() : 0L,
+                metrics.getAiApiAvailable(),
+                metrics.getMemoryServiceAvailable(),
+                metrics.getRedisAvailable());
+    }
+
+    private String buildReason(DegradationLevel targetLevel, DegradationContext.SystemMetrics metrics) {
+        if (targetLevel == DegradationLevel.CIRCUIT_BREAK && Boolean.FALSE.equals(metrics.getAiApiAvailable())) {
+            return "AI API 不可用: " + describeMetrics(metrics);
+        }
+        if (targetLevel == DegradationLevel.CRITICAL && Boolean.FALSE.equals(metrics.getRedisAvailable())) {
+            return "Redis 不可用: " + describeMetrics(metrics);
+        }
+        if (targetLevel == DegradationLevel.MEDIUM && Boolean.FALSE.equals(metrics.getMemoryServiceAvailable())) {
+            return "记忆服务不可用: " + describeMetrics(metrics);
+        }
+        return "系统负载过高: " + describeMetrics(metrics);
     }
 }

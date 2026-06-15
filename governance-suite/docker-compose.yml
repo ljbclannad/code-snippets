@@ -201,6 +201,31 @@ services:
             milvus:
                 condition: service_healthy
 
+    # 可选的 BGE Rerank 模型服务。
+    # 启动方式：
+    # docker compose --profile rerank up -d bge-rerank-service
+    bge-rerank-service:
+        profiles: ["rerank"]
+        build:
+            context: ./docker/rerank-service
+        container_name: gov-bge-rerank
+        restart: unless-stopped
+        environment:
+            RERANK_MODEL_NAME: BAAI/bge-reranker-v2-m3
+            RERANK_DEVICE: ${RERANK_DEVICE:-cpu}
+            RERANK_BATCH_SIZE: ${RERANK_BATCH_SIZE:-8}
+            RERANK_MAX_LENGTH: ${RERANK_MAX_LENGTH:-1024}
+            HF_ENDPOINT: ${HF_ENDPOINT:-}
+        ports:
+            - "9997:8000"
+        volumes:
+            - gov_rerank_model_cache:/models
+        healthcheck:
+            test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+
     elasticsearch:
         image: elasticsearch:8.11.0
         container_name: gov-elasticsearch
@@ -324,6 +349,7 @@ volumes:
     gov_etcd_data:
     gov_minio_data:
     gov_milvus_data:
+    gov_rerank_model_cache:
     gov_es_data:
     gov_prometheus_data:
     gov_grafana_data:

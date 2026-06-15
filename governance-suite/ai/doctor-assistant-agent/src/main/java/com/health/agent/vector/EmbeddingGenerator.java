@@ -1,6 +1,7 @@
 package com.health.agent.vector;
 
 import com.health.agent.metrics.VectorMetrics;
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -8,6 +9,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Random;
 
 /**
@@ -31,22 +33,30 @@ public class EmbeddingGenerator {
 
     private final Random random = new Random(42); // 固定种子，保证可重复性
 
+    @PostConstruct
+    void logMode() {
+        if (useMock) {
+            log.warn("EmbeddingGenerator 当前运行在 MOCK 模式，向量检索结果仅适用于本地联调和测试");
+            return;
+        }
+        log.info("EmbeddingGenerator 已切换到 REAL 模式，要求接入真实 Embedding Provider");
+    }
+
     /**
      * 生成文本的向量表示
      */
     public List<Float> generateEmbedding(String text) {
         long startTime = System.currentTimeMillis();
+        String safeText = Objects.requireNonNull(text, "embedding text must not be null");
         if (useMock) {
-            List<Float> embedding = generateMockEmbedding(text);
+            List<Float> embedding = generateMockEmbedding(safeText);
             vectorMetrics.recordEmbeddingGeneration(System.currentTimeMillis() - startTime, true);
             return embedding;
         }
 
-        // TODO: 集成真实的 Embedding 模型
-        // 例如：调用 OpenAI Embeddings API 或本地 BGE 模型
-        List<Float> embedding = generateMockEmbedding(text);
-        vectorMetrics.recordEmbeddingGeneration(System.currentTimeMillis() - startTime, false);
-        return embedding;
+        throw new IllegalStateException(
+            "REAL_EMBEDDING_NOT_IMPLEMENTED: embedding.use-mock=false, 但当前项目尚未接入真实 Embedding Provider"
+        );
     }
 
     /**

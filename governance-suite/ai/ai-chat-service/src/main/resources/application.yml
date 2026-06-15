@@ -212,7 +212,7 @@ ai-chat:
 
   # 配额管理配置
   quota:
-    enabled: true
+    enabled: false
     default-type: daily # 默认配额类型: daily, monthly, total
     default-limit: 100000 # 默认配额限制（tokens）
 

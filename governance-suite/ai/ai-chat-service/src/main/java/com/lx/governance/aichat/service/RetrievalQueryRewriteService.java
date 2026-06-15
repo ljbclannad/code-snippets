@@ -88,6 +88,8 @@ public class RetrievalQueryRewriteService {
             return result;
         }
 
+        // 先用确定性规则把当前话题、意图、最近摘要和核心画像字段拼进查询，
+        // 目的是为“那我这种情况呢”这类上下文依赖问题补足检索语义，同时避免一上来就走 LLM 重写。
         List<String> parts = new ArrayList<>();
         appendIfPresent(parts, sessionContext != null ? sessionContext.getCurrentTopic() : null);
         appendIfPresent(parts, sessionContext != null ? sessionContext.getUserIntent() : null);
@@ -99,6 +101,8 @@ public class RetrievalQueryRewriteService {
         String source = ruleQuery.equals(normalizedMessage) ? "BYPASS" : "RULE";
         String reason = source.equals("RULE") ? "context_enriched" : "original_message_sufficient";
 
+        // 如果当前消息不复杂、也没有明显上下文指代信号，就直接使用规则结果，
+        // 这样可以把常规请求稳定地留在低成本路径上。
         if (!shouldUseLlmRewrite(normalizedMessage, sessionContext, ruleQuery)) {
             RetrievalQuery result = RetrievalQuery.builder()
                     .originalMessage(message)
@@ -110,10 +114,15 @@ public class RetrievalQueryRewriteService {
             return result;
         }
 
+        // 只有在复杂上下文或强 follow-up 信号下才升级到 LLM。
+        // 这里仍然把 ruleQuery 作为 baseline 传进去，保证模型是在“已有上下文补全”的基础上做精修。
         RetrievalRewriteResult rewriteResult = retrievalRewriteClient != null
                 ? retrievalRewriteClient.rewriteStructured(message, sessionContext, userProfile, ruleQuery)
                 : RetrievalRewriteResult.builder().rewrittenQuery("").build();
         String llmQuery = rewriteResult.getRewrittenQuery();
+
+        // LLM 重写结果必须通过长度、空值、答案化倾向和语义重叠校验；
+        // 一旦不可靠，就立刻回退到 ruleQuery，避免把检索查询改坏。
         if (!isValidLlmRewrite(llmQuery, normalizedMessage, ruleQuery)) {
             RetrievalQuery result = RetrievalQuery.builder()
                     .originalMessage(message)
@@ -156,6 +165,7 @@ public class RetrievalQueryRewriteService {
         if (retrievalRewriteClient == null) {
             return false;
         }
+        // 如果既不要求“仅复杂场景”也不要求“上下文信号驱动”，说明配置上允许直接普遍启用 LLM 重写。
         if (!properties.getMemory().getRewrite().isComplexOnly()
                 && !properties.getMemory().getRewrite().isContextualSignalsEnabled()) {
             return true;

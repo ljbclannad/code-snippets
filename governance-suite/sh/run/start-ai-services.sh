@@ -29,6 +29,10 @@ usage() {
 
 参数:
   --restart   先停止并清理 8088、8100~8102 对应服务，再重新启动
+
+可选环境变量:
+  MEMORY_RERANK_PROVIDER   rerank 模式，默认 embedding，可选 bge-http
+  MEMORY_RERANK_BASE_URL   外部 rerank 服务地址，默认 http://localhost:9997
 EOF
 }
 
@@ -212,6 +216,14 @@ require_env "DASHSCOPE_API_KEY"
 require_env "DEEPSEEK_API_KEY"
 require_env "DIFY_API_KEY"
 
+export MEMORY_RERANK_PROVIDER="${MEMORY_RERANK_PROVIDER:-embedding}"
+export MEMORY_RERANK_BASE_URL="${MEMORY_RERANK_BASE_URL:-http://localhost:9997}"
+
+echo "Rerank provider: ${MEMORY_RERANK_PROVIDER}"
+if [[ "${MEMORY_RERANK_PROVIDER}" == "bge-http" ]]; then
+  echo "Rerank base URL: ${MEMORY_RERANK_BASE_URL}"
+fi
+
 echo "检查基础设施状态..."
 cd "${ROOT_DIR}"
 running_containers=$(docker compose ps --status running)
@@ -222,6 +234,16 @@ for container in "${REQUIRED_CONTAINERS[@]}"; do
   fi
 done
 echo "基础设施检查通过"
+
+if [[ "${MEMORY_RERANK_PROVIDER}" == "bge-http" ]]; then
+  rerank_health_url="${MEMORY_RERANK_BASE_URL%/}/health"
+  if curl -fsS "${rerank_health_url}" >/dev/null 2>&1; then
+    echo "外部 rerank 服务检查通过: ${rerank_health_url}"
+  else
+    echo "警告: 外部 rerank 服务暂不可达: ${rerank_health_url}"
+    echo "如果需要启用 BGE Rerank，请先执行: docker compose --profile rerank up -d bge-rerank-service"
+  fi
+fi
 
 mkdir -p "${LOG_DIR}"
 

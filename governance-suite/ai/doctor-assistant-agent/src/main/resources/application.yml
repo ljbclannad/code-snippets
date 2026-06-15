@@ -91,8 +91,7 @@ milvus:
 
 # Embedding 配置
 embedding:
-  use-mock: true # 使用 Mock Embedding（测试用）
-  # 生产环境应该使用真实的 Embedding 模型
+  use-mock: true # true: 使用 Mock Embedding；false: 必须接入真实 Provider，否则请求会显式失败
 
 # 向量检索配置
 vector:

@@ -52,18 +52,26 @@ public class TaskTriggerRouter {
         String message = normalize(context.getMessage());
         SessionContext sessionContext = context.getSessionContext();
 
+        // 画像补全追问阶段优先级最高。
+        // 这类消息通常是在回答系统追问，不应该再被升级到医生助手链路。
         if (hasPendingQuestions(sessionContext)) {
             return direct(TaskTriggerReason.PROFILE_COMPLETION_FOLLOW_UP, "当前会话仍处于画像补全追问阶段");
         }
 
+        // 先把寒暄、感谢、轻量闲聊挡在普通对话路径，
+        // 避免把低价值消息误判成需要画像分析或医生助手处理。
         if (containsAny(message, CASUAL_CHAT_KEYWORDS)) {
             return direct(TaskTriggerReason.CASUAL_CHAT_SIGNAL, "命中寒暄或轻量闲聊信号");
         }
 
+        // “是什么/解释一下”这类偏事实解释的问题，默认保持 direct chat。
+        // 只有在同时带有明显分析诉求时，才继续往后看是否需要升级。
         if (containsAny(message, SIMPLE_FACT_QUERY_KEYWORDS) && !containsAny(message, ANALYSIS_KEYWORDS)) {
             return direct(TaskTriggerReason.SIMPLE_FACT_QUERY, "当前请求更接近直接解释或事实查询");
         }
 
+        // 这里把路由所需的语义信号一次性抽出来，后续分支只关心“组合条件是否成立”，
+        // 让规则更容易读，也方便后续继续扩展更多触发因子。
         boolean analysisRequest = containsAny(message, ANALYSIS_KEYWORDS);
         boolean trendAnalysisRequest = containsAny(message, TREND_ANALYSIS_KEYWORDS);
         boolean strongTrendAnalysisRequest = containsAny(message, STRONG_TREND_ANALYSIS_KEYWORDS);
@@ -72,6 +80,7 @@ public class TaskTriggerRouter {
         boolean complexContextSignal = "complex".equalsIgnoreCase(sessionComplexity(sessionContext))
             || hasRichConversationHistory(sessionContext);
 
+        // 风险/转人工信号优先级最高，一旦命中就直接走风险分层与升级链路。
         if (humanReviewSignal) {
             return agent(
                 TaskType.RISK_STRATIFICATION_AND_ESCALATION,
@@ -80,6 +89,8 @@ public class TaskTriggerRouter {
             );
         }
 
+        // “下一步怎么办”这类问题，只有在分析诉求、趋势语义或复杂上下文存在时才升级，
+        // 目的是避免把过于泛化的建议类提问全部送进 Agent。
         if (nextActionRequest && (analysisRequest || complexContextSignal || trendAnalysisRequest)) {
             return agent(
                 TaskType.NEXT_FOLLOW_UP_ACTION_RECOMMENDATION,
@@ -92,6 +103,8 @@ public class TaskTriggerRouter {
             );
         }
 
+        // 随访趋势分析是最后一层升级条件：
+        // 要么用户明确要求分析且带有趋势语义，要么虽然表达较短，但强趋势词 + 复杂上下文同时成立。
         if ((analysisRequest && trendAnalysisRequest) || (strongTrendAnalysisRequest && complexContextSignal)) {
             return agent(
                 TaskType.PATIENT_FOLLOW_UP_ANALYSIS,

@@ -1,5 +1,6 @@
 package com.lx.governance.vectormemory.service;
 
+import com.lx.governance.vectormemory.config.MemoryRetrievalProperties;
 import com.lx.governance.vectormemory.dto.MemoryItemDTO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,6 +24,8 @@ import java.util.stream.Collectors;
 public class MemoryRerankService {
 
     private final EmbeddingService embeddingService;
+    private final BgeRerankClient bgeRerankClient;
+    private final MemoryRetrievalProperties properties;
 
     /**
      * 对记忆列表进行重排序
@@ -34,6 +37,22 @@ public class MemoryRerankService {
      * @return 重排序后的记忆列表
      */
     public List<MemoryItemDTO> rerank(String query, List<MemoryItemDTO> memories, int topK) {
+        if (useExternalBgeProvider()) {
+            try {
+                return bgeRerankClient.rerank(query, memories, topK);
+            } catch (Exception e) {
+                log.error("External BGE rerank failed: {}", e.getMessage(), e);
+                if (!properties.getRerank().isFallbackToEmbedding()) {
+                    return memories.stream().limit(topK).collect(Collectors.toList());
+                }
+                log.warn("Falling back to embedding-based rerank");
+            }
+        }
+
+        return rerankWithEmbeddings(query, memories, topK);
+    }
+
+    private List<MemoryItemDTO> rerankWithEmbeddings(String query, List<MemoryItemDTO> memories, int topK) {
         long startTime = System.currentTimeMillis();
 
         if (memories == null || memories.isEmpty()) {
@@ -118,6 +137,22 @@ public class MemoryRerankService {
      * @return 重排序后的记忆列表
      */
     public List<MemoryItemDTO> rerankPartial(String query, List<MemoryItemDTO> memories, int topK) {
+        if (useExternalBgeProvider()) {
+            try {
+                return rerankPartialWithExternalProvider(query, memories, topK);
+            } catch (Exception e) {
+                log.error("External partial BGE rerank failed: {}", e.getMessage(), e);
+                if (!properties.getRerank().isFallbackToEmbedding()) {
+                    return memories.stream().limit(topK).collect(Collectors.toList());
+                }
+                log.warn("Falling back to embedding-based partial rerank");
+            }
+        }
+
+        return rerankPartialWithEmbeddings(query, memories, topK);
+    }
+
+    private List<MemoryItemDTO> rerankPartialWithEmbeddings(String query, List<MemoryItemDTO> memories, int topK) {
         long startTime = System.currentTimeMillis();
 
         if (memories == null || memories.isEmpty()) {
@@ -171,5 +206,33 @@ public class MemoryRerankService {
             log.error("Partial rerank failed: {}", e.getMessage(), e);
             return memories.stream().limit(topK).collect(Collectors.toList());
         }
+    }
+
+    private List<MemoryItemDTO> rerankPartialWithExternalProvider(String query, List<MemoryItemDTO> memories, int topK) {
+        if (memories == null || memories.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        List<MemoryItemDTO> needRerank = memories.stream()
+                .filter(m -> m.getSimilarity() == null || m.getSimilarity() == 0.0)
+                .collect(Collectors.toList());
+
+        if (needRerank.isEmpty()) {
+            return memories.stream()
+                    .sorted(Comparator.comparing(MemoryItemDTO::getSimilarity).reversed())
+                    .limit(topK)
+                    .collect(Collectors.toList());
+        }
+
+        bgeRerankClient.rerank(query, needRerank, needRerank.size());
+        return memories.stream()
+                .sorted(Comparator.comparing(MemoryItemDTO::getSimilarity).reversed())
+                .limit(topK)
+                .collect(Collectors.toList());
+    }
+
+    private boolean useExternalBgeProvider() {
+        String provider = properties.getRerank().getProvider();
+        return "bge-http".equalsIgnoreCase(provider);
     }
 }

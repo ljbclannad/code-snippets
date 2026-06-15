@@ -3,6 +3,7 @@ package com.lx.governance.aichat.quota;
 import com.lx.governance.aichat.exception.QuotaException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,10 +27,23 @@ public class QuotaService {
     private static final String QUOTA_CACHE_PREFIX = "quota:";
     private static final long CACHE_TTL_MINUTES = 5;
 
+    @Value("${ai-chat.quota.enabled:true}")
+    private boolean quotaEnabled;
+
+    @Value("${ai-chat.quota.default-type:daily}")
+    private String defaultQuotaType;
+
+    @Value("${ai-chat.quota.default-limit:100000}")
+    private int defaultQuotaLimit;
+
     /**
      * 获取用户配额
      */
     public UserQuota getUserQuota(String customerId) {
+        if (!quotaEnabled) {
+            return buildDisabledQuota(customerId);
+        }
+
         // 先从缓存获取
         String cacheKey = QUOTA_CACHE_PREFIX + customerId;
         UserQuota cached = (UserQuota) redisTemplate.opsForValue().get(cacheKey);
@@ -61,6 +75,11 @@ public class QuotaService {
      * @throws QuotaException 如果配额不足
      */
     public void checkQuota(String customerId, int requiredTokens) {
+        if (!quotaEnabled) {
+            log.debug("全局配额开关关闭，跳过检查 - customerId: {}", customerId);
+            return;
+        }
+
         UserQuota quota = getUserQuota(customerId);
 
         if (!quota.getEnabled()) {
@@ -79,6 +98,11 @@ public class QuotaService {
     @Transactional
     public void consumeQuota(String customerId, String conversationId, String messageId,
                               int promptTokens, int completionTokens) {
+        if (!quotaEnabled) {
+            log.debug("全局配额开关关闭，跳过消费 - customerId: {}", customerId);
+            return;
+        }
+
         UserQuota quota = getUserQuota(customerId);
 
         if (!quota.getEnabled()) {
@@ -119,19 +143,21 @@ public class QuotaService {
      */
     @Transactional
     public UserQuota createDefaultQuota(String customerId) {
+        QuotaType quotaType = parseDefaultQuotaType();
         UserQuota quota = UserQuota.builder()
                 .customerId(customerId)
-                .quotaType(QuotaType.DAILY)
-                .quotaLimit(100000)  // 默认每日 10 万 tokens
+                .quotaType(quotaType)
+                .quotaLimit(defaultQuotaLimit)
                 .quotaUsed(0)
-                .resetTime(calculateNextResetTime(QuotaType.DAILY))
+                .resetTime(calculateNextResetTime(quotaType))
                 .createTime(LocalDateTime.now())
                 .updateTime(LocalDateTime.now())
                 .enabled(true)
                 .build();
 
         quotaRepository.save(quota);
-        log.info("创建默认配额 - customerId: {}, limit: {}", customerId, quota.getQuotaLimit());
+        log.info("创建默认配额 - customerId: {}, type: {}, limit: {}",
+                customerId, quota.getQuotaType(), quota.getQuotaLimit());
 
         return quota;
     }
@@ -220,6 +246,28 @@ public class QuotaService {
             case TOTAL:
             default:
                 return null;
+        }
+    }
+
+    private UserQuota buildDisabledQuota(String customerId) {
+        return UserQuota.builder()
+                .customerId(customerId)
+                .quotaType(parseDefaultQuotaType())
+                .quotaLimit(defaultQuotaLimit)
+                .quotaUsed(0)
+                .resetTime(null)
+                .createTime(LocalDateTime.now())
+                .updateTime(LocalDateTime.now())
+                .enabled(false)
+                .build();
+    }
+
+    private QuotaType parseDefaultQuotaType() {
+        try {
+            return QuotaType.valueOf(defaultQuotaType.trim().toUpperCase());
+        } catch (Exception e) {
+            log.warn("无法解析默认配额类型，回退 DAILY - configuredType: {}", defaultQuotaType);
+            return QuotaType.DAILY;
         }
     }
 }

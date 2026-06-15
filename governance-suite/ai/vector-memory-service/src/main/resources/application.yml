@@ -133,8 +133,18 @@ memory:
     # 是否启用 Rerank（语义重排序）
     rerank:
       enabled: true
+      # provider:
+      # - embedding: 继续使用当前 embedding 二次打分
+      # - bge-http: 调用外部 BGE Rerank 服务
+      provider: ${MEMORY_RERANK_PROVIDER:embedding}
       # Rerank 策略: full（全量重排序）, partial（仅对 Redis 缓存记忆重排序）
       strategy: partial
+      # 外部 Rerank 服务失败时，是否自动降级到 embedding 二次打分
+      fallback-to-embedding: true
+      remote:
+        base-url: ${MEMORY_RERANK_BASE_URL:http://localhost:9997}
+        path: ${MEMORY_RERANK_PATH:/v1/rerank}
+        model: ${MEMORY_RERANK_MODEL:bge-reranker-v2-m3}
 
     # 去重配置
     deduplication:
