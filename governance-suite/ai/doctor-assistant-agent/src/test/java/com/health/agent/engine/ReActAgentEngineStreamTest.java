@@ -2,6 +2,7 @@ package com.health.agent.engine;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
@@ -12,6 +13,7 @@ import static org.mockito.Mockito.when;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,12 +23,18 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.health.agent.client.DeepSeekClient;
+import com.health.agent.dto.agent.AgentExecutionCommand;
+import com.health.agent.dto.patient.AgentTaskConstraints;
+import com.health.agent.dto.patient.AgentTaskSource;
+import com.health.agent.dto.patient.MemorySnapshot;
+import com.health.agent.dto.patient.TaskType;
 import com.health.agent.engine.subagent.CarePlanningSubAgent;
 import com.health.agent.engine.subagent.DataCollectionSubAgent;
 import com.health.agent.engine.subagent.SubAgentCoordinator;
 import com.health.agent.engine.subagent.WeightAnalysisSubAgent;
 import com.health.agent.metrics.AgentMetrics;
 import com.health.agent.model.ActionResult;
+import com.health.agent.model.AgentContext;
 import com.health.agent.model.AgentSession;
 import com.health.agent.model.AgentStreamEvent;
 import com.health.agent.model.AgentStreamEventType;
@@ -227,5 +235,110 @@ class ReActAgentEngineStreamTest {
                         AgentStreamEventType.DONE),
                 events.stream().map(AgentStreamEvent::getType).toList());
         assertInstanceOf(PendingTask.class, events.get(4).getData());
+    }
+
+    @Test
+    void shouldPreloadContextFromAgentExecutionCommand() {
+        AgentSession session = AgentSession.builder().id("1").build();
+        when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
+        when(toolRegistry.getAllTools()).thenReturn(List.of(
+                Tool.builder()
+                        .name("detect_weight_plateau")
+                        .description("识别是否进入减重停滞期")
+                        .riskLevel(ToolRiskLevel.LOW)
+                        .inputSchema(Map.of("weightRecords", Map.of("type", "array")))
+                        .build()));
+
+        DeepSeekClient.DeepSeekResponse first = new DeepSeekClient.DeepSeekResponse();
+        first.setContent("""
+                {
+                  "protocolVersion": "v1",
+                  "thinking": "我需要先识别患者是否进入平台期。",
+                  "finished": false,
+                  "action": {
+                    "toolName": "detect_weight_plateau",
+                    "input": {
+                      "weightRecords": [
+                        {"date": "2026-05-30", "weight": 80.0}
+                      ]
+                    },
+                    "reason": "先识别平台期"
+                  }
+                }
+                """);
+        DeepSeekClient.DeepSeekResponse second = new DeepSeekClient.DeepSeekResponse();
+        second.setContent("""
+                {
+                  "protocolVersion": "v1",
+                  "thinking": "已经有足够证据给出结论。",
+                  "finished": true,
+                  "finalAnswer": {
+                    "summary": "患者近期进入减重停滞期。",
+                    "keyFindings": ["近14天体重变化较小"],
+                    "riskLevel": "MEDIUM",
+                    "recommendedActions": ["安排一次随访沟通"],
+                    "needsAttention": true,
+                    "uncertainties": ["缺少完整饮食记录"],
+                    "supportingEvidence": ["WEIGHT_HISTORY", "SESSION_CONTEXT"],
+                    "evidenceSources": ["AI_CHAT_MEMORY_SNAPSHOT", "AI_CHAT_SESSION_CONTEXT"],
+                    "inferences": ["适合继续随访分析"]
+                  }
+                }
+                """);
+        doAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            java.util.function.Consumer<String> sink = invocation.getArgument(2);
+            DeepSeekClient.DeepSeekResponse response = first;
+            sink.accept(response.getContent());
+            return response;
+        }).doAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            java.util.function.Consumer<String> sink = invocation.getArgument(2);
+            DeepSeekClient.DeepSeekResponse response = second;
+            sink.accept(response.getContent());
+            return response;
+        }).when(deepSeekClient).chatStream(anyString(), anyList(), any());
+        when(actionExecutor.execute(any(), anyString(), anyString(), anyString())).thenReturn(
+                ActionResult.success(Map.of("isPlateau", true)));
+
+        AtomicReference<AgentContext> capturedContext = new AtomicReference<>();
+        doAnswer(invocation -> {
+            capturedContext.set(invocation.getArgument(3));
+            return null;
+        }).when(sessionService).updateSession(anyString(), anyList(), anyList(), any(AgentContext.class), any(Integer.class));
+
+        AgentExecutionCommand command = AgentExecutionCommand.builder()
+                .goal("患者最近两周体重几乎不下降，帮我判断是不是进入平台期并给出建议")
+                .customerId("C001")
+                .doctorId("D001")
+                .conversationId("conv-100")
+                .correlationId("corr-100")
+                .source(AgentTaskSource.PATIENT_DIALOG_AI_CHAT)
+                .taskType(TaskType.PATIENT_FOLLOW_UP_ANALYSIS)
+                .patientMessage("最近两周体重几乎不下降")
+                .sessionContext(Map.of("conversationPhase", "follow_up"))
+                .profileSnapshot(Map.of("age", 32))
+                .memorySnapshot(MemorySnapshot.builder()
+                        .shortTermMemories(List.of("近3天体重变化小"))
+                        .longTermMemories(List.of("既往晚间加餐"))
+                        .build())
+                .triggerDecision(Map.of("summary", "命中升级"))
+                .constraints(AgentTaskConstraints.builder().requireEvidence(Boolean.TRUE).build())
+                .build();
+
+        engine.executeStream(command, event -> {
+        });
+
+        AgentContext context = capturedContext.get();
+        assertNotNull(context);
+        assertTrue(context.getSlots().containsKey("patient_task_request"));
+        assertTrue(context.getSlots().containsKey("session_context"));
+        assertTrue(context.getSlots().containsKey("profile_snapshot"));
+        assertTrue(context.getSlots().containsKey("memory_snapshot"));
+        assertTrue(context.getSlots().containsKey("trigger_decision"));
+        assertTrue(context.getSlots().containsKey("patient_message"));
+        assertTrue(context.getEvidenceRecords().stream()
+                .anyMatch(record -> "PATIENT_MESSAGE".equals(record.getSource())
+                        && "最近两周体重几乎不下降".equals(record.getSummary())));
     }
 }

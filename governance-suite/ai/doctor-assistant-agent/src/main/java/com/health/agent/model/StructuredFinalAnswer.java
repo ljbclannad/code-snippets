@@ -16,22 +16,49 @@ import java.util.List;
 @AllArgsConstructor
 public class StructuredFinalAnswer {
 
+    /**
+     * 最终结论摘要，是结构化结果里最浓缩的一层。
+     */
     private String summary;
 
+    /**
+     * 支撑最终结论的核心发现。
+     */
     private List<String> keyFindings;
 
+    /**
+     * 最终结论给出的风险等级。
+     */
     private String riskLevel;
 
+    /**
+     * 建议执行的后续动作。
+     */
     private List<String> recommendedActions;
 
+    /**
+     * 是否提示本次任务需要重点关注。
+     */
     private boolean needsAttention;
 
+    /**
+     * 当前仍无法完全确认的不确定项。
+     */
     private List<String> uncertainties;
 
+    /**
+     * 支撑当前结论的证据摘要。
+     */
     private List<String> supportingEvidence;
 
+    /**
+     * 证据来源列表。
+     */
     private List<String> evidenceSources;
 
+    /**
+     * 在事实基础上形成的归纳判断。
+     */
     private List<String> inferences;
 
     public String toTextSummary() {

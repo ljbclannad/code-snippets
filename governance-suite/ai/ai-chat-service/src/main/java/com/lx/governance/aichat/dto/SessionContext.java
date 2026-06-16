@@ -119,4 +119,24 @@ public class SessionContext {
      * 最近一次任务路由判定时间。
      */
     private Long lastTaskTriggerAt;
+
+    /**
+     * 最近一次 agent 返回的人工复核状态。
+     */
+    private String lastAgentReviewStatus;
+
+    /**
+     * 最近一次 agent 待审批任务 ID。
+     */
+    private Long lastAgentPendingTaskId;
+
+    /**
+     * 最近一次 agent 执行路径。
+     */
+    private String lastAgentExecutionPath;
+
+    /**
+     * 最近一次 agent 结果记录时间。
+     */
+    private Long lastAgentOutcomeAt;
 }

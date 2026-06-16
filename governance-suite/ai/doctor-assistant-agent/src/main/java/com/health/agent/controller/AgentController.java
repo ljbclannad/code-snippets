@@ -1,5 +1,6 @@
 package com.health.agent.controller;
 
+import com.health.agent.dto.agent.AgentExecutionCommand;
 import com.health.agent.engine.ReActAgentEngine;
 import com.health.agent.metrics.AgentMetrics;
 import com.health.agent.model.AgentResult;
@@ -131,16 +132,17 @@ public class AgentController {
         produces = MediaType.TEXT_EVENT_STREAM_VALUE
     )
     public SseEmitter execute(@Valid @RequestBody AgentExecuteRequest request) {
+        AgentExecutionCommand command = request.toExecutionCommand();
         log.info("收到Agent执行请求: goal={}, customerId={}",
-            request.getGoal(), request.getCustomerId());
+            command.getGoal(), command.getCustomerId());
 
-        AgentAccessGuard.AccessPermit permit = accessGuard.acquire(request.getDoctorId(), true);
+        AgentAccessGuard.AccessPermit permit = accessGuard.acquire(command.getDoctorId(), true);
         AtomicReference<CompletableFuture<?>> streamFuture = new AtomicReference<>();
         SseEmitter emitter = createGuardedEmitter(permit, streamFuture);
         streamFuture.set(CompletableFuture.runAsync(() -> streamToEmitter(emitter, () -> agentEngine.executeStream(
-            request.getGoal(),
-            request.getCustomerId(),
-            request.getDoctorId(),
+            command.getGoal(),
+            command.getCustomerId(),
+            command.getDoctorId(),
             event -> sendEvent(emitter, event.getType().name().toLowerCase(), event)
         )), streamExecutor));
         return emitter;
@@ -507,6 +509,14 @@ public class AgentController {
         @Schema(description = "医生 ID", example = "2001", required = true)
         @NotBlank(message = "doctorId 不能为空")
         private String doctorId;
+
+        public AgentExecutionCommand toExecutionCommand() {
+            return AgentExecutionCommand.builder()
+                    .goal(goal)
+                    .customerId(customerId)
+                    .doctorId(doctorId)
+                    .build();
+        }
     }
 
     /**

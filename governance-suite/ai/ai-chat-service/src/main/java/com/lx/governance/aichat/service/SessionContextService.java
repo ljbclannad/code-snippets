@@ -12,6 +12,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.lx.governance.aichat.dto.DoctorAssistantTaskResponse;
 import com.lx.governance.aichat.dto.MessageSummary;
 import com.lx.governance.aichat.dto.SessionContext;
 import com.lx.governance.aichat.dto.TaskTriggerDecision;
@@ -244,6 +245,30 @@ public class SessionContextService {
                 conversationId, decision.getRoute(), decision.getTaskType());
         } catch (Exception e) {
             log.error("记录任务触发判定失败: conversationId={}", conversationId, e);
+        }
+    }
+
+    public void recordAgentOutcome(String conversationId, DoctorAssistantTaskResponse response) {
+        String key = CONTEXT_KEY_PREFIX + conversationId;
+
+        try {
+            SessionContext context = getFromRedis(key);
+            if (context == null || response == null) {
+                return;
+            }
+
+            context.setLastAgentReviewStatus(response.getStatus() != null ? response.getStatus().name() : null);
+            context.setLastAgentPendingTaskId(
+                    response.getPendingTask() != null ? response.getPendingTask().getPendingTaskId() : null);
+            context.setLastAgentExecutionPath(response.getExecutionPath());
+            context.setLastAgentOutcomeAt(System.currentTimeMillis());
+            context.setLastUpdateTime(System.currentTimeMillis());
+
+            saveToRedis(key, context);
+            log.debug("记录 agent 执行结果成功: conversationId={}, status={}, pendingTaskId={}",
+                    conversationId, context.getLastAgentReviewStatus(), context.getLastAgentPendingTaskId());
+        } catch (Exception e) {
+            log.error("记录 agent 执行结果失败: conversationId={}", conversationId, e);
         }
     }
 

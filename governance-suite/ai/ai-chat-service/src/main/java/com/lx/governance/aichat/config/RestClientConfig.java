@@ -21,7 +21,7 @@ public class RestClientConfig {
     @Value("${ai-chat.agent.base-url:http://localhost:8088}")
     private String doctorAssistantAgentBaseUrl;
 
-    @Value("${ai-chat.agent.timeout-ms:8000}")
+    @Value("${ai-chat.agent.timeout-ms:15000}")
     private int doctorAssistantAgentTimeoutMs;
 
     @Value("${spring.ai.openai.connect-timeout:5s}")

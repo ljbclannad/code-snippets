@@ -1,7 +1,7 @@
 package com.health.agent.service;
 
 import com.alibaba.fastjson2.JSON;
-import com.health.agent.dto.patient.AgentTaskSource;
+import com.health.agent.dto.agent.AgentExecutionCommand;
 import com.health.agent.dto.patient.DoctorAssistantPendingTaskPayload;
 import com.health.agent.dto.patient.DoctorAssistantTaskRequest;
 import com.health.agent.dto.patient.DoctorAssistantTaskResponse;
@@ -10,11 +10,13 @@ import com.health.agent.dto.patient.DoctorWorkbenchPayload;
 import com.health.agent.dto.patient.MemorySnapshot;
 import com.health.agent.dto.patient.StructuredTaskResult;
 import com.health.agent.dto.patient.TaskType;
+import com.health.agent.engine.ReActAgentEngine;
 import com.health.agent.model.AgentContext;
 import com.health.agent.model.AgentResult;
 import com.health.agent.model.AgentSession;
 import com.health.agent.model.Message;
 import com.health.agent.model.PendingTask;
+import com.health.agent.model.ResultStatus;
 import com.health.agent.model.Step;
 import com.health.agent.model.StructuredFinalAnswer;
 import com.health.agent.model.TaskStatus;
@@ -23,12 +25,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.UUID;
 
 @Slf4j
@@ -39,9 +39,12 @@ public class PatientTaskAgentService {
     private final AgentSessionService sessionService;
     private final AgentSessionWorkflowService workflowService;
     private final MedicalSafetyService medicalSafetyService;
+    private final ReActAgentEngine agentEngine;
+    private final PatientTaskAgentResultMapper resultMapper;
+    private final PatientReplyComposer patientReplyComposer;
 
     public PatientTaskAgentService(PatientTaskSafetyService safetyService) {
-        this(safetyService, null, null, null);
+        this(safetyService, null, null, null, null, null, null);
     }
 
     @Autowired
@@ -49,15 +52,29 @@ public class PatientTaskAgentService {
         PatientTaskSafetyService safetyService,
         AgentSessionService sessionService,
         AgentSessionWorkflowService workflowService,
-        MedicalSafetyService medicalSafetyService
+        MedicalSafetyService medicalSafetyService,
+        ReActAgentEngine agentEngine,
+        PatientTaskAgentResultMapper resultMapper,
+        PatientReplyComposer patientReplyComposer
     ) {
         this.safetyService = safetyService;
         this.sessionService = sessionService;
         this.workflowService = workflowService;
         this.medicalSafetyService = medicalSafetyService;
+        this.agentEngine = agentEngine;
+        this.resultMapper = resultMapper;
+        this.patientReplyComposer = patientReplyComposer;
     }
 
+    /**
+     * 患者来源任务分析主入口。
+     *
+     * <p>当前实现会优先尝试进入真实 {@code ReActAgentEngine.executeStream(...)}，
+     * 若引擎不可用、执行异常，或返回 ERROR / MAX_STEPS / 空结果，则回退到本地模板分析链路，
+     * 以保证患者侧总能拿到稳定响应。</p>
+     */
     public DoctorAssistantTaskResponse analyze(DoctorAssistantTaskRequest request) {
+        // 入口兜底：没有 taskType，或者显式传 NONE，说明这次患者消息不需要进入任务分析链路，直接跳过。
         if (request == null || request.getTaskType() == null || request.getTaskType() == TaskType.NONE) {
             return DoctorAssistantTaskResponse.builder()
                     .status(DoctorAssistantTaskStatus.SKIPPED)
@@ -66,16 +83,56 @@ public class PatientTaskAgentService {
                     .build();
         }
 
+        // 先把患者升级请求归一化为统一内部执行命令，后续接真实 Agent 时直接复用这份命令对象。
+        AgentExecutionCommand command = request.toExecutionCommand();
+        if (agentEngine == null) {
+            log.warn("患者来源任务分析未接入真实 Agent，引擎为空，回退模板分析 - taskType: {}, conversationId: {}, correlationId: {}",
+                    command.getTaskType(), command.getConversationId(), command.getCorrelationId());
+            return analyzeWithTemplateFallback(request, command, "AGENT_NOT_AVAILABLE");
+        }
+
+        try {
+            AgentResult agentResult = agentEngine.executeStream(command, event -> {
+            });
+            if (agentResult == null) {
+                log.warn("真实 Agent 返回为空，回退模板分析 - taskType: {}, conversationId: {}, correlationId: {}",
+                        command.getTaskType(), command.getConversationId(), command.getCorrelationId());
+                return analyzeWithTemplateFallback(request, command, "AGENT_RESULT_NULL");
+            }
+            if (agentResult.getStatus() == ResultStatus.ERROR || agentResult.getStatus() == ResultStatus.MAX_STEPS) {
+                log.warn("真实 Agent 未稳定收敛，回退模板分析 - status: {}, conversationId: {}, correlationId: {}",
+                        agentResult.getStatus(), command.getConversationId(), command.getCorrelationId());
+                return analyzeWithTemplateFallback(request, command, "AGENT_STATUS_" + agentResult.getStatus().name());
+            }
+            return buildAgentBackedResponse(request, command, agentResult);
+        } catch (Exception e) {
+            log.error("患者来源任务调用真实 Agent 失败，回退模板分析 - conversationId: {}, correlationId: {}",
+                    command.getConversationId(), command.getCorrelationId(), e);
+            return analyzeWithTemplateFallback(request, command, "AGENT_EXCEPTION");
+        }
+    }
+
+    private DoctorAssistantTaskResponse analyzeWithTemplateFallback(
+        DoctorAssistantTaskRequest request,
+        AgentExecutionCommand command,
+        String fallbackReason
+    ) {
         String taskId = buildTaskId(request);
+        // 只有 sessionService 和 workflowService 都注入成功时，才说明当前环境允许会话持久化与审批编排。
         boolean persistenceEnabled = sessionService != null && workflowService != null;
-        String goal = defaultValue(request.getGoal(), "患者来源任务: " + request.getTaskType().name());
+        String goal = defaultValue(command.getGoal(), "患者来源任务: " + command.getTaskType().name());
+        // 这里创建的是“患者任务分析会话”审计壳，用于后续落 history/context；
+        // 不是进入 ReAct 模型循环，也不会从这里开始 sub-agent 推理。
         AgentSession session = persistenceEnabled
-                ? sessionService.createSession(request.getCustomerId(), request.getDoctorId(), goal)
+                ? sessionService.createSession(command.getCustomerId(), command.getDoctorId(), goal)
                 : null;
         String agentSessionId = session != null ? String.valueOf(session.getId()) : "patient-agent-" + taskId;
-        boolean highRisk = containsHighRiskSignal(request.getPatientMessage());
+        // 高风险判定来自安全服务，主要识别急症/处方风险信号，后续会影响回复降级和是否转人工。
+        boolean highRisk = containsHighRiskSignal(command.getPatientMessage());
 
-        StructuredTaskResult structuredResult = switch (request.getTaskType()) {
+        // 当前实现按 taskType 直接走固定模板化分析分支。
+        // 这不是 SubAgentCoordinator.select(...) 的动态分派，而是患者任务入口自己的轻量路由。
+        StructuredTaskResult structuredResult = switch (command.getTaskType()) {
             case PATIENT_FOLLOW_UP_ANALYSIS -> buildFollowUpAnalysis(request, highRisk);
             case RISK_STRATIFICATION_AND_ESCALATION -> buildRiskStratification(request, highRisk);
             case NEXT_FOLLOW_UP_ACTION_RECOMMENDATION -> buildNextActionRecommendation(request, highRisk);
@@ -88,10 +145,16 @@ public class PatientTaskAgentService {
                     .build();
         };
 
-        boolean needsHumanReview = highRisk || request.getTaskType() == TaskType.RISK_STRATIFICATION_AND_ESCALATION;
-        String patientReply = buildPatientSafeReply(request.getTaskType(), structuredResult, needsHumanReview);
+        // 两类情况默认进入人工复核：
+        // 1. 患者消息本身命中高风险；
+        // 2. 任务类型就是风险分层/升级，本身就要求医生接管。
+        boolean needsHumanReview = highRisk || command.getTaskType() == TaskType.RISK_STRATIFICATION_AND_ESCALATION;
+        // 先生成一个“理想情况下可返回给患者”的保守回复，再交给安全服务做二次收敛。
+        String patientReply = buildFinalPatientReply(command.getTaskType(), structuredResult, needsHumanReview);
         PatientTaskSafetyService.SafetyResult safetyResult = safetyService.sanitize(patientReply, structuredResult, needsHumanReview);
 
+        // blocked 表示安全层认为当前回复仍然不能直接给患者：
+        // 可能是急症词、处方/诊断倾向，或者证据不足。此时强制升级为人工复核。
         if (safetyResult.blocked()) {
             needsHumanReview = true;
             patientReply = safetyResult.reply();
@@ -99,9 +162,11 @@ public class PatientTaskAgentService {
             structuredResult.setRiskLevel("HIGH");
             structuredResult.getUncertainties().add("触发患者侧安全拦截: " + safetyResult.category());
         } else {
+            // allowed 分支下也要使用 sanitize 后的文案，因为它可能替换掉医生侧术语或附加保守提醒。
             patientReply = safetyResult.reply();
         }
 
+        // 下面这些对象主要用于审计、会话恢复和医生工作台展示，不会驱动模型继续推理。
         AgentContext context = buildContext(request, goal, structuredResult);
         List<Step> history = buildHistory(request, structuredResult, patientReply, needsHumanReview);
         List<Message> messages = List.of(
@@ -110,16 +175,17 @@ public class PatientTaskAgentService {
         );
 
         DoctorAssistantPendingTaskPayload pendingTaskPayload = null;
+        // 进入这里说明本次分析不能自动闭环，需要生成待审批任务给医生工作台处理。
         if (needsHumanReview) {
             PendingTask pendingTask = PendingTask.builder()
                     .agentSessionId(agentSessionId)
-                    .customerId(request.getCustomerId())
-                    .doctorId(request.getDoctorId())
+                    .customerId(command.getCustomerId())
+                    .doctorId(command.getDoctorId())
                     .toolName("patient_follow_up_review")
                     .toolDescription("患者来源任务需要医生进一步确认")
                     .inputJson(JSON.toJSONString(Map.of(
-                            "taskType", request.getTaskType().name(),
-                            "patientMessage", request.getPatientMessage(),
+                            "taskType", command.getTaskType().name(),
+                            "patientMessage", command.getPatientMessage(),
                             "structuredResult", structuredResult)))
                     .reason("高风险/需人工复核的患者来源任务")
                     .status(TaskStatus.PENDING.name())
@@ -127,6 +193,8 @@ public class PatientTaskAgentService {
                     .expireAt(LocalDateTime.now().plusHours(1))
                     .build();
 
+            // 持久化开启时，把当前上下文、history 和待审批任务一起写入 workflow，
+            // 相当于把这次患者任务停在“等待人工确认”的节点。
             if (persistenceEnabled) {
                 AgentResult auditResult = AgentResult.pendingApproval(agentSessionId, pendingTask, history, history.size());
                 pendingTask = workflowService.pauseSessionForApproval(
@@ -142,24 +210,16 @@ public class PatientTaskAgentService {
                 );
             }
 
-            pendingTaskPayload = DoctorAssistantPendingTaskPayload.builder()
-                    .pendingTaskId(pendingTask.getId() != null ? pendingTask.getId() : Math.abs(taskId.hashCode()) + 0L)
-                    .agentSessionId(agentSessionId)
-                    .toolName(pendingTask.getToolName())
-                    .toolDescription(pendingTask.getToolDescription())
-                    .reason(pendingTask.getReason())
-                    .status(pendingTask.getStatus())
-                    .expireAt(pendingTask.getExpireAt() != null
-                            ? pendingTask.getExpireAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
-                            : Instant.now().plusSeconds(3600).toEpochMilli())
-                    .build();
+            // 对外返回给医生工作台的是一个轻量 payload，而不是直接暴露内部 PendingTask 实体。
+            pendingTaskPayload = resultMapper.toPendingTaskPayload(pendingTask, taskId);
         } else if (persistenceEnabled) {
+            // 进入这里说明风险可控且支持持久化，直接把这次分析落成 completed session。
             StructuredFinalAnswer finalAnswer = toFinalAnswer(structuredResult);
             AgentResult auditResult = AgentResult.success(agentSessionId, finalAnswer, history, history.size());
             workflowService.completeSession(
                     agentSessionId,
                     request.getCustomerId(),
-                    request.getDoctorId(),
+                    command.getDoctorId(),
                     goal,
                     history,
                     context,
@@ -169,42 +229,137 @@ public class PatientTaskAgentService {
             );
         }
 
-        DoctorWorkbenchPayload workbenchPayload = DoctorWorkbenchPayload.builder()
-                .agentSessionId(agentSessionId)
-                .taskId(taskId)
-                .conversationId(request.getConversationId())
-                .correlationId(request.getCorrelationId())
-                .source(request.getSource() == null ? AgentTaskSource.PATIENT_DIALOG_AI_CHAT.name() : request.getSource().name())
-                .auditTag("PATIENT_DIALOG_AGENT_TASK")
-                .reviewStatus(needsHumanReview ? "PENDING_REVIEW" : "AUTO_COMPLETED")
-                .taskType(request.getTaskType().name())
-                .riskLevel(structuredResult.getRiskLevel())
-                .needsAttention(structuredResult.getNeedsAttention())
-                .needsHumanReview(needsHumanReview)
-                .evidenceChainSummary(String.join(" | ", structuredResult.getSupportingEvidence()))
-                .keyFindings(structuredResult.getKeyFindings())
-                .recommendedActions(structuredResult.getRecommendedActions())
-                .evidenceSources(structuredResult.getEvidenceSources())
-                .uncertainties(structuredResult.getUncertainties())
-                .pendingTask(pendingTaskPayload)
-                .build();
+        // 医生工作台载荷聚合的是“给医生看的运营/审计/复核信息”，
+        // 和 patientSafeReply 这种“给患者看的文案”是两套视图。
+        DoctorWorkbenchPayload workbenchPayload = resultMapper.toDoctorWorkbenchPayload(
+                request,
+                command,
+                taskId,
+                agentSessionId,
+                structuredResult,
+                needsHumanReview,
+                pendingTaskPayload,
+                "TEMPLATE_FALLBACK",
+                "FALLBACK",
+                fallbackReason);
 
         log.info("患者来源任务分析完成 - taskType: {}, taskId: {}, conversationId: {}, correlationId: {}, sessionId: {}",
-                request.getTaskType(), taskId, request.getConversationId(), request.getCorrelationId(), agentSessionId);
+                command.getTaskType(), taskId, request.getConversationId(), request.getCorrelationId(), agentSessionId);
 
+        // 最终响应同时返回三层信息：
+        // 1. 患者侧安全回复；
+        // 2. 结构化分析结果；
+        // 3. 医生工作台/待审批所需元数据。
         return DoctorAssistantTaskResponse.builder()
                 .agentSessionId(agentSessionId)
                 .taskId(taskId)
                 .conversationId(request.getConversationId())
                 .correlationId(request.getCorrelationId())
                 .status(needsHumanReview ? DoctorAssistantTaskStatus.PENDING_APPROVAL : DoctorAssistantTaskStatus.SUCCESS)
-                .taskType(request.getTaskType())
+                .taskType(command.getTaskType())
                 .patientSafeReply(patientReply)
                 .structuredResult(structuredResult)
                 .doctorWorkbenchPayload(workbenchPayload)
+                .executionPath("TEMPLATE_FALLBACK")
+                .agentExecutionStatus("FALLBACK")
+                .fallbackReason(fallbackReason)
                 .needsHumanReview(needsHumanReview)
                 .pendingTask(pendingTaskPayload)
                 .build();
+    }
+
+    private DoctorAssistantTaskResponse buildAgentBackedResponse(
+        DoctorAssistantTaskRequest request,
+        AgentExecutionCommand command,
+        AgentResult agentResult
+    ) {
+        String taskId = buildTaskId(request);
+        boolean highRisk = containsHighRiskSignal(command.getPatientMessage());
+        StructuredTaskResult fallbackStructuredResult = buildTemplateStructuredResult(request, command, highRisk);
+        StructuredTaskResult structuredResult = resultMapper.toStructuredTaskResult(
+                agentResult.getStructuredFinalAnswer(), fallbackStructuredResult);
+        DoctorAssistantPendingTaskPayload pendingTaskPayload = resultMapper.toPendingTaskPayload(
+                agentResult.getPendingTask(), taskId);
+
+        boolean needsHumanReview = agentResult.getStatus() == ResultStatus.PENDING_APPROVAL
+                || highRisk
+                || command.getTaskType() == TaskType.RISK_STRATIFICATION_AND_ESCALATION;
+
+        String patientReply = buildFinalPatientReply(command.getTaskType(), structuredResult, needsHumanReview);
+        PatientTaskSafetyService.SafetyResult safetyResult = safetyService.sanitize(patientReply, structuredResult, needsHumanReview);
+        if (safetyResult.blocked()) {
+            needsHumanReview = true;
+            patientReply = safetyResult.reply();
+            structuredResult.setNeedsAttention(Boolean.TRUE);
+            structuredResult.setRiskLevel("HIGH");
+            structuredResult.getUncertainties().add("触发患者侧安全拦截: " + safetyResult.category());
+        } else {
+            patientReply = safetyResult.reply();
+        }
+
+        String agentSessionId = defaultValue(agentResult.getSessionId(), "patient-agent-" + taskId);
+        DoctorWorkbenchPayload workbenchPayload = resultMapper.toDoctorWorkbenchPayload(
+                request,
+                command,
+                taskId,
+                agentSessionId,
+                structuredResult,
+                needsHumanReview,
+                pendingTaskPayload,
+                "AGENT",
+                agentResult.getStatus() != null ? agentResult.getStatus().name() : "UNKNOWN",
+                null);
+
+        log.info("患者来源任务真实 Agent 执行完成 - taskType: {}, taskId: {}, conversationId: {}, correlationId: {}, sessionId: {}, status: {}",
+                command.getTaskType(), taskId, request.getConversationId(), request.getCorrelationId(), agentSessionId,
+                agentResult.getStatus());
+
+        return DoctorAssistantTaskResponse.builder()
+                .agentSessionId(agentSessionId)
+                .taskId(taskId)
+                .conversationId(request.getConversationId())
+                .correlationId(request.getCorrelationId())
+                .status(resultMapper.toTaskStatus(agentResult, needsHumanReview))
+                .taskType(command.getTaskType())
+                .patientSafeReply(patientReply)
+                .structuredResult(structuredResult)
+                .doctorWorkbenchPayload(workbenchPayload)
+                .executionPath("AGENT")
+                .agentExecutionStatus(agentResult.getStatus() != null ? agentResult.getStatus().name() : "UNKNOWN")
+                .fallbackReason(null)
+                .needsHumanReview(needsHumanReview)
+                .pendingTask(pendingTaskPayload)
+                .build();
+    }
+
+    private String buildFinalPatientReply(
+        TaskType taskType,
+        StructuredTaskResult structuredResult,
+        boolean needsHumanReview
+    ) {
+        if (patientReplyComposer == null) {
+            return fallbackCandidateReply(taskType, structuredResult, needsHumanReview);
+        }
+        return patientReplyComposer.composeCandidateReply(taskType, structuredResult, needsHumanReview);
+    }
+
+    private String fallbackCandidateReply(
+        TaskType taskType,
+        StructuredTaskResult structuredResult,
+        boolean needsHumanReview
+    ) {
+        return switch (taskType) {
+            case PATIENT_FOLLOW_UP_ANALYSIS ->
+                    "我先帮你整理了这次随访里最需要关注的信息，建议继续补充近几天的关键数据和变化情况。"
+                    + (needsHumanReview ? " 这部分也会同步给医生进一步查看。" : "");
+            case RISK_STRATIFICATION_AND_ESCALATION ->
+                    "结合你刚才提供的情况，建议尽快联系医生进一步评估；如果症状明显加重，请及时线下就医。";
+            case NEXT_FOLLOW_UP_ACTION_RECOMMENDATION ->
+                    "下一步建议先补充最近几天的监测结果、症状变化和执行情况，再结合医生意见安排后续随访。";
+            default -> structuredResult != null && structuredResult.getSummary() != null
+                    ? structuredResult.getSummary()
+                    : "已收到你的情况，我们会继续谨慎评估。";
+        };
     }
 
     private AgentContext buildContext(
@@ -264,6 +419,25 @@ public class PatientTaskAgentService {
                 .evidenceSources(structuredResult.getEvidenceSources())
                 .inferences(structuredResult.getInferences())
                 .build();
+    }
+
+    private StructuredTaskResult buildTemplateStructuredResult(
+        DoctorAssistantTaskRequest request,
+        AgentExecutionCommand command,
+        boolean highRisk
+    ) {
+        return switch (command.getTaskType()) {
+            case PATIENT_FOLLOW_UP_ANALYSIS -> buildFollowUpAnalysis(request, highRisk);
+            case RISK_STRATIFICATION_AND_ESCALATION -> buildRiskStratification(request, highRisk);
+            case NEXT_FOLLOW_UP_ACTION_RECOMMENDATION -> buildNextActionRecommendation(request, highRisk);
+            default -> StructuredTaskResult.builder()
+                    .summary("当前任务类型尚未支持")
+                    .riskLevel("LOW")
+                    .needsAttention(false)
+                    .supportingEvidence(List.of("TASK_TYPE_NOT_SUPPORTED"))
+                    .evidenceSources(List.of("PATIENT_TASK_AGENT"))
+                    .build();
+        };
     }
 
     private StructuredTaskResult buildFollowUpAnalysis(DoctorAssistantTaskRequest request, boolean highRisk) {
@@ -332,19 +506,6 @@ public class PatientTaskAgentService {
                 .evidenceSources(List.of("AI_CHAT_SESSION_CONTEXT", "PATIENT_TASK_AGENT"))
                 .inferences(List.of("当前适合给出保守型下一步动作建议"))
                 .build();
-    }
-
-    private String buildPatientSafeReply(TaskType taskType, StructuredTaskResult structuredResult, boolean needsHumanReview) {
-        return switch (taskType) {
-            case PATIENT_FOLLOW_UP_ANALYSIS ->
-                    "我先帮你整理了这次随访里最需要关注的信息，建议继续补充近几天的关键数据和变化情况。"
-                    + (needsHumanReview ? " 这部分也会同步给医生进一步查看。" : "");
-            case RISK_STRATIFICATION_AND_ESCALATION ->
-                    "结合你刚才提供的情况，建议尽快联系医生进一步评估；如果症状明显加重，请及时线下就医。";
-            case NEXT_FOLLOW_UP_ACTION_RECOMMENDATION ->
-                    "下一步建议先补充最近几天的监测结果、症状变化和执行情况，再结合医生意见安排后续随访。";
-            default -> Objects.requireNonNullElse(structuredResult.getSummary(), "已收到你的情况，我们会继续谨慎评估。");
-        };
     }
 
     private boolean containsHighRiskSignal(String patientMessage) {

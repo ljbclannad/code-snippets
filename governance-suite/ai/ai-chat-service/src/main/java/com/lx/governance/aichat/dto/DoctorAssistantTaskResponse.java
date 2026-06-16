@@ -60,6 +60,21 @@ public class DoctorAssistantTaskResponse {
     private DoctorWorkbenchPayload doctorWorkbenchPayload;
 
     /**
+     * 执行路径：真实 Agent 成功或模板回退。
+     */
+    private String executionPath;
+
+    /**
+     * 真实 Agent 原始执行状态。
+     */
+    private String agentExecutionStatus;
+
+    /**
+     * 发生模板回退时的原因。
+     */
+    private String fallbackReason;
+
+    /**
      * 是否需要人工复核。
      */
     private Boolean needsHumanReview;

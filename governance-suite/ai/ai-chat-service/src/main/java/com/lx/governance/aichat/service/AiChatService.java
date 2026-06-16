@@ -273,6 +273,20 @@ public class AiChatService {
             TaskTriggerDecision triggerDecision,
             UserProfileDTO profile,
             LayeredMemories memories) {
+        if (shouldShortCircuitPendingReview(sessionContext)) {
+            String patientReply = "这条情况已经同步给医生进一步评估，当前先按之前的安全建议观察；如果出现明显不适或症状加重，请及时线下就医。";
+            log.info("检测到会话中已有待处理人工复核，短路跳过重复 Agent 调用 - conversationId: {}, correlationId: {}",
+                    sessionId, correlationId);
+            sessionContextService.updateContext(sessionId, request.getMessage(), patientReply);
+            ChatGenerationResult agentConversationResult = new ChatGenerationResult();
+            agentConversationResult.setAnswer(patientReply);
+            agentConversationResult.setConversationId(sessionId);
+            agentConversationResult.setMessageId("pending-review-short-circuit");
+            chatAsyncProcessingService.handleChatCompleted(request, agentConversationResult, correlationId);
+            metrics.recordAgentFallback("pending_review_short_circuit");
+            return CompletableFuture.completedFuture(ChatResponse.success(patientReply, sessionId));
+        }
+
         // 这里做的是“患者对话 -> 医生助手任务请求”的协议适配，
         // 把 ai-chat-service 已经拿到的上下文快照完整传给 doctor-assistant-agent。
         DoctorAssistantTaskRequest agentTaskRequest = doctorAssistantTaskRequestFactory.buildPatientDialogRequest(
@@ -333,7 +347,19 @@ public class AiChatService {
                         memories);
             }
 
-            metrics.recordAgentInvocation(taskType, "success", durationMs);
+            String outcome = agentResponse.getStatus() == DoctorAssistantTaskStatus.PENDING_APPROVAL
+                    ? "pending_approval"
+                    : "success";
+            metrics.recordAgentInvocation(taskType, outcome, durationMs);
+            log.info(
+                    "Agent 返回可消费结果 - conversationId: {}, taskType: {}, status: {}, needsHumanReview: {}, pendingTaskPresent: {}, correlationId: {}",
+                    sessionId,
+                    taskType,
+                    agentResponse.getStatus(),
+                    agentResponse.getNeedsHumanReview(),
+                    agentResponse.getPendingTask() != null,
+                    correlationId);
+            sessionContextService.recordAgentOutcome(sessionId, agentResponse);
             metrics.recordConversationPathLatency("agent", System.currentTimeMillis() - startTime);
             return CompletableFuture.completedFuture(buildAgentChatResponse(
                     request,
@@ -432,6 +458,13 @@ public class AiChatService {
                 && agentResponse.getNeedsHumanReview()) {
             patientReply = patientReply + "\n\n已同步给医生进一步评估，请先按当前安全建议观察，如有明显不适请及时线下就医。";
         }
+        log.info(
+                "准备回传患者安全回复 - sessionId: {}, taskType: {}, status: {}, needsHumanReview: {}, correlationId: {}",
+                sessionId,
+                taskType,
+                agentResponse.getStatus(),
+                agentResponse.getNeedsHumanReview(),
+                correlationId);
 
         // Agent 成功分支也要并回患者对话主链路，但仅使用患者可见回复，避免把医生侧内部载荷写入上下文或记忆。
         sessionContextService.updateContext(sessionId, request.getMessage(), patientReply);
@@ -446,6 +479,20 @@ public class AiChatService {
         chatAsyncProcessingService.handleChatCompleted(request, agentConversationResult, correlationId);
 
         return ChatResponse.success(patientReply, sessionId);
+    }
+
+    private boolean shouldShortCircuitPendingReview(SessionContext sessionContext) {
+        if (sessionContext == null) {
+            return false;
+        }
+        if (!"PENDING_APPROVAL".equals(sessionContext.getLastAgentReviewStatus())) {
+            return false;
+        }
+        if (sessionContext.getLastAgentOutcomeAt() == null) {
+            return false;
+        }
+        long elapsedMs = System.currentTimeMillis() - sessionContext.getLastAgentOutcomeAt();
+        return elapsedMs >= 0 && elapsedMs <= 10 * 60 * 1000;
     }
 
     private CompletableFuture<ChatResponse> handleProfileCompletionIfNeeded(

@@ -182,12 +182,19 @@ sequenceDiagram
                 Chat->>AgentGW: POST /api/patient-tasks/analyze
                 AgentGW->>AgentCtrl: /api/patient-tasks/analyze
                 AgentCtrl->>AgentSvc: analyze(request)
-                AgentSvc->>AgentSvc: buildTaskId + agentSessionId
-                AgentSvc->>AgentSvc: 按 taskType 生成 structuredResult
-                AgentSvc->>AgentSvc: containsHighRiskSignal(patientMessage)
-                AgentSvc->>Safety: sanitize(patientSafeReply, structuredResult, needsHumanReview)
-                Safety-->>AgentSvc: allowed or blocked
-                AgentSvc->>AgentSvc: 组装 pendingTask + doctorWorkbenchPayload
+                AgentSvc->>AgentSvc: DoctorAssistantTaskRequest -> AgentExecutionCommand
+                AgentSvc->>AgentSvc: 优先调用 ReActAgentEngine.executeStream(command, noopEventSink)
+                AgentSvc->>AgentSvc: 预加载 sessionContext / profileSnapshot / memorySnapshot / triggerDecision
+                alt 真实 Agent 返回 SUCCESS / PENDING_APPROVAL
+                    AgentSvc->>AgentSvc: AgentResult -> StructuredTaskResult / PendingTask / WorkbenchPayload
+                    AgentSvc->>AgentSvc: PatientReplyComposer 生成 candidatePatientReply
+                    AgentSvc->>Safety: sanitize(candidatePatientReply, structuredResult, needsHumanReview)
+                    Safety-->>AgentSvc: allowed or blocked
+                else 真实 Agent 返回 ERROR / MAX_STEPS / null 或执行异常
+                    AgentSvc->>AgentSvc: 回退模板分析链路
+                    AgentSvc->>Safety: sanitize(candidatePatientReply, structuredResult, needsHumanReview)
+                    Safety-->>AgentSvc: allowed or blocked
+                end
                 AgentSvc-->>AgentCtrl: DoctorAssistantTaskResponse
                 AgentCtrl-->>AgentGW: DoctorAssistantTaskResponse
                 AgentGW-->>Chat: DoctorAssistantTaskResponse
@@ -328,6 +335,16 @@ sequenceDiagram
 - `structuredResult`：面向医生侧的结构化分析结果
 - `doctorWorkbenchPayload`：面向工作台和治理系统的内部载荷
 
+补充说明：
+
+- `patientSafeReply` 现在不是直接从医生侧结构化结论透出
+- 当前出口链路为：
+  - `AgentResult`
+  - `StructuredTaskResult`
+  - `PatientReplyComposer` 生成候选患者文案
+  - `PatientTaskSafetyService.sanitize(...)`
+  - `final patientSafeReply`
+
 ### 6. Agent 成功分支现在如何并回主链路
 
 - 普通对话分支和 Agent 成功分支现在都会执行：
@@ -336,6 +353,13 @@ sequenceDiagram
   - 进而触发历史落库、索引同步、记忆提取
 - 区别在于 Agent 成功分支只把 `patientSafeReply` 并回患者主链路。
 - `structuredResult` 和 `doctorWorkbenchPayload` 仍然保留在医生侧/工作台侧语义中，不会进入患者上下文或记忆抽取。
+
+补充说明：
+
+- `doctor-assistant-agent` 当前虽然仍然对外暴露 `POST /api/patient-tasks/analyze`
+- 但该入口内部已经优先进入真实 `ReActAgentEngine.executeStream(...)`
+- 只有在真实 Agent 返回 `ERROR / MAX_STEPS / null` 或执行异常时，才会回退到模板分析
+- 对 `ai-chat-service` 来说，外部协议不变，仍然只消费 `DoctorAssistantTaskResponse`
 
 ## 配置关注点
 

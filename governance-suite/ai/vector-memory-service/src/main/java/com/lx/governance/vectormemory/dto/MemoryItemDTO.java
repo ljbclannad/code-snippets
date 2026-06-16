@@ -6,8 +6,9 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * Memory item data transfer object
- * Used for returning memory search results with similarity scores
+ * 向量记忆服务对外返回的单条记忆结果。
+ *
+ * <p>它屏蔽底层实体细节，只暴露对上游有意义的内容、相似度和治理状态。</p>
  */
 @Data
 @Builder

@@ -52,9 +52,13 @@ public class HttpDoctorAssistantAgentGateway implements DoctorAssistantAgentGate
                 throw new AiServiceException(ErrorCode.AI_API_ERROR, "doctor-assistant-agent 返回为空");
             }
 
-            log.info("doctor-assistant-agent 调用完成 - taskType: {}, status: {}, agentSessionId: {}, correlationId: {}",
+            log.info("doctor-assistant-agent 调用完成 - taskType: {}, status: {}, executionPath: {}, agentExecutionStatus: {}, fallbackReason: {}, needsHumanReview: {}, agentSessionId: {}, correlationId: {}",
                     response.getTaskType(),
                     response.getStatus(),
+                    response.getExecutionPath(),
+                    response.getAgentExecutionStatus(),
+                    response.getFallbackReason(),
+                    response.getNeedsHumanReview(),
                     response.getAgentSessionId(),
                     correlationId);
             return response;

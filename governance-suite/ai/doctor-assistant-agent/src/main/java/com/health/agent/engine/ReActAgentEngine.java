@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 
 import com.alibaba.fastjson2.JSON;
 import com.health.agent.client.DeepSeekClient;
+import com.health.agent.dto.agent.AgentExecutionCommand;
 import com.health.agent.engine.subagent.AgentSubAgent;
 import com.health.agent.engine.subagent.SubAgentCoordinator;
 import com.health.agent.exception.AgentException;
@@ -295,7 +296,21 @@ public class ReActAgentEngine {
             String customerId,
             String doctorId,
             Consumer<AgentStreamEvent> eventSink) {
+        AgentExecutionCommand command = AgentExecutionCommand.builder()
+                .goal(goal)
+                .customerId(customerId)
+                .doctorId(doctorId)
+                .build();
+        return executeStream(command, eventSink);
+    }
+
+    public AgentResult executeStream(
+            AgentExecutionCommand command,
+            Consumer<AgentStreamEvent> eventSink) {
         long startTime = System.currentTimeMillis();
+        String goal = command != null ? command.getGoal() : null;
+        String customerId = command != null ? command.getCustomerId() : null;
+        String doctorId = command != null ? command.getDoctorId() : null;
         log.info("Agent开始流式执行任务: goal={}, customerId={}", goal, customerId);
 
         agentMetrics.recordExecutionStart();
@@ -305,7 +320,7 @@ public class ReActAgentEngine {
 
         List<Step> history = new ArrayList<>();
         List<Message> messages = new ArrayList<>();
-        AgentContext context = AgentContext.initialize(customerId, doctorId, goal);
+        AgentContext context = createInitialContext(command);
 
         // 先做目标级安全预检，命中高危规则时直接返回安全结果，不进入模型循环。
         SafetyAssessment goalAssessment = medicalSafetyService.assessGoal(goal);
@@ -504,6 +519,70 @@ public class ReActAgentEngine {
                 maxSteps,
                 System.currentTimeMillis() - startTime);
         return result;
+    }
+
+    private AgentContext createInitialContext(AgentExecutionCommand command) {
+        String goal = command != null ? command.getGoal() : null;
+        String customerId = command != null ? command.getCustomerId() : null;
+        String doctorId = command != null ? command.getDoctorId() : null;
+        AgentContext context = AgentContext.initialize(customerId, doctorId, goal);
+        preloadContext(context, command);
+        return context;
+    }
+
+    private void preloadContext(AgentContext context, AgentExecutionCommand command) {
+        if (context == null || command == null) {
+            return;
+        }
+
+        Map<String, Object> patientTaskRequest = new java.util.LinkedHashMap<>();
+        putIfNotNull(patientTaskRequest, "taskType",
+                command.getTaskType() != null ? command.getTaskType().name() : null);
+        putIfNotNull(patientTaskRequest, "source",
+                command.getSource() != null ? command.getSource().name() : null);
+        putIfNotNull(patientTaskRequest, "conversationId", command.getConversationId());
+        putIfNotNull(patientTaskRequest, "correlationId", command.getCorrelationId());
+        if (!patientTaskRequest.isEmpty()) {
+            context.putSlot("patient_task_request", patientTaskRequest, "REQUEST_PRELOAD");
+        }
+
+        if (command.getSessionContext() != null && !command.getSessionContext().isEmpty()) {
+            context.putSlot("session_context", command.getSessionContext(), "REQUEST_PRELOAD");
+        }
+        if (command.getProfileSnapshot() != null && !command.getProfileSnapshot().isEmpty()) {
+            context.putSlot("profile_snapshot", command.getProfileSnapshot(), "REQUEST_PRELOAD");
+        }
+        if (command.getMemorySnapshot() != null) {
+            context.putSlot("memory_snapshot", command.getMemorySnapshot(), "REQUEST_PRELOAD");
+        }
+        if (command.getTriggerDecision() != null && !command.getTriggerDecision().isEmpty()) {
+            context.putSlot("trigger_decision", command.getTriggerDecision(), "REQUEST_PRELOAD");
+        }
+        if (command.getPatientMessage() != null && !command.getPatientMessage().isBlank()) {
+            context.putSlot("patient_message", Map.of(
+                    "content", command.getPatientMessage(),
+                    "conversationId", defaultString(command.getConversationId()),
+                    "correlationId", defaultString(command.getCorrelationId())), "REQUEST_PRELOAD");
+            context.addEvidence(
+                    "patient_message",
+                    "PATIENT_MESSAGE",
+                    command.getPatientMessage(),
+                    Map.of(
+                            "conversationId", defaultString(command.getConversationId()),
+                            "correlationId", defaultString(command.getCorrelationId()),
+                            "taskType", command.getTaskType() != null ? command.getTaskType().name() : "UNKNOWN"));
+        }
+    }
+
+    private void putIfNotNull(Map<String, Object> target, String key, Object value) {
+        if (target == null || key == null || key.isBlank() || value == null) {
+            return;
+        }
+        target.put(key, value);
+    }
+
+    private String defaultString(String value) {
+        return value == null ? "" : value;
     }
 
     /**

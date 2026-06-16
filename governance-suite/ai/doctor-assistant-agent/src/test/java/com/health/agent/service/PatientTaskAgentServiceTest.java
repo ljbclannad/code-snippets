@@ -3,11 +3,17 @@ package com.health.agent.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 
 import java.util.List;
 import java.util.Map;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
 
 import com.health.agent.dto.patient.AgentTaskConstraints;
 import com.health.agent.dto.patient.AgentTaskSource;
@@ -16,35 +22,120 @@ import com.health.agent.dto.patient.DoctorAssistantTaskResponse;
 import com.health.agent.dto.patient.DoctorAssistantTaskStatus;
 import com.health.agent.dto.patient.MemorySnapshot;
 import com.health.agent.dto.patient.TaskType;
+import com.health.agent.engine.ReActAgentEngine;
+import com.health.agent.model.AgentResult;
+import com.health.agent.model.PendingTask;
+import com.health.agent.model.StructuredFinalAnswer;
 
+@ExtendWith(MockitoExtension.class)
 class PatientTaskAgentServiceTest {
 
-    private final PatientTaskAgentService service = new PatientTaskAgentService(new PatientTaskSafetyService());
+    @Mock
+    private ReActAgentEngine agentEngine;
 
-    @Test
-    void shouldBuildFollowUpAnalysisWithContextSnapshots() {
-        DoctorAssistantTaskResponse response = service.analyze(baseRequest(TaskType.PATIENT_FOLLOW_UP_ANALYSIS));
+    private PatientTaskAgentService service;
 
-        assertEquals(DoctorAssistantTaskStatus.SUCCESS, response.getStatus());
-        assertEquals(TaskType.PATIENT_FOLLOW_UP_ANALYSIS, response.getTaskType());
-        assertTrue(response.getPatientSafeReply().contains("整理了这次随访"));
-        assertNotNull(response.getStructuredResult());
-        assertEquals(2, response.getStructuredResult().getSupportingEvidence().size());
-        assertNotNull(response.getDoctorWorkbenchPayload());
+    @BeforeEach
+    void setUp() {
+        service = new PatientTaskAgentService(
+                new PatientTaskSafetyService(),
+                null,
+                null,
+                null,
+                agentEngine,
+                new PatientTaskAgentResultMapper(),
+                new PatientReplyComposer());
     }
 
     @Test
-    void shouldEscalateHighRiskPatientMessage() {
-        DoctorAssistantTaskRequest request = baseRequest(TaskType.RISK_STRATIFICATION_AND_ESCALATION);
-        request.setPatientMessage("我现在胸痛还呼吸困难，是不是还能继续观察");
+    void shouldUseRealAgentResultWhenExecutionSucceeds() {
+        when(agentEngine.executeStream(any(), any())).thenReturn(AgentResult.success(
+                "agent-session-1",
+                StructuredFinalAnswer.builder()
+                        .summary("患者近期进入减重停滞期，需要补充近期执行数据。")
+                        .riskLevel("MEDIUM")
+                        .needsAttention(true)
+                        .keyFindings(List.of("近两周体重变化较小"))
+                        .recommendedActions(List.of("补充近3天饮食和体重记录"))
+                        .supportingEvidence(List.of("WEIGHT_HISTORY", "SESSION_CONTEXT"))
+                        .evidenceSources(List.of("AI_CHAT_MEMORY_SNAPSHOT", "AI_CHAT_SESSION_CONTEXT"))
+                        .uncertainties(List.of("缺少完整饮食记录"))
+                        .inferences(List.of("当前适合继续随访分析"))
+                        .build(),
+                List.of(),
+                2));
 
-        DoctorAssistantTaskResponse response = service.analyze(request);
+        DoctorAssistantTaskResponse response = service.analyze(baseRequest(TaskType.PATIENT_FOLLOW_UP_ANALYSIS));
+
+        assertEquals(DoctorAssistantTaskStatus.SUCCESS, response.getStatus());
+        assertEquals("agent-session-1", response.getAgentSessionId());
+        assertTrue(response.getPatientSafeReply().contains("补充近3天饮食和体重记录"));
+        assertEquals("MEDIUM", response.getStructuredResult().getRiskLevel());
+        assertEquals("AUTO_COMPLETED", response.getDoctorWorkbenchPayload().getReviewStatus());
+    }
+
+    @Test
+    void shouldEscalateWhenSafetySanitizerBlocksAgentOutput() {
+        when(agentEngine.executeStream(any(), any())).thenReturn(AgentResult.success(
+                "agent-session-2",
+                StructuredFinalAnswer.builder()
+                        .summary("目前可以明确诊断为药物相关不适。")
+                        .riskLevel("LOW")
+                        .needsAttention(false)
+                        .keyFindings(List.of("症状与近期用药相关"))
+                        .recommendedActions(List.of("继续观察"))
+                        .supportingEvidence(List.of("PATIENT_MESSAGE", "SESSION_CONTEXT"))
+                        .evidenceSources(List.of("PATIENT_MESSAGE", "AI_CHAT_SESSION_CONTEXT"))
+                        .uncertainties(List.of("仍需人工复核"))
+                        .inferences(List.of("存在诊断性表述"))
+                        .build(),
+                List.of(),
+                1));
+
+        DoctorAssistantTaskResponse response = service.analyze(baseRequest(TaskType.PATIENT_FOLLOW_UP_ANALYSIS));
 
         assertEquals(DoctorAssistantTaskStatus.PENDING_APPROVAL, response.getStatus());
         assertTrue(response.getNeedsHumanReview());
-        assertTrue(response.getPatientSafeReply().contains("尽快联系医生"));
+        assertTrue(response.getPatientSafeReply().contains("不适合在线直接给出处方、药物调整或诊断结论"));
+        assertEquals("HIGH", response.getStructuredResult().getRiskLevel());
+    }
+
+    @Test
+    void shouldReturnPendingApprovalWhenAgentRequiresHumanReview() {
+        PendingTask pendingTask = PendingTask.builder()
+                .id(101L)
+                .agentSessionId("agent-session-3")
+                .toolName("create_follow_up_task")
+                .toolDescription("创建随访任务")
+                .reason("需要医生确认")
+                .status("PENDING")
+                .build();
+        when(agentEngine.executeStream(any(), any())).thenReturn(AgentResult.pendingApproval(
+                "agent-session-3",
+                pendingTask,
+                List.of(),
+                2));
+
+        DoctorAssistantTaskResponse response = service.analyze(baseRequest(TaskType.NEXT_FOLLOW_UP_ACTION_RECOMMENDATION));
+
+        assertEquals(DoctorAssistantTaskStatus.PENDING_APPROVAL, response.getStatus());
+        assertTrue(response.getNeedsHumanReview());
         assertNotNull(response.getPendingTask());
-        assertEquals("PATIENT_DIALOG_AGENT_TASK", response.getDoctorWorkbenchPayload().getAuditTag());
+        assertEquals(101L, response.getPendingTask().getPendingTaskId());
+        assertEquals("PENDING_REVIEW", response.getDoctorWorkbenchPayload().getReviewStatus());
+    }
+
+    @Test
+    void shouldFallbackToTemplateAnalysisWhenAgentReturnsError() {
+        when(agentEngine.executeStream(any(), any())).thenReturn(
+                AgentResult.error("agent-session-4", "engine failure", List.of(), 1));
+
+        DoctorAssistantTaskResponse response = service.analyze(baseRequest(TaskType.PATIENT_FOLLOW_UP_ANALYSIS));
+
+        assertEquals(DoctorAssistantTaskStatus.SUCCESS, response.getStatus());
+        assertTrue(response.getPatientSafeReply().contains("整理了这次随访"));
+        assertEquals(2, response.getStructuredResult().getSupportingEvidence().size());
+        assertEquals("AUTO_COMPLETED", response.getDoctorWorkbenchPayload().getReviewStatus());
     }
 
     private DoctorAssistantTaskRequest baseRequest(TaskType taskType) {

@@ -17,6 +17,12 @@ import java.util.Map;
 @NoArgsConstructor
 @AllArgsConstructor
 public class AgentContext {
+    /**
+     * doctor-assistant-agent 在一次任务执行中的显式工作内存。
+     *
+     * <p>它把主体信息、结构化状态槽位和证据记录统一收敛起来，
+     * 供 ReAct 主代理、子代理协作、状态恢复和最终审计共同使用。</p>
+     */
 
     /**
      * 当前会话绑定的患者ID。

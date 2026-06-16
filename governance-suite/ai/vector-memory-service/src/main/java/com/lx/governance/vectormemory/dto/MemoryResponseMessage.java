@@ -5,8 +5,7 @@ import lombok.Data;
 import java.util.List;
 
 /**
- * RabbitMQ message for memory search responses
- * Sent from vector-memory-service back to ai-chat-service
+ * vector-memory-service 返回给 ai-chat-service 的记忆检索响应消息。
  */
 @Data
 public class MemoryResponseMessage {
@@ -27,7 +26,7 @@ public class MemoryResponseMessage {
     private String errorMessage;
 
     /**
-     * List of memory items (null if error)
+     * 检索命中的记忆列表；失败时通常为空。
      */
     private List<MemoryItemDTO> data;
 
