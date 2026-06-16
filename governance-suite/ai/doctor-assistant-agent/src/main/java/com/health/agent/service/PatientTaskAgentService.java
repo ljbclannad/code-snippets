@@ -1,13 +1,6 @@
 package com.health.agent.service;
 
-import java.time.Instant;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.UUID;
-
-import org.springframework.stereotype.Service;
-
+import com.alibaba.fastjson2.JSON;
 import com.health.agent.dto.patient.AgentTaskSource;
 import com.health.agent.dto.patient.DoctorAssistantPendingTaskPayload;
 import com.health.agent.dto.patient.DoctorAssistantTaskRequest;
@@ -17,16 +10,52 @@ import com.health.agent.dto.patient.DoctorWorkbenchPayload;
 import com.health.agent.dto.patient.MemorySnapshot;
 import com.health.agent.dto.patient.StructuredTaskResult;
 import com.health.agent.dto.patient.TaskType;
-
-import lombok.RequiredArgsConstructor;
+import com.health.agent.model.AgentContext;
+import com.health.agent.model.AgentResult;
+import com.health.agent.model.AgentSession;
+import com.health.agent.model.Message;
+import com.health.agent.model.PendingTask;
+import com.health.agent.model.Step;
+import com.health.agent.model.StructuredFinalAnswer;
+import com.health.agent.model.TaskStatus;
+import com.health.agent.safety.MedicalSafetyService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.UUID;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class PatientTaskAgentService {
 
     private final PatientTaskSafetyService safetyService;
+    private final AgentSessionService sessionService;
+    private final AgentSessionWorkflowService workflowService;
+    private final MedicalSafetyService medicalSafetyService;
+
+    public PatientTaskAgentService(PatientTaskSafetyService safetyService) {
+        this(safetyService, null, null, null);
+    }
+
+    @Autowired
+    public PatientTaskAgentService(
+        PatientTaskSafetyService safetyService,
+        AgentSessionService sessionService,
+        AgentSessionWorkflowService workflowService,
+        MedicalSafetyService medicalSafetyService
+    ) {
+        this.safetyService = safetyService;
+        this.sessionService = sessionService;
+        this.workflowService = workflowService;
+        this.medicalSafetyService = medicalSafetyService;
+    }
 
     public DoctorAssistantTaskResponse analyze(DoctorAssistantTaskRequest request) {
         if (request == null || request.getTaskType() == null || request.getTaskType() == TaskType.NONE) {
@@ -38,7 +67,12 @@ public class PatientTaskAgentService {
         }
 
         String taskId = buildTaskId(request);
-        String agentSessionId = "patient-agent-" + taskId;
+        boolean persistenceEnabled = sessionService != null && workflowService != null;
+        String goal = defaultValue(request.getGoal(), "患者来源任务: " + request.getTaskType().name());
+        AgentSession session = persistenceEnabled
+                ? sessionService.createSession(request.getCustomerId(), request.getDoctorId(), goal)
+                : null;
+        String agentSessionId = session != null ? String.valueOf(session.getId()) : "patient-agent-" + taskId;
         boolean highRisk = containsHighRiskSignal(request.getPatientMessage());
 
         StructuredTaskResult structuredResult = switch (request.getTaskType()) {
@@ -68,17 +102,72 @@ public class PatientTaskAgentService {
             patientReply = safetyResult.reply();
         }
 
-        DoctorAssistantPendingTaskPayload pendingTask = needsHumanReview
-                ? DoctorAssistantPendingTaskPayload.builder()
-                        .pendingTaskId(Math.abs(taskId.hashCode()) + 0L)
-                        .agentSessionId(agentSessionId)
-                        .toolName("patient_follow_up_review")
-                        .toolDescription("患者来源任务需要医生进一步确认")
-                        .reason("高风险/需人工复核的患者来源任务")
-                        .status("PENDING_REVIEW")
-                        .expireAt(Instant.now().plusSeconds(3600).toEpochMilli())
-                        .build()
-                : null;
+        AgentContext context = buildContext(request, goal, structuredResult);
+        List<Step> history = buildHistory(request, structuredResult, patientReply, needsHumanReview);
+        List<Message> messages = List.of(
+                Message.user(request.getPatientMessage()),
+                Message.assistant(patientReply)
+        );
+
+        DoctorAssistantPendingTaskPayload pendingTaskPayload = null;
+        if (needsHumanReview) {
+            PendingTask pendingTask = PendingTask.builder()
+                    .agentSessionId(agentSessionId)
+                    .customerId(request.getCustomerId())
+                    .doctorId(request.getDoctorId())
+                    .toolName("patient_follow_up_review")
+                    .toolDescription("患者来源任务需要医生进一步确认")
+                    .inputJson(JSON.toJSONString(Map.of(
+                            "taskType", request.getTaskType().name(),
+                            "patientMessage", request.getPatientMessage(),
+                            "structuredResult", structuredResult)))
+                    .reason("高风险/需人工复核的患者来源任务")
+                    .status(TaskStatus.PENDING.name())
+                    .createdAt(LocalDateTime.now())
+                    .expireAt(LocalDateTime.now().plusHours(1))
+                    .build();
+
+            if (persistenceEnabled) {
+                AgentResult auditResult = AgentResult.pendingApproval(agentSessionId, pendingTask, history, history.size());
+                pendingTask = workflowService.pauseSessionForApproval(
+                        agentSessionId,
+                        history,
+                        messages,
+                        context,
+                        pendingTask,
+                        goal,
+                        auditResult,
+                        history.size(),
+                        0L
+                );
+            }
+
+            pendingTaskPayload = DoctorAssistantPendingTaskPayload.builder()
+                    .pendingTaskId(pendingTask.getId() != null ? pendingTask.getId() : Math.abs(taskId.hashCode()) + 0L)
+                    .agentSessionId(agentSessionId)
+                    .toolName(pendingTask.getToolName())
+                    .toolDescription(pendingTask.getToolDescription())
+                    .reason(pendingTask.getReason())
+                    .status(pendingTask.getStatus())
+                    .expireAt(pendingTask.getExpireAt() != null
+                            ? pendingTask.getExpireAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+                            : Instant.now().plusSeconds(3600).toEpochMilli())
+                    .build();
+        } else if (persistenceEnabled) {
+            StructuredFinalAnswer finalAnswer = toFinalAnswer(structuredResult);
+            AgentResult auditResult = AgentResult.success(agentSessionId, finalAnswer, history, history.size());
+            workflowService.completeSession(
+                    agentSessionId,
+                    request.getCustomerId(),
+                    request.getDoctorId(),
+                    goal,
+                    history,
+                    context,
+                    auditResult,
+                    history.size(),
+                    0L
+            );
+        }
 
         DoctorWorkbenchPayload workbenchPayload = DoctorWorkbenchPayload.builder()
                 .agentSessionId(agentSessionId)
@@ -97,11 +186,11 @@ public class PatientTaskAgentService {
                 .recommendedActions(structuredResult.getRecommendedActions())
                 .evidenceSources(structuredResult.getEvidenceSources())
                 .uncertainties(structuredResult.getUncertainties())
-                .pendingTask(pendingTask)
+                .pendingTask(pendingTaskPayload)
                 .build();
 
-        log.info("患者来源任务分析完成 - taskType: {}, taskId: {}, conversationId: {}, correlationId: {}",
-                request.getTaskType(), taskId, request.getConversationId(), request.getCorrelationId());
+        log.info("患者来源任务分析完成 - taskType: {}, taskId: {}, conversationId: {}, correlationId: {}, sessionId: {}",
+                request.getTaskType(), taskId, request.getConversationId(), request.getCorrelationId(), agentSessionId);
 
         return DoctorAssistantTaskResponse.builder()
                 .agentSessionId(agentSessionId)
@@ -114,7 +203,66 @@ public class PatientTaskAgentService {
                 .structuredResult(structuredResult)
                 .doctorWorkbenchPayload(workbenchPayload)
                 .needsHumanReview(needsHumanReview)
-                .pendingTask(pendingTask)
+                .pendingTask(pendingTaskPayload)
+                .build();
+    }
+
+    private AgentContext buildContext(
+        DoctorAssistantTaskRequest request,
+        String goal,
+        StructuredTaskResult structuredResult
+    ) {
+        AgentContext context = AgentContext.initialize(request.getCustomerId(), request.getDoctorId(), goal);
+        context.putSlot("patient_task_request", Map.of(
+                "taskType", request.getTaskType().name(),
+                "conversationId", request.getConversationId(),
+                "correlationId", request.getCorrelationId()
+        ), "PATIENT_TASK_AGENT");
+        if (request.getSessionContext() != null && !request.getSessionContext().isEmpty()) {
+            context.putSlot("session_context", request.getSessionContext(), "AI_CHAT_SESSION_CONTEXT");
+        }
+        if (request.getProfileSnapshot() != null && !request.getProfileSnapshot().isEmpty()) {
+            context.putSlot("profile_snapshot", request.getProfileSnapshot(), "PROFILE_SNAPSHOT");
+        }
+        if (request.getMemorySnapshot() != null) {
+            context.putSlot("memory_snapshot", request.getMemorySnapshot(), "AI_CHAT_MEMORY");
+        }
+        context.putSlot("patient_task_result", structuredResult, "PATIENT_TASK_AGENT");
+        context.addEvidence("patient_task_analysis", "PATIENT_MESSAGE", request.getPatientMessage(), Map.of(
+                "taskType", request.getTaskType().name(),
+                "conversationId", request.getConversationId()
+        ));
+        return context;
+    }
+
+    private List<Step> buildHistory(
+        DoctorAssistantTaskRequest request,
+        StructuredTaskResult structuredResult,
+        String patientReply,
+        boolean needsHumanReview
+    ) {
+        List<Step> history = new ArrayList<>();
+        history.add(Step.thought("已针对患者来源任务生成结构化分析。"));
+        history.add(Step.observation("患者消息: " + request.getPatientMessage()));
+        history.add(Step.observation("结构化摘要: " + structuredResult.getSummary()));
+        history.add(Step.observation("患者可见回复: " + patientReply));
+        if (needsHumanReview) {
+            history.add(Step.observation("已转入医生人工复核队列。"));
+        }
+        return history;
+    }
+
+    private StructuredFinalAnswer toFinalAnswer(StructuredTaskResult structuredResult) {
+        return StructuredFinalAnswer.builder()
+                .summary(structuredResult.getSummary())
+                .riskLevel(structuredResult.getRiskLevel())
+                .needsAttention(Boolean.TRUE.equals(structuredResult.getNeedsAttention()))
+                .keyFindings(structuredResult.getKeyFindings())
+                .recommendedActions(structuredResult.getRecommendedActions())
+                .uncertainties(structuredResult.getUncertainties())
+                .supportingEvidence(structuredResult.getSupportingEvidence())
+                .evidenceSources(structuredResult.getEvidenceSources())
+                .inferences(structuredResult.getInferences())
                 .build();
     }
 
@@ -133,7 +281,7 @@ public class PatientTaskAgentService {
                 .recommendedActions(List.of(
                         "继续补充近一周关键监测数据",
                         "结合医生建议复核近期症状与执行情况"))
-                .uncertainties(List.of("仍需结合线下检查或医生复核确认最终结论"))
+                .uncertainties(new ArrayList<>(List.of("仍需结合线下检查或医生复核确认最终结论")))
                 .supportingEvidence(List.of(
                         "SESSION_CONTEXT_AVAILABLE",
                         "MEMORY_SNAPSHOT_ATTACHED"))
@@ -155,7 +303,7 @@ public class PatientTaskAgentService {
                 .recommendedActions(List.of(
                         "尽快由医生或健康管理师人工复核",
                         "必要时指导患者线下就医"))
-                .uncertainties(List.of("线上信息无法替代医生面对面评估"))
+                .uncertainties(new ArrayList<>(List.of("线上信息无法替代医生面对面评估")))
                 .supportingEvidence(List.of(
                         "PATIENT_MESSAGE_TRIGGERED",
                         "TASK_TYPE_RISK_STRATIFICATION"))
@@ -177,7 +325,7 @@ public class PatientTaskAgentService {
                         "补充近 3-7 天监测数据",
                         "确认是否存在新发不适或执行中断",
                         highRisk ? "立即联系医生进一步评估" : "在医生建议下安排下一次随访"))
-                .uncertainties(List.of("具体随访频率仍需结合医生计划确认"))
+                .uncertainties(new ArrayList<>(List.of("具体随访频率仍需结合医生计划确认")))
                 .supportingEvidence(List.of(
                         "SESSION_TOPIC_AVAILABLE",
                         "FOLLOW_UP_ACTION_TEMPLATE"))
@@ -200,9 +348,10 @@ public class PatientTaskAgentService {
     }
 
     private boolean containsHighRiskSignal(String patientMessage) {
-        return patientMessage != null && List.of("胸痛", "呼吸困难", "晕厥", "便血", "呕血", "黑便", "抽搐")
-                .stream()
-                .anyMatch(patientMessage::contains);
+        return medicalSafetyService != null && (
+                medicalSafetyService.hasEmergencySignal(patientMessage)
+                        || medicalSafetyService.hasPrescriptionRisk(patientMessage)
+        );
     }
 
     private int countMemories(MemorySnapshot memorySnapshot, boolean shortTerm) {

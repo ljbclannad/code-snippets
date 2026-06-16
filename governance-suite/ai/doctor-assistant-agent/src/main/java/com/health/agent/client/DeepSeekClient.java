@@ -10,6 +10,8 @@ import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -17,12 +19,14 @@ import jakarta.annotation.PreDestroy;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.function.Consumer;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import reactor.core.publisher.Flux;
@@ -52,10 +56,15 @@ public class DeepSeekClient {
     @Value("${agent.deepseek.max-retries:2}")
     private int maxRetries;
 
-    private final ExecutorService requestExecutor = Executors.newCachedThreadPool(new RequestThreadFactory());
+    private volatile ExecutorService requestExecutor;
 
     public DeepSeekClient(ChatModel chatModel) {
         this.chatModel = chatModel;
+    }
+
+    @Autowired(required = false)
+    void setRequestExecutor(@Qualifier("deepSeekRequestExecutor") ExecutorService requestExecutor) {
+        this.requestExecutor = requestExecutor;
     }
 
     /**
@@ -72,14 +81,15 @@ public class DeepSeekClient {
         Prompt prompt = buildPrompt(systemPrompt, messages);
 
         RuntimeException lastException = null;
-        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+        int maxAttempts = maxAttempts();
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
                 ChatResponse response = executeWithTimeout(prompt);
                 return buildResponse(response, startTime);
             } catch (RuntimeException e) {
                 lastException = e;
                 log.warn("DeepSeek API 第{}次调用失败: {}", attempt, e.getMessage());
-                if (attempt == maxRetries) {
+                if (attempt == maxAttempts) {
                     break;
                 }
             }
@@ -102,13 +112,14 @@ public class DeepSeekClient {
         Prompt prompt = buildPrompt(systemPrompt, messages);
 
         RuntimeException lastException = null;
-        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+        int maxAttempts = maxAttempts();
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
                 return executeStream(prompt, deltaSink, startTime);
             } catch (RuntimeException e) {
                 lastException = e;
                 log.warn("DeepSeek Stream API 第{}次调用失败: {}", attempt, e.getMessage());
-                if (attempt == maxRetries) {
+                if (attempt == maxAttempts || !isRetryableStreamFailure(e)) {
                     break;
                 }
             }
@@ -135,6 +146,7 @@ public class DeepSeekClient {
         return new Prompt(
             aiMessages,
             OpenAiChatOptions.builder()
+                .withModel(model)
                 .withTemperature(temperature)
                 .withMaxTokens(maxTokens)
                 .build()
@@ -142,7 +154,12 @@ public class DeepSeekClient {
     }
 
     private ChatResponse executeWithTimeout(Prompt prompt) {
-        Future<ChatResponse> future = requestExecutor.submit(() -> chatModel.call(prompt));
+        Future<ChatResponse> future;
+        try {
+            future = getRequestExecutor().submit(() -> chatModel.call(prompt));
+        } catch (RejectedExecutionException e) {
+            throw new RuntimeException("DeepSeek 请求线程池已饱和", e);
+        }
         try {
             return future.get(requestTimeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
@@ -163,12 +180,14 @@ public class DeepSeekClient {
     private DeepSeekResponse executeStream(Prompt prompt, Consumer<String> deltaSink, long startTime) {
         StringBuilder contentBuilder = new StringBuilder();
         List<ChatResponse> responses;
+        StreamState streamState = new StreamState();
         try {
             Flux<ChatResponse> responseFlux = chatModel.stream(prompt)
                 .timeout(requestTimeout)
                 .doOnNext(response -> {
                     String delta = extractContent(response);
                     if (!delta.isEmpty()) {
+                        streamState.markDeltaEmitted();
                         contentBuilder.append(delta);
                         if (deltaSink != null) {
                             deltaSink.accept(delta);
@@ -177,7 +196,7 @@ public class DeepSeekClient {
                 });
             responses = responseFlux.collectList().block();
         } catch (RuntimeException e) {
-            throw unwrapStreamException(e);
+            throw unwrapStreamException(e, streamState.deltaEmitted());
         }
 
         if (responses == null || responses.isEmpty()) {
@@ -227,20 +246,52 @@ public class DeepSeekClient {
         return content != null ? content : "";
     }
 
-    private RuntimeException unwrapStreamException(RuntimeException exception) {
+    private RuntimeException unwrapStreamException(RuntimeException exception, boolean deltaEmitted) {
         Throwable cause = exception.getCause();
         if (cause instanceof TimeoutException) {
-            throw new RuntimeException("DeepSeek API 调用超时: " + requestTimeout, cause);
+            return new StreamExecutionException("DeepSeek API 调用超时: " + requestTimeout, cause, !deltaEmitted);
         }
         if (cause instanceof RuntimeException runtimeException) {
-            return runtimeException;
+            return new StreamExecutionException(runtimeException.getMessage(), runtimeException, !deltaEmitted);
         }
-        return exception;
+        return new StreamExecutionException(exception.getMessage(), exception, !deltaEmitted);
+    }
+
+    private boolean isRetryableStreamFailure(RuntimeException exception) {
+        return exception instanceof StreamExecutionException streamExecutionException
+            && streamExecutionException.retryable();
+    }
+
+    private int maxAttempts() {
+        return Math.max(1, maxRetries + 1);
+    }
+
+    private ExecutorService getRequestExecutor() {
+        if (requestExecutor == null) {
+            synchronized (this) {
+                if (requestExecutor == null) {
+                    requestExecutor = new ThreadPoolExecutor(
+                        2,
+                        4,
+                        60000,
+                        TimeUnit.MILLISECONDS,
+                        new ArrayBlockingQueue<>(16),
+                        new RequestThreadFactory(),
+                        (runnable, executor) -> {
+                            throw new RejectedExecutionException("DeepSeek 请求线程池已饱和");
+                        }
+                    );
+                }
+            }
+        }
+        return requestExecutor;
     }
 
     @PreDestroy
     void shutdownExecutor() {
-        requestExecutor.shutdownNow();
+        if (requestExecutor != null) {
+            requestExecutor.shutdownNow();
+        }
     }
 
     private static class RequestThreadFactory implements ThreadFactory {
@@ -249,6 +300,31 @@ public class DeepSeekClient {
             Thread thread = new Thread(runnable, "deepseek-request");
             thread.setDaemon(true);
             return thread;
+        }
+    }
+
+    private static final class StreamState {
+        private volatile boolean deltaEmitted;
+
+        private void markDeltaEmitted() {
+            deltaEmitted = true;
+        }
+
+        private boolean deltaEmitted() {
+            return deltaEmitted;
+        }
+    }
+
+    private static final class StreamExecutionException extends RuntimeException {
+        private final boolean retryable;
+
+        private StreamExecutionException(String message, Throwable cause, boolean retryable) {
+            super(message, cause);
+            this.retryable = retryable;
+        }
+
+        private boolean retryable() {
+            return retryable;
         }
     }
 

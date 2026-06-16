@@ -6,6 +6,7 @@ import java.util.Locale;
 import org.springframework.stereotype.Component;
 
 import com.health.agent.dto.patient.StructuredTaskResult;
+import com.health.agent.safety.MedicalSafetyService;
 
 @Component
 public class PatientTaskSafetyService {
@@ -23,16 +24,28 @@ public class PatientTaskSafetyService {
         "风险等级", "证据来源", "内部判断", "待审批", "工作台"
     );
 
+    private final MedicalSafetyService medicalSafetyService;
+
+    public PatientTaskSafetyService() {
+        this(new MedicalSafetyService());
+    }
+
+    public PatientTaskSafetyService(MedicalSafetyService medicalSafetyService) {
+        this.medicalSafetyService = medicalSafetyService;
+    }
+
     public SafetyResult sanitize(String patientReply, StructuredTaskResult structuredResult, boolean needsHumanReview) {
         String combined = normalize(patientReply) + " " + normalize(structuredResult != null ? structuredResult.getSummary() : "");
 
-        if (containsAny(combined, HIGH_RISK_KEYWORDS)) {
+        if (medicalSafetyService.hasEmergencySignal(combined) || containsAny(combined, HIGH_RISK_KEYWORDS)) {
             return SafetyResult.blocked(
                     "MANDATORY_ESCALATION",
                     "目前存在需要尽快人工评估的风险信号，请尽快联系医生或线下就医；若症状明显加重，请及时前往急诊。");
         }
 
-        if (containsAny(combined, MEDICATION_KEYWORDS) || containsAny(combined, DIAGNOSIS_KEYWORDS)) {
+        if (medicalSafetyService.hasPrescriptionRisk(combined)
+                || containsAny(combined, MEDICATION_KEYWORDS)
+                || containsAny(combined, DIAGNOSIS_KEYWORDS)) {
             return SafetyResult.blocked(
                     "DIRECT_MEDICAL_ADVICE_BLOCK",
                     "目前不适合在线直接给出处方、药物调整或诊断结论，建议尽快联系医生进行进一步评估。");

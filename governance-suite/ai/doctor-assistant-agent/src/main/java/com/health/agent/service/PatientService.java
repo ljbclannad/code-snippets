@@ -129,6 +129,14 @@ public class PatientService {
         log.debug("保存聊天记录: customerId={}", message.getCustomerId());
     }
 
+    public void saveAgentMessage(String customerId, String message) {
+        saveChatMessage(ChatMessage.builder()
+            .customerId(customerId)
+            .sender("AGENT")
+            .message(message)
+            .build());
+    }
+
     /**
      * 保存处方记录
      */

@@ -39,14 +39,22 @@ public class MedicalSafetyService {
         "draft_weight_management_plan", "recommend_medical_review"
     );
 
+    public boolean hasEmergencySignal(String text) {
+        return containsAny(text, EMERGENCY_KEYWORDS);
+    }
+
+    public boolean hasPrescriptionRisk(String text) {
+        return containsAny(text, PRESCRIPTION_KEYWORDS) || containsAny(text, MEDICATION_ADJUSTMENT_KEYWORDS);
+    }
+
     public SafetyAssessment assessGoal(String goal) {
-        if (containsAny(goal, EMERGENCY_KEYWORDS)) {
+        if (hasEmergencySignal(goal)) {
             return SafetyAssessment.block(
                 "EMERGENCY",
                 "检测到减重管理中的高危症状或心理危机信号，建议立即线下就医或急诊评估，并尽快转人工医生处理。"
             );
         }
-        if (containsAny(goal, MEDICATION_ADJUSTMENT_KEYWORDS) || containsAny(goal, PRESCRIPTION_KEYWORDS)) {
+        if (hasPrescriptionRisk(goal)) {
             return SafetyAssessment.block(
                 "MEDICATION_ADJUSTMENT",
                 "检测到处方或药物调整请求，Agent 不得自动生成药物调整结论，请转人工医生基于完整病史、禁忌证和线下评估处理。"
@@ -77,7 +85,7 @@ public class MedicalSafetyService {
 
     public SafetyAssessment assessFinalAnswer(StructuredFinalAnswer finalAnswer, List<Step> history) {
         String summary = finalAnswer != null ? finalAnswer.getSummary() : "";
-        if (containsAny(summary, EMERGENCY_KEYWORDS)) {
+        if (hasEmergencySignal(summary)) {
             return SafetyAssessment.block(
                 "EMERGENCY",
                 "检测到减重管理场景中的高危症状描述，建议立即停止线上建议，尽快转人工医生处理，并建议患者立即线下就医或急诊评估。"
@@ -85,7 +93,7 @@ public class MedicalSafetyService {
         }
 
         String combinedAnswer = combineFinalAnswerText(finalAnswer);
-        if (containsAny(combinedAnswer, PRESCRIPTION_KEYWORDS) || containsAny(combinedAnswer, MEDICATION_ADJUSTMENT_KEYWORDS)) {
+        if (hasPrescriptionRisk(combinedAnswer)) {
             return SafetyAssessment.block(
                 "PRESCRIPTION",
                 "检测到处方或用药调整内容，Agent 只能提示医生人工复核，不得直接输出具体处方、药名或剂量调整建议。"

@@ -100,4 +100,12 @@ public class EmbeddingGenerator {
         }
         return embeddings;
     }
+
+    public boolean isMockMode() {
+        return useMock;
+    }
+
+    public boolean isRealProviderConfigured() {
+        return !useMock;
+    }
 }

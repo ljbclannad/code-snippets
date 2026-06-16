@@ -44,7 +44,4 @@ mvn -f pom.xml spring-boot:run
 
 ## 重要补充文档
 
-- [项目路线图](./docs/ROADMAP.md)
 - [API 使用指南](./docs/api/API_USAGE_GUIDE.md)
-- [向量检索说明](./docs/VECTOR_SEARCH_GUIDE.md)
-- [E2E 测试指南](./docs/E2E_TEST_GUIDE.md)

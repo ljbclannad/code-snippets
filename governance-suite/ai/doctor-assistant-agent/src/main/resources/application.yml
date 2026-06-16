@@ -56,9 +56,14 @@ agent:
   use-mock: false
   sse:
     timeout-millis: 120000
+    executor-pool-size: 8
   access:
     max-requests-per-minute: 30
     max-sse-connections: 32
+  prompt-context:
+    max-slots: 12
+    max-slot-chars: 240
+    max-total-chars: 2400
   tool-timeout-millis: 3000
   tool-executor:
     core-pool-size: 8
@@ -72,6 +77,11 @@ agent:
     max-tokens: 2000
     request-timeout: 5s
     max-retries: 2
+    executor:
+      core-pool-size: 4
+      max-pool-size: 8
+      queue-capacity: 32
+      keep-alive-millis: 60000
   weight-plateau:
     window-days: 14
     max-weight-change-kg: 0.5

@@ -37,6 +37,8 @@ class VectorSearchServiceTest {
 
     @Test
     void shouldRecordFailureDurationWhenSearchFails() {
+        when(milvusClient.isEnabled()).thenReturn(true);
+        when(embeddingGenerator.isRealProviderConfigured()).thenReturn(true);
         when(embeddingGenerator.generateEmbedding("fever")).thenThrow(new IllegalStateException("embedding down"));
 
         List<CaseVector> results = vectorSearchService.searchSimilarCases("fever", 3);

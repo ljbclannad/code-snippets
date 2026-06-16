@@ -39,6 +39,12 @@ public class VectorSearchService {
         // 记录请求
         vectorMetrics.recordSearchRequest(topK);
 
+        if (!isAvailable()) {
+            vectorMetrics.recordSearchFailure("VECTOR_NOT_READY", System.currentTimeMillis() - startTime);
+            log.warn("向量检索未启用或仍处于 Mock Embedding 模式，已跳过真实检索");
+            return Collections.emptyList();
+        }
+
         try {
             // 1. 生成查询向量
             List<Float> queryVector = embeddingGenerator.generateEmbedding(query);
@@ -78,6 +84,10 @@ public class VectorSearchService {
         long startTime = System.currentTimeMillis();
         log.info("添加病例向量: caseId={}", caseVector.getCaseId());
 
+        if (!isAvailable()) {
+            throw new IllegalStateException("VECTOR_NOT_READY: 当前未启用真实向量检索能力");
+        }
+
         // 1. 生成向量
         String text = buildCaseText(caseVector);
         List<Float> embedding = embeddingGenerator.generateEmbedding(text);
@@ -98,6 +108,10 @@ public class VectorSearchService {
     public void batchAddCases(List<CaseVector> caseVectors) {
         long startTime = System.currentTimeMillis();
         log.info("批量添加病例向量: count={}", caseVectors.size());
+
+        if (!isAvailable()) {
+            throw new IllegalStateException("VECTOR_NOT_READY: 当前未启用真实向量检索能力");
+        }
 
         // 1. 生成向量
         for (CaseVector cv : caseVectors) {
@@ -153,6 +167,6 @@ public class VectorSearchService {
      * 检查向量检索是否可用
      */
     public boolean isAvailable() {
-        return milvusClient.isEnabled();
+        return milvusClient.isEnabled() && embeddingGenerator.isRealProviderConfigured();
     }
 }

@@ -143,21 +143,30 @@ public class AgentContext {
      * 3. 在恢复执行或切换子代理时，继续共享同一份工作内存
      */
     public String toPromptSection() {
+        return toPromptSection(12, 300, 2400);
+    }
+
+    public String toPromptSection(int maxSlots, int maxCharsPerSlot, int maxTotalChars) {
         if (slots == null || slots.isEmpty()) {
             return "当前无已缓存状态。";
         }
 
         StringBuilder builder = new StringBuilder();
+        int slotCount = 0;
         for (Map.Entry<String, ContextEntry> entry : slots.entrySet()) {
-            String serialized = JSON.toJSONString(entry.getValue().getValue());
-            if (serialized.length() > 300) {
-                serialized = serialized.substring(0, 300) + "...";
+            if (slotCount >= Math.max(1, maxSlots) || builder.length() >= Math.max(256, maxTotalChars)) {
+                break;
             }
-            builder.append("- ")
-                .append(entry.getKey())
-                .append(": ")
-                .append(serialized)
-                .append('\n');
+            String serialized = JSON.toJSONString(entry.getValue().getValue());
+            if (serialized.length() > maxCharsPerSlot) {
+                serialized = serialized.substring(0, maxCharsPerSlot) + "...";
+            }
+            String line = "- " + entry.getKey() + ": " + serialized + '\n';
+            if (builder.length() + line.length() > Math.max(256, maxTotalChars)) {
+                break;
+            }
+            builder.append(line);
+            slotCount++;
         }
         return builder.toString().trim();
     }
