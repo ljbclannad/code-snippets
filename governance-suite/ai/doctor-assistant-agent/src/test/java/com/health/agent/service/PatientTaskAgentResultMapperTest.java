@@ -13,6 +13,7 @@ import com.health.agent.dto.agent.AgentExecutionCommand;
 import com.health.agent.dto.patient.AgentTaskSource;
 import com.health.agent.dto.patient.DoctorAssistantTaskRequest;
 import com.health.agent.dto.patient.DoctorAssistantTaskStatus;
+import com.health.agent.dto.patient.MemorySnapshot;
 import com.health.agent.dto.patient.StructuredTaskResult;
 import com.health.agent.dto.patient.TaskType;
 import com.health.agent.model.AgentResult;
@@ -44,12 +45,22 @@ class PatientTaskAgentResultMapperTest {
                         .uncertainties(List.of("uncertainty-1"))
                         .inferences(List.of("inference-1"))
                         .build(),
-                fallback);
+                fallback,
+                AgentExecutionCommand.builder()
+                        .sessionContext(java.util.Map.of("phase", "follow_up"))
+                        .profileSnapshot(java.util.Map.of("age", 30))
+                        .memorySnapshot(MemorySnapshot.builder()
+                                .shortTermMemories(List.of("近3天体重变化小"))
+                                .build())
+                        .triggerDecision(java.util.Map.of("summary", "命中升级"))
+                        .build());
 
         assertEquals("agent summary", result.getSummary());
         assertEquals("MEDIUM", result.getRiskLevel());
         assertEquals(List.of("finding-1"), result.getKeyFindings());
         assertEquals(List.of("action-1"), result.getRecommendedActions());
+        assertEquals(List.of("source-1", "AI_CHAT_SESSION_CONTEXT", "PROFILE_SNAPSHOT", "AI_CHAT_MEMORY", "TRIGGER_DECISION"),
+                result.getEvidenceSources());
     }
 
     @Test
@@ -76,7 +87,8 @@ class PatientTaskAgentResultMapperTest {
                 .supportingEvidence(List.of("e1", "e2"))
                 .keyFindings(List.of("f1"))
                 .recommendedActions(List.of("a1"))
-                .evidenceSources(List.of("s1"))
+                .evidenceSources(List.of("AI_CHAT_SESSION_CONTEXT", "WEIGHT_HISTORY"))
+                .inferences(List.of("需要人工确认"))
                 .uncertainties(List.of("u1"))
                 .build();
 
@@ -87,6 +99,10 @@ class PatientTaskAgentResultMapperTest {
         AgentExecutionCommand command = AgentExecutionCommand.builder()
                 .source(AgentTaskSource.PATIENT_DIALOG_AI_CHAT)
                 .taskType(TaskType.PATIENT_FOLLOW_UP_ANALYSIS)
+                .sessionContext(java.util.Map.of("phase", "follow_up"))
+                .profileSnapshot(java.util.Map.of("age", 30))
+                .memorySnapshot(MemorySnapshot.builder().shortTermMemories(List.of("近3天体重偏高")).build())
+                .triggerDecision(java.util.Map.of("summary", "命中升级"))
                 .build();
 
         var payload = mapper.toDoctorWorkbenchPayload(
@@ -103,6 +119,9 @@ class PatientTaskAgentResultMapperTest {
         assertEquals("PENDING_REVIEW", payload.getReviewStatus());
         assertEquals("HIGH", payload.getRiskLevel());
         assertEquals("PATIENT_DIALOG_AI_CHAT", payload.getSource());
+        assertEquals(List.of("WEIGHT_HISTORY"), payload.getAgentEvidenceSources());
+        assertEquals(List.of("AI_CHAT_SESSION_CONTEXT"), payload.getUpstreamEvidenceSources());
+        assertEquals(List.of("需要人工确认"), payload.getInferenceEvidence());
     }
 
     @Test

@@ -1,8 +1,13 @@
 package com.health.agent.engine.subagent;
 
+import com.health.agent.dto.patient.TaskType;
+import com.health.agent.model.ContextEntry;
 import com.health.agent.model.AgentContext;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+
+import java.util.Collection;
+import java.util.Map;
 
 @Component
 public class SubAgentCoordinator {
@@ -17,35 +22,46 @@ public class SubAgentCoordinator {
     private CarePlanningSubAgent carePlanningSubAgent;
 
     public AgentSubAgent select(String goal, AgentContext context) {
-        if (shouldCollect(goal, context)) {
+        TaskType taskType = resolveTaskType(context);
+        if (shouldCollect(goal, context, taskType)) {
             return dataCollectionSubAgent;
         }
-        if (shouldAnalyze(goal, context)) {
+        if (shouldAnalyze(goal, context, taskType)) {
             return weightAnalysisSubAgent;
         }
         return carePlanningSubAgent;
     }
 
-    private boolean shouldCollect(String goal, AgentContext context) {
+    private boolean shouldCollect(String goal, AgentContext context, TaskType taskType) {
         if (context == null || context.getSlots() == null || context.getSlots().isEmpty()) {
             return true;
         }
 
-        boolean hasProfile = context.getSlots().containsKey("patient_profile");
-        boolean hasWeightHistory = context.getSlots().containsKey("weight_history");
+        boolean hasProfile = hasAnySlot(context, "patient_profile", "profile_snapshot");
+        boolean hasWeightHistory = hasAnySlot(context, "weight_history");
+        boolean hasPreloadedMemory = hasAnySlot(context, "memory_snapshot", "chat_history", "recent_follow_up_signals");
+        boolean hasSessionSignals = hasAnySlot(context, "session_context", "trigger_decision", "patient_message");
         boolean hasAnyAnalysis = context.getSlots().containsKey("plateau_assessment")
             || context.getSlots().containsKey("adherence_analysis")
             || context.getSlots().containsKey("weight_trend_analysis");
         boolean goalNeedsChat = containsAny(goal, "依从", "饮食", "运动", "聊天", "情绪");
-        boolean missingChat = !context.getSlots().containsKey("chat_history");
+        boolean missingChat = !hasAnySlot(context, "chat_history", "memory_snapshot", "recent_follow_up_signals");
 
-        if (!hasWeightHistory && !hasAnyAnalysis) {
+        if (!hasProfile && !hasWeightHistory && !hasSessionSignals && !hasPreloadedMemory && !hasAnyAnalysis) {
+            return true;
+        }
+        if (!hasWeightHistory && !hasPreloadedMemory && !hasAnyAnalysis) {
+            return true;
+        }
+        if ((taskType == TaskType.RISK_STRATIFICATION_AND_ESCALATION
+                || taskType == TaskType.NEXT_FOLLOW_UP_ACTION_RECOMMENDATION)
+                && (!hasProfile || (!hasPreloadedMemory && !hasSessionSignals))) {
             return true;
         }
         return goalNeedsChat && missingChat && !hasAnyAnalysis;
     }
 
-    private boolean shouldAnalyze(String goal, AgentContext context) {
+    private boolean shouldAnalyze(String goal, AgentContext context, TaskType taskType) {
         if (context == null || context.getSlots() == null) {
             return false;
         }
@@ -55,14 +71,42 @@ public class SubAgentCoordinator {
         boolean hasPlateau = context.getSlots().containsKey("plateau_assessment");
         boolean hasAdherence = context.getSlots().containsKey("adherence_analysis");
         boolean hasTrend = context.getSlots().containsKey("weight_trend_analysis");
+        boolean hasWeightLikeSignals = hasAnySlot(context, "weight_history", "memory_snapshot", "recent_follow_up_signals");
+        boolean hasConversationSignals = hasAnySlot(context, "chat_history", "session_context", "patient_message");
 
-        if (plateauGoal && !hasPlateau) {
+        if (plateauGoal && hasWeightLikeSignals && !hasPlateau) {
             return true;
         }
-        if (adherenceGoal && !hasAdherence) {
+        if (adherenceGoal && (hasConversationSignals || hasWeightLikeSignals) && !hasAdherence) {
             return true;
         }
-        return !hasTrend && context.getSlots().containsKey("weight_history");
+        if (taskType == TaskType.PATIENT_FOLLOW_UP_ANALYSIS) {
+            return hasWeightLikeSignals && (!hasTrend || !hasPlateau || !hasAdherence);
+        }
+        if (taskType == TaskType.RISK_STRATIFICATION_AND_ESCALATION) {
+            return hasConversationSignals && (hasWeightLikeSignals || hasAnySlot(context, "trigger_decision"))
+                    && (!hasAdherence || !hasTrend);
+        }
+        return !hasTrend && hasAnySlot(context, "weight_history", "recent_follow_up_signals");
+    }
+
+    private TaskType resolveTaskType(AgentContext context) {
+        if (context == null || context.getSlots() == null) {
+            return TaskType.NONE;
+        }
+        ContextEntry entry = context.getSlots().get("patient_task_request");
+        if (entry == null || !(entry.getValue() instanceof Map<?, ?> requestMap)) {
+            return TaskType.NONE;
+        }
+        Object taskType = requestMap.get("taskType");
+        if (taskType == null) {
+            return TaskType.NONE;
+        }
+        try {
+            return TaskType.valueOf(String.valueOf(taskType));
+        } catch (IllegalArgumentException ignore) {
+            return TaskType.NONE;
+        }
     }
 
     private boolean containsAny(String goal, String... keywords) {
@@ -75,5 +119,34 @@ public class SubAgentCoordinator {
             }
         }
         return false;
+    }
+
+    private boolean hasAnySlot(AgentContext context, String... slotNames) {
+        if (context == null || context.getSlots() == null || slotNames == null) {
+            return false;
+        }
+        for (String slotName : slotNames) {
+            ContextEntry entry = context.getSlots().get(slotName);
+            if (entry != null && isMeaningful(entry.getValue())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isMeaningful(Object value) {
+        if (value == null) {
+            return false;
+        }
+        if (value instanceof String text) {
+            return !text.isBlank();
+        }
+        if (value instanceof Collection<?> collection) {
+            return !collection.isEmpty();
+        }
+        if (value instanceof Map<?, ?> map) {
+            return !map.isEmpty();
+        }
+        return true;
     }
 }

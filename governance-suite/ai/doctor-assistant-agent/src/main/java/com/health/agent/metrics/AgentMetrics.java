@@ -23,6 +23,7 @@ public class AgentMetrics {
     private final Counter executionFailure;
     private final Counter executionPendingApproval;
     private final Counter executionMaxSteps;
+    private final Counter duplicateToolSuppressed;
     private final Counter approvalApproved;
     private final Counter approvalRejected;
 
@@ -48,6 +49,10 @@ public class AgentMetrics {
 
         this.executionMaxSteps = Counter.builder("agent.execution.max_steps")
             .description("Agent 达到最大步数次数")
+            .register(meterRegistry);
+
+        this.duplicateToolSuppressed = Counter.builder("agent.execution.duplicate_tool_suppressed")
+            .description("Agent 抑制重复工具调用次数")
             .register(meterRegistry);
 
         this.approvalApproved = Counter.builder("agent.approval.approved")
@@ -142,6 +147,15 @@ public class AgentMetrics {
         recordExecutionSample("max_steps", maxSteps, durationMs);
 
         log.warn("Agent 达到最大步数: maxSteps={}", maxSteps);
+    }
+
+    public void recordDuplicateToolSuppression(String toolName) {
+        duplicateToolSuppressed.increment();
+        Counter.builder("agent.execution.duplicate_tool_suppressed.by_tool")
+            .tag("tool", toolName == null ? "unknown" : toolName)
+            .description("按工具统计的重复调用抑制次数")
+            .register(meterRegistry)
+            .increment();
     }
 
     /**

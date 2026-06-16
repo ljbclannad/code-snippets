@@ -277,7 +277,7 @@ public class PatientTaskAgentService {
         boolean highRisk = containsHighRiskSignal(command.getPatientMessage());
         StructuredTaskResult fallbackStructuredResult = buildTemplateStructuredResult(request, command, highRisk);
         StructuredTaskResult structuredResult = resultMapper.toStructuredTaskResult(
-                agentResult.getStructuredFinalAnswer(), fallbackStructuredResult);
+                agentResult.getStructuredFinalAnswer(), fallbackStructuredResult, command);
         DoctorAssistantPendingTaskPayload pendingTaskPayload = resultMapper.toPendingTaskPayload(
                 agentResult.getPendingTask(), taskId);
 

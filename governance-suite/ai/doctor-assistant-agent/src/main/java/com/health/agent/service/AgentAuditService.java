@@ -10,7 +10,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Agent 审计服务
@@ -125,5 +129,60 @@ public class AgentAuditService {
         log.setErrorMessage(message);
         log.setCreatedAt(LocalDateTime.now());
         executionLogMapper.insert(log);
+    }
+
+    public void recordResumeContextUpdate(
+        String sessionId,
+        String customerId,
+        String doctorId,
+        String goal,
+        String toolName,
+        Map<String, Object> beforeSlots,
+        Map<String, Object> afterSlots
+    ) {
+        AgentExecutionLog log = new AgentExecutionLog();
+        log.setSessionId(sessionId);
+        log.setCustomerId(customerId);
+        log.setDoctorId(doctorId);
+        log.setGoal(goal);
+        log.setResultStatus("RESUME_CONTEXT_UPDATED");
+        log.setToolName(toolName);
+        log.setToolInputJson(JSON.toJSONString(beforeSlots));
+        log.setToolOutputJson(JSON.toJSONString(afterSlots));
+        log.setErrorMessage(buildSlotDeltaSummary(beforeSlots, afterSlots));
+        log.setCreatedAt(LocalDateTime.now());
+        executionLogMapper.insert(log);
+    }
+
+    private String buildSlotDeltaSummary(Map<String, Object> beforeSlots, Map<String, Object> afterSlots) {
+        Set<String> before = beforeSlots == null ? Set.of() : beforeSlots.keySet();
+        Set<String> after = afterSlots == null ? Set.of() : afterSlots.keySet();
+
+        List<String> added = new ArrayList<>();
+        for (String slot : after) {
+            if (!before.contains(slot)) {
+                added.add(slot);
+            }
+        }
+
+        List<String> removed = new ArrayList<>();
+        for (String slot : before) {
+            if (!after.contains(slot)) {
+                removed.add(slot);
+            }
+        }
+
+        Set<String> shared = new LinkedHashSet<>(before);
+        shared.retainAll(after);
+        List<String> changed = new ArrayList<>();
+        for (String slot : shared) {
+            Object beforeValue = beforeSlots != null ? beforeSlots.get(slot) : null;
+            Object afterValue = afterSlots != null ? afterSlots.get(slot) : null;
+            if (!java.util.Objects.equals(beforeValue, afterValue)) {
+                changed.add(slot);
+            }
+        }
+
+        return "added=" + added + ", removed=" + removed + ", changed=" + changed;
     }
 }

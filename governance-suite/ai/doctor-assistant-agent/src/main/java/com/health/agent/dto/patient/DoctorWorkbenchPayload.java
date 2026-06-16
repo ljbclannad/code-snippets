@@ -112,6 +112,24 @@ public class DoctorWorkbenchPayload {
     private List<String> evidenceSources = new ArrayList<>();
 
     /**
+     * 明确标识来自 ai-chat-service 预加载快照的证据来源。
+     */
+    @Builder.Default
+    private List<String> upstreamEvidenceSources = new ArrayList<>();
+
+    /**
+     * 明确标识来自本轮 Agent 工具执行的证据来源。
+     */
+    @Builder.Default
+    private List<String> agentEvidenceSources = new ArrayList<>();
+
+    /**
+     * 明确标识基于事实形成的推理/归纳证据。
+     */
+    @Builder.Default
+    private List<String> inferenceEvidence = new ArrayList<>();
+
+    /**
      * 仍待人工判断的不确定项。
      */
     @Builder.Default

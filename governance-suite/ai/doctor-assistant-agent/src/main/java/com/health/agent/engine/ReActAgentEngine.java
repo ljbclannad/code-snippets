@@ -1,6 +1,7 @@
 package com.health.agent.engine;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
@@ -121,174 +122,18 @@ public class ReActAgentEngine {
             return result;
         }
 
-        // 构建初始 User Prompt
-        String userPrompt = promptBuilder.buildUserPrompt(goal, customerId);
-        messages.add(Message.user(userPrompt));
-
-        for (int step = 0; step < maxSteps; step++) {
-            log.info("Agent执行第{}步", step + 1);
-
-            try {
-                AgentSubAgent subAgent = selectSubAgent(goal, context);
-                switchSubAgent(sessionId, step + 1, context, subAgent, null);
-                String systemPrompt = promptBuilder.buildSubAgentSystemPrompt(subAgent, toolRegistry.getAllTools());
-                // 1. 调用 DeepSeek API 获取 Thought 和 Action
-                ParsedThought parsedThought = requestThoughtResult(systemPrompt, messages, step, customerId, context);
-                log.info("Agent响应: {}", parsedThought.responseText());
-
-                // 记录 Thought
-                ThoughtResult thought = parsedThought.thoughtResult();
-                history.add(Step.thought(thought.getThinking()));
-                messages.add(Message.assistant(parsedThought.responseText()));
-
-                // 3. 检查是否完成
-                if (thought.isFinished()) {
-                    StructuredFinalAnswer finalAnswer = thought.getStructuredFinalAnswer();
-                    SafetyAssessment finalAnswerAssessment = medicalSafetyService.assessFinalAnswer(
-                            finalAnswer,
-                            history);
-                    log.info("Agent任务完成");
-                    sessionService.completeSession(sessionId, history, context);
-
-                    // 记录成功
-                    long duration = System.currentTimeMillis() - startTime;
-                    agentMetrics.recordExecutionSuccess(step + 1, duration);
-
-                    AgentResult result = AgentResult.success(
-                            sessionId,
-                            finalAnswerAssessment.isBlocked()
-                                    ? medicalSafetyService.buildSafetyStructuredAnswer(finalAnswerAssessment.message())
-                                    : finalAnswer,
-                            history,
-                            step + 1);
-                    if (finalAnswerAssessment.isBlocked()) {
-                        recordSafetyBlock(sessionId, customerId, doctorId, goal, finalAnswerAssessment, finalAnswer);
-                    }
-                    emitSubAgentFinished(sessionId, step + 1, context, null);
-                    agentAuditService.recordSessionResult(
-                            sessionId,
-                            customerId,
-                            doctorId,
-                            goal,
-                            result,
-                            step + 1,
-                            duration);
-                    return result;
-                }
-
-                // 4. 执行 Action
-                ActionDecision action = thought.getAction();
-                history.add(Step.action(action));
-
-                log.info("Agent执行行动: tool={}, input={}",
-                        action.getToolName(),
-                        JSON.toJSONString(action.getInput()));
-
-                SafetyAssessment actionAssessment = medicalSafetyService.assessAction(action, history);
-                if (actionAssessment.isBlocked()) {
-                    history.add(Step.observation(actionAssessment.message()));
-                    messages.add(Message.user("Observation: " + actionAssessment.message()));
-                    context.addEvidence(action.getToolName(), "SAFETY_RULE", actionAssessment.message(),
-                            action.getInput());
-                    recordSafetyBlock(sessionId, customerId, doctorId, goal, actionAssessment, action);
-                    sessionService.updateSession(sessionId, history, messages, context, step + 1);
-                    continue;
-                }
-
-                ActionResult actionResult = actionExecutor.execute(
-                        action,
-                        customerId,
-                        doctorId,
-                        sessionId);
-
-                // 5. 检查是否需要人工确认
-                if (actionResult.isNeedsApproval()) {
-                    log.info("行动需要医生确认，Agent暂停");
-                    sessionService.pauseSession(sessionId, history, messages, context);
-
-                    // 记录等待审批
-                    agentMetrics.recordPendingApproval(action.getToolName());
-
-                    AgentResult result = AgentResult.pendingApproval(
-                            sessionId,
-                            actionResult.getTask(),
-                            history,
-                            step + 1);
-                    emitSubAgentFinished(sessionId, step + 1, context, null);
-                    agentAuditService.recordSessionResult(
-                            sessionId,
-                            customerId,
-                            doctorId,
-                            goal,
-                            result,
-                            step + 1,
-                            System.currentTimeMillis() - startTime);
-                    return result;
-                }
-
-                // 6. 记录 Observation
-                String observation = formatObservation(actionResult);
-                history.add(Step.observation(observation));
-                messages.add(Message.user("Observation: " + observation));
-                updateContextAfterAction(context, action, actionResult, observation);
-                emitContextUpdated(sessionId, step + 1, context, action.getToolName(), null);
-
-                log.info("Agent观察结果: {}", observation);
-
-                // 7. 更新会话状态
-                sessionService.updateSession(sessionId, history, messages, context, step + 1);
-
-            } catch (Exception e) {
-                log.error("Agent执行异常", e);
-                sessionService.failSession(sessionId, e.getMessage());
-
-                // 记录失败
-                long duration = System.currentTimeMillis() - startTime;
-                agentMetrics.recordExecutionFailure(e.getClass().getSimpleName(), step + 1, duration);
-
-                StructuredFinalAnswer degraded = medicalSafetyService.buildDegradedStructuredAnswer(
-                        buildExecutionDegradedSummary(e),
-                        "MEDIUM",
-                        buildExecutionRuntimeEvidence(e),
-                        List.of("请人工接管当前会话", "补充近期关键数据后再尝试重新分析"),
-                        List.of("当前未获得可用的自动分析结果"));
-                AgentResult result = AgentResult.error(sessionId, e.getMessage(), degraded, history, step + 1);
-                emitSubAgentFinished(sessionId, step + 1, context, null);
-                agentAuditService.recordSessionResult(
-                        sessionId,
-                        customerId,
-                        doctorId,
-                        goal,
-                        result,
-                        step + 1,
-                        System.currentTimeMillis() - startTime);
-                return result;
-            }
-        }
-
-        log.warn("Agent达到最大步数限制");
-        sessionService.failSession(sessionId, "达到最大步数限制");
-
-        // 记录达到最大步数
-        agentMetrics.recordMaxStepsReached(maxSteps, System.currentTimeMillis() - startTime);
-
-        StructuredFinalAnswer degraded = medicalSafetyService.buildDegradedStructuredAnswer(
-                "自动分析已达到最大步数，未能收敛到最终结论。",
-                "MEDIUM",
-                "达到最大步数限制",
-                List.of("请人工查看已有 Observation", "必要时缩小问题范围后重新发起分析"),
-                List.of("当前分析链路未完成"));
-        AgentResult result = AgentResult.maxStepsReached(sessionId, degraded, history, maxSteps);
-        emitSubAgentFinished(sessionId, maxSteps, context, null);
-        agentAuditService.recordSessionResult(
+        messages.add(Message.user(promptBuilder.buildUserPrompt(goal, customerId)));
+        return runLoop(new LoopExecution(
                 sessionId,
+                goal,
                 customerId,
                 doctorId,
-                goal,
-                result,
-                maxSteps,
-                System.currentTimeMillis() - startTime);
-        return result;
+                history,
+                messages,
+                0,
+                startTime,
+                null,
+                context));
     }
 
     public AgentResult executeStream(
@@ -340,185 +185,18 @@ public class ReActAgentEngine {
             return result;
         }
 
-        String userPrompt = promptBuilder.buildUserPrompt(goal, customerId);
-        messages.add(Message.user(userPrompt));
-
-        for (int step = 0; step < maxSteps; step++) {
-            log.info("Agent执行第{}步", step + 1);
-
-            try {
-                // 每一轮先由协调器选择当前子代理，再基于其角色职责构建专属 prompt。
-                AgentSubAgent subAgent = selectSubAgent(goal, context);
-                switchSubAgent(sessionId, step + 1, context, subAgent, eventSink);
-                String systemPrompt = promptBuilder.buildSubAgentSystemPrompt(subAgent, toolRegistry.getAllTools());
-
-                // 流式调用模型：前端先收到 thinking_delta，流结束后再解析完整 JSON。
-                ParsedThought parsedThought = requestThoughtResultStream(
-                        systemPrompt, messages, step, customerId, sessionId, eventSink, step + 1, context);
-                log.info("Agent响应: {}", parsedThought.responseText());
-
-                ThoughtResult thought = parsedThought.thoughtResult();
-                history.add(Step.thought(thought.getThinking()));
-                messages.add(Message.assistant(parsedThought.responseText()));
-                emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.THOUGHT, thought.getThinking());
-
-                // 当模型已经收敛到最终答案时，直接落会话、发 final_answer 并结束流。
-                if (thought.isFinished()) {
-                    StructuredFinalAnswer finalAnswer = thought.getStructuredFinalAnswer();
-                    SafetyAssessment finalAnswerAssessment = medicalSafetyService.assessFinalAnswer(
-                            finalAnswer,
-                            history);
-                    log.info("Agent任务完成");
-                    sessionService.completeSession(sessionId, history, context);
-
-                    long duration = System.currentTimeMillis() - startTime;
-                    agentMetrics.recordExecutionSuccess(step + 1, duration);
-
-                    AgentResult result = AgentResult.success(
-                            sessionId,
-                            finalAnswerAssessment.isBlocked()
-                                    ? medicalSafetyService.buildSafetyStructuredAnswer(finalAnswerAssessment.message())
-                                    : finalAnswer,
-                            history,
-                            step + 1);
-                    if (finalAnswerAssessment.isBlocked()) {
-                        recordSafetyBlock(sessionId, customerId, doctorId, goal, finalAnswerAssessment, finalAnswer);
-                    }
-                    emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.FINAL_ANSWER,
-                            result.getStructuredFinalAnswer());
-                    emitSubAgentFinished(sessionId, step + 1, context, eventSink);
-                    emitDone(eventSink, sessionId, step + 1, result.getStatus().name());
-                    agentAuditService.recordSessionResult(
-                            sessionId,
-                            customerId,
-                            doctorId,
-                            goal,
-                            result,
-                            step + 1,
-                        duration);
-                    return result;
-                }
-
-                // 未完成时进入动作阶段，先广播 action，再执行安全校验和工具调用。
-                ActionDecision action = thought.getAction();
-                history.add(Step.action(action));
-                emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.ACTION, actionToEventData(action));
-
-                log.info("Agent执行行动: tool={}, input={}",
-                        action.getToolName(),
-                        JSON.toJSONString(action.getInput()));
-
-                SafetyAssessment actionAssessment = medicalSafetyService.assessAction(action, history);
-                if (actionAssessment.isBlocked()) {
-                    history.add(Step.observation(actionAssessment.message()));
-                    messages.add(Message.user("Observation: " + actionAssessment.message()));
-                    emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.OBSERVATION,
-                            actionAssessment.message());
-                    context.addEvidence(action.getToolName(), "SAFETY_RULE", actionAssessment.message(),
-                            action.getInput());
-                    recordSafetyBlock(sessionId, customerId, doctorId, goal, actionAssessment, action);
-                    sessionService.updateSession(sessionId, history, messages, context, step + 1);
-                    continue;
-                }
-
-                // 工具执行后分两条路：要么进入审批暂停，要么把结果写入显式状态继续推进。
-                ActionResult actionResult = actionExecutor.execute(
-                        action,
-                        customerId,
-                        doctorId,
-                        sessionId);
-
-                if (actionResult.isNeedsApproval()) {
-                    log.info("行动需要医生确认，Agent暂停");
-                    sessionService.pauseSession(sessionId, history, messages, context);
-                    agentMetrics.recordPendingApproval(action.getToolName());
-
-                    AgentResult result = AgentResult.pendingApproval(
-                            sessionId,
-                            actionResult.getTask(),
-                            history,
-                            step + 1);
-                    emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.PENDING_APPROVAL,
-                            actionResult.getTask());
-                    emitSubAgentFinished(sessionId, step + 1, context, eventSink);
-                    emitDone(eventSink, sessionId, step + 1, result.getStatus().name());
-                    agentAuditService.recordSessionResult(
-                            sessionId,
-                            customerId,
-                            doctorId,
-                            goal,
-                            result,
-                            step + 1,
-                            System.currentTimeMillis() - startTime);
-                    return result;
-                }
-
-                // 标准化工具输出会在这里汇总成 Observation，同时回写 AgentContext。
-                String observation = formatObservation(actionResult);
-                history.add(Step.observation(observation));
-                messages.add(Message.user("Observation: " + observation));
-                updateContextAfterAction(context, action, actionResult, observation);
-                emitContextUpdated(sessionId, step + 1, context, action.getToolName(), eventSink);
-                emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.OBSERVATION, observation);
-
-                log.info("Agent观察结果: {}", observation);
-                sessionService.updateSession(sessionId, history, messages, context, step + 1);
-
-            } catch (Exception e) {
-                // 任一阶段异常都统一转成结构化降级结果，并发 error/done 结束流。
-                log.error("Agent执行异常", e);
-                sessionService.failSession(sessionId, e.getMessage());
-
-                long duration = System.currentTimeMillis() - startTime;
-                agentMetrics.recordExecutionFailure(e.getClass().getSimpleName(), step + 1, duration);
-
-                StructuredFinalAnswer degraded = medicalSafetyService.buildDegradedStructuredAnswer(
-                        buildExecutionDegradedSummary(e),
-                        "MEDIUM",
-                        buildExecutionRuntimeEvidence(e),
-                        List.of("请人工接管当前会话", "补充近期关键数据后再尝试重新分析"),
-                        List.of("当前未获得可用的自动分析结果"));
-                AgentResult result = AgentResult.error(sessionId, e.getMessage(), degraded, history, step + 1);
-                emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.ERROR,
-                        Map.of("message", e.getMessage(), "structuredFinalAnswer", degraded));
-                emitSubAgentFinished(sessionId, step + 1, context, eventSink);
-                emitDone(eventSink, sessionId, step + 1, result.getStatus().name());
-                agentAuditService.recordSessionResult(
-                        sessionId,
-                        customerId,
-                        doctorId,
-                        goal,
-                        result,
-                        step + 1,
-                        duration);
-                return result;
-            }
-        }
-
-        // 超过最大步数仍未完成时，返回保守降级答案，避免无限循环。
-        log.warn("Agent达到最大步数限制");
-        sessionService.failSession(sessionId, "达到最大步数限制");
-        agentMetrics.recordMaxStepsReached(maxSteps, System.currentTimeMillis() - startTime);
-
-        StructuredFinalAnswer degraded = medicalSafetyService.buildDegradedStructuredAnswer(
-                "自动分析已达到最大步数，未能收敛到最终结论。",
-                "MEDIUM",
-                "达到最大步数限制",
-                List.of("请人工查看已有 Observation", "必要时缩小问题范围后重新发起分析"),
-                List.of("当前分析链路未完成"));
-        AgentResult result = AgentResult.maxStepsReached(sessionId, degraded, history, maxSteps);
-        emitEvent(eventSink, sessionId, maxSteps, AgentStreamEventType.FINAL_ANSWER, degraded);
-        emitSubAgentFinished(sessionId, maxSteps, context, eventSink);
-        emitDone(eventSink, sessionId, maxSteps, result.getStatus().name());
-        agentAuditService.recordSessionResult(
+        messages.add(Message.user(promptBuilder.buildUserPrompt(command)));
+        return runLoop(new LoopExecution(
                 sessionId,
+                goal,
                 customerId,
                 doctorId,
-                goal,
-                result,
-                maxSteps,
-                System.currentTimeMillis() - startTime);
-        return result;
+                history,
+                messages,
+                0,
+                startTime,
+                eventSink,
+                context));
     }
 
     private AgentContext createInitialContext(AgentExecutionCommand command) {
@@ -548,15 +226,31 @@ public class ReActAgentEngine {
 
         if (command.getSessionContext() != null && !command.getSessionContext().isEmpty()) {
             context.putSlot("session_context", command.getSessionContext(), "REQUEST_PRELOAD");
+            context.addEvidence("session_context", "AI_CHAT_SESSION_CONTEXT",
+                    JSON.toJSONString(command.getSessionContext()), command.getSessionContext());
         }
         if (command.getProfileSnapshot() != null && !command.getProfileSnapshot().isEmpty()) {
             context.putSlot("profile_snapshot", command.getProfileSnapshot(), "REQUEST_PRELOAD");
+            context.putSlot("patient_profile", command.getProfileSnapshot(), "REQUEST_PRELOAD_NORMALIZED");
+            context.addEvidence("profile_snapshot", "PROFILE_SNAPSHOT",
+                    JSON.toJSONString(command.getProfileSnapshot()), command.getProfileSnapshot());
         }
         if (command.getMemorySnapshot() != null) {
             context.putSlot("memory_snapshot", command.getMemorySnapshot(), "REQUEST_PRELOAD");
+            context.addEvidence("memory_snapshot", "AI_CHAT_MEMORY",
+                    JSON.toJSONString(command.getMemorySnapshot()), command.getMemorySnapshot());
+            if (command.getMemorySnapshot().getShortTermMemories() != null
+                    && !command.getMemorySnapshot().getShortTermMemories().isEmpty()) {
+                context.putSlot("chat_history", command.getMemorySnapshot().getShortTermMemories(),
+                        "REQUEST_PRELOAD_NORMALIZED");
+                context.putSlot("recent_follow_up_signals", command.getMemorySnapshot().getShortTermMemories(),
+                        "REQUEST_PRELOAD_NORMALIZED");
+            }
         }
         if (command.getTriggerDecision() != null && !command.getTriggerDecision().isEmpty()) {
             context.putSlot("trigger_decision", command.getTriggerDecision(), "REQUEST_PRELOAD");
+            context.addEvidence("trigger_decision", "TRIGGER_DECISION",
+                    JSON.toJSONString(command.getTriggerDecision()), command.getTriggerDecision());
         }
         if (command.getPatientMessage() != null && !command.getPatientMessage().isBlank()) {
             context.putSlot("patient_message", Map.of(
@@ -571,6 +265,11 @@ public class ReActAgentEngine {
                             "conversationId", defaultString(command.getConversationId()),
                             "correlationId", defaultString(command.getCorrelationId()),
                             "taskType", command.getTaskType() != null ? command.getTaskType().name() : "UNKNOWN"));
+        }
+        if (command.getPatientMessage() != null && !command.getPatientMessage().isBlank()
+                && !context.getSlots().containsKey("recent_follow_up_signals")) {
+            context.putSlot("recent_follow_up_signals", List.of(command.getPatientMessage()),
+                    "REQUEST_PRELOAD_NORMALIZED");
         }
     }
 
@@ -633,6 +332,7 @@ public class ReActAgentEngine {
             log.info("执行已批准的行动: tool={}, input={}",
                     action.getToolName(), JSON.toJSONString(action.getInput()));
 
+            Map<String, Object> beforeSlotSnapshot = snapshotContextSlots(context);
             ActionResult actionResult = actionExecutor.executeApprovedAction(action);
 
             // 6. 记录 Observation
@@ -640,6 +340,7 @@ public class ReActAgentEngine {
             history.add(Step.observation(observation));
             messages.add(Message.user("Observation: " + observation));
             updateContextAfterAction(context, action, actionResult, observation);
+            recordResumeContextUpdate(session, context, action, beforeSlotSnapshot);
 
             log.info("行动执行完成: {}", observation);
 
@@ -703,12 +404,16 @@ public class ReActAgentEngine {
             int currentStep = session.getCurrentStep() != null ? session.getCurrentStep() : 0;
 
             ActionDecision action = JSON.parseObject(task.getInputJson(), ActionDecision.class);
+            Map<String, Object> beforeSlotSnapshot = snapshotContextSlots(context);
             ActionResult actionResult = actionExecutor.executeApprovedAction(action);
 
             String observation = formatObservation(actionResult);
             history.add(Step.observation(observation));
             messages.add(Message.user("Observation: " + observation));
             emitEvent(eventSink, sessionId, currentStep + 1, AgentStreamEventType.OBSERVATION, observation);
+            updateContextAfterAction(context, action, actionResult, observation);
+            emitContextUpdated(sessionId, currentStep + 1, context, action.getToolName(), eventSink);
+            recordResumeContextUpdate(session, context, action, beforeSlotSnapshot);
 
             sessionService.resumeSession(sessionId);
 
@@ -752,172 +457,18 @@ public class ReActAgentEngine {
             List<Message> messages,
             int startStep,
             AgentContext context) {
-        long startTime = System.currentTimeMillis();
         log.info("继续ReAct循环: sessionId={}, startStep={}", sessionId, startStep);
-
-        for (int step = startStep; step < maxSteps; step++) {
-            log.info("Agent执行第{}步", step + 1);
-
-            try {
-                AgentSubAgent subAgent = selectSubAgent(goal, context);
-                switchSubAgent(sessionId, step + 1, context, subAgent, null);
-                String systemPrompt = promptBuilder.buildSubAgentSystemPrompt(subAgent, toolRegistry.getAllTools());
-                // 1. 调用 DeepSeek API 获取 Thought 和 Action
-                ParsedThought parsedThought = requestThoughtResult(systemPrompt, messages, step, customerId, context);
-                log.info("Agent响应: {}", parsedThought.responseText());
-
-                // 记录 Thought
-                ThoughtResult thought = parsedThought.thoughtResult();
-                history.add(Step.thought(thought.getThinking()));
-                messages.add(Message.assistant(parsedThought.responseText()));
-
-                // 3. 检查是否完成
-                if (thought.isFinished()) {
-                    StructuredFinalAnswer finalAnswer = thought.getStructuredFinalAnswer();
-                    SafetyAssessment finalAnswerAssessment = medicalSafetyService.assessFinalAnswer(
-                            finalAnswer,
-                            history);
-                    log.info("Agent任务完成");
-                    sessionService.completeSession(sessionId, history, context);
-
-                    // 记录成功
-                    long duration = System.currentTimeMillis() - startTime;
-                    agentMetrics.recordExecutionSuccess(step + 1, duration);
-
-                    AgentResult result = AgentResult.success(
-                            sessionId,
-                            finalAnswerAssessment.isBlocked()
-                                    ? medicalSafetyService.buildSafetyStructuredAnswer(finalAnswerAssessment.message())
-                                    : finalAnswer,
-                            history,
-                            step + 1);
-                    if (finalAnswerAssessment.isBlocked()) {
-                        recordSafetyBlock(sessionId, customerId, doctorId, goal, finalAnswerAssessment, finalAnswer);
-                    }
-                    emitSubAgentFinished(sessionId, step + 1, context, null);
-                    agentAuditService.recordSessionResult(
-                            sessionId,
-                            customerId,
-                            doctorId,
-                            goal,
-                            result,
-                            step + 1,
-                            duration);
-                    return result;
-                }
-
-                // 4. 执行 Action
-                ActionDecision action = thought.getAction();
-                history.add(Step.action(action));
-
-                log.info("Agent执行行动: tool={}, input={}",
-                        action.getToolName(),
-                        JSON.toJSONString(action.getInput()));
-
-                SafetyAssessment actionAssessment = medicalSafetyService.assessAction(action, history);
-                if (actionAssessment.isBlocked()) {
-                    history.add(Step.observation(actionAssessment.message()));
-                    messages.add(Message.user("Observation: " + actionAssessment.message()));
-                    context.addEvidence(action.getToolName(), "SAFETY_RULE", actionAssessment.message(),
-                            action.getInput());
-                    recordSafetyBlock(sessionId, customerId, doctorId, goal, actionAssessment, action);
-                    sessionService.updateSession(sessionId, history, messages, context, step + 1);
-                    continue;
-                }
-
-                ActionResult actionResult = actionExecutor.execute(
-                        action,
-                        customerId,
-                        doctorId,
-                        sessionId);
-
-                // 5. 检查是否需要人工确认
-                if (actionResult.isNeedsApproval()) {
-                    log.info("行动需要医生确认，Agent暂停");
-                    sessionService.pauseSession(sessionId, history, messages, context);
-
-                    // 记录等待审批
-                    agentMetrics.recordPendingApproval(action.getToolName());
-
-                    AgentResult result = AgentResult.pendingApproval(
-                            sessionId,
-                            actionResult.getTask(),
-                            history,
-                            step + 1);
-                    emitSubAgentFinished(sessionId, step + 1, context, null);
-                    agentAuditService.recordSessionResult(
-                            sessionId,
-                            customerId,
-                            doctorId,
-                            goal,
-                            result,
-                            step + 1,
-                            System.currentTimeMillis() - startTime);
-                    return result;
-                }
-
-                // 6. 记录 Observation
-                String observation = formatObservation(actionResult);
-                history.add(Step.observation(observation));
-                messages.add(Message.user("Observation: " + observation));
-                updateContextAfterAction(context, action, actionResult, observation);
-                emitContextUpdated(sessionId, step + 1, context, action.getToolName(), null);
-
-                log.info("Agent观察结果: {}", observation);
-
-                // 7. 更新会话状态
-                sessionService.updateSession(sessionId, history, messages, context, step + 1);
-
-            } catch (Exception e) {
-                log.error("Agent执行异常", e);
-                sessionService.failSession(sessionId, e.getMessage());
-
-                // 记录失败
-                agentMetrics.recordExecutionFailure(e.getClass().getSimpleName());
-
-                StructuredFinalAnswer degraded = medicalSafetyService.buildDegradedStructuredAnswer(
-                        buildExecutionDegradedSummary(e),
-                        "MEDIUM",
-                        buildExecutionRuntimeEvidence(e),
-                        List.of("请人工接管当前会话", "补充近期关键数据后再尝试重新分析"),
-                        List.of("当前未获得可用的自动分析结果"));
-                AgentResult result = AgentResult.error(sessionId, e.getMessage(), degraded, history, step + 1);
-                emitSubAgentFinished(sessionId, step + 1, context, null);
-                agentAuditService.recordSessionResult(
-                        sessionId,
-                        customerId,
-                        doctorId,
-                        goal,
-                        result,
-                        step + 1,
-                        System.currentTimeMillis() - startTime);
-                return result;
-            }
-        }
-
-        log.warn("Agent达到最大步数限制");
-        sessionService.failSession(sessionId, "达到最大步数限制");
-
-        // 记录达到最大步数
-        agentMetrics.recordMaxStepsReached(maxSteps);
-
-        StructuredFinalAnswer degraded = medicalSafetyService.buildDegradedStructuredAnswer(
-                "自动分析已达到最大步数，未能收敛到最终结论。",
-                "MEDIUM",
-                "达到最大步数限制",
-                List.of("请人工查看已有 Observation", "必要时缩小问题范围后重新发起分析"),
-                List.of("当前分析链路未完成"));
-        AgentResult result = AgentResult.maxStepsReached(sessionId, degraded, history, maxSteps);
-        emitSubAgentFinished(sessionId, maxSteps, context, null);
-        agentAuditService.recordSessionResult(
+        return runLoop(new LoopExecution(
                 sessionId,
+                goal,
                 customerId,
                 doctorId,
-                goal,
-                result,
-                maxSteps,
-                System.currentTimeMillis() - startTime);
-        return result;
+                history,
+                messages,
+                startStep,
+                System.currentTimeMillis(),
+                null,
+                context));
     }
 
     private AgentResult continueReActLoopStream(
@@ -932,153 +483,184 @@ public class ReActAgentEngine {
             Consumer<AgentStreamEvent> eventSink,
             AgentContext context) {
         log.info("继续流式ReAct循环: sessionId={}, startStep={}", sessionId, startStep);
+        return runLoop(new LoopExecution(
+                sessionId,
+                goal,
+                customerId,
+                doctorId,
+                history,
+                messages,
+                startStep,
+                startTime,
+                eventSink,
+                context));
+    }
 
-        for (int step = startStep; step < maxSteps; step++) {
-            log.info("Agent执行第{}步", step + 1);
-
+    private AgentResult runLoop(LoopExecution execution) {
+        for (int step = execution.startStep(); step < maxSteps; step++) {
+            int stepNumber = step + 1;
+            log.info("Agent执行第{}步", stepNumber);
             try {
-                AgentSubAgent subAgent = selectSubAgent(goal, context);
-                switchSubAgent(sessionId, step + 1, context, subAgent, eventSink);
+                AgentSubAgent subAgent = selectSubAgent(execution.goal(), execution.context());
+                switchSubAgent(execution.sessionId(), stepNumber, execution.context(), subAgent, execution.eventSink());
                 String systemPrompt = promptBuilder.buildSubAgentSystemPrompt(subAgent, toolRegistry.getAllTools());
-                ParsedThought parsedThought = requestThoughtResultStream(
-                        systemPrompt, messages, step, customerId, sessionId, eventSink, step + 1, context);
+                ParsedThought parsedThought = requestThought(execution, systemPrompt, step, stepNumber);
                 log.info("Agent响应: {}", parsedThought.responseText());
 
                 ThoughtResult thought = parsedThought.thoughtResult();
-                history.add(Step.thought(thought.getThinking()));
-                messages.add(Message.assistant(parsedThought.responseText()));
-                emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.THOUGHT, thought.getThinking());
+                execution.history().add(Step.thought(thought.getThinking()));
+                execution.messages().add(Message.assistant(parsedThought.responseText()));
+                emitEvent(execution.eventSink(), execution.sessionId(), stepNumber, AgentStreamEventType.THOUGHT,
+                        thought.getThinking());
 
                 if (thought.isFinished()) {
-                    StructuredFinalAnswer finalAnswer = thought.getStructuredFinalAnswer();
-                    SafetyAssessment finalAnswerAssessment = medicalSafetyService.assessFinalAnswer(
-                            finalAnswer,
-                            history);
-                    log.info("Agent任务完成");
-                    sessionService.completeSession(sessionId, history, context);
-
-                    long duration = System.currentTimeMillis() - startTime;
-                    agentMetrics.recordExecutionSuccess(step + 1, duration);
-
-                    AgentResult result = AgentResult.success(
-                            sessionId,
-                            finalAnswerAssessment.isBlocked()
-                                    ? medicalSafetyService.buildSafetyStructuredAnswer(finalAnswerAssessment.message())
-                                    : finalAnswer,
-                            history,
-                            step + 1);
-                    if (finalAnswerAssessment.isBlocked()) {
-                        recordSafetyBlock(sessionId, customerId, doctorId, goal, finalAnswerAssessment, finalAnswer);
-                    }
-                    emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.FINAL_ANSWER,
-                            result.getStructuredFinalAnswer());
-                    emitSubAgentFinished(sessionId, step + 1, context, eventSink);
-                    emitDone(eventSink, sessionId, step + 1, result.getStatus().name());
-                    agentAuditService.recordSessionResult(
-                            sessionId,
-                            customerId,
-                            doctorId,
-                            goal,
-                            result,
-                            step + 1,
-                            duration);
-                    return result;
+                    return finalizeSuccess(execution, stepNumber, thought.getStructuredFinalAnswer());
                 }
 
                 ActionDecision action = thought.getAction();
-                history.add(Step.action(action));
-                emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.ACTION, actionToEventData(action));
+                execution.history().add(Step.action(action));
+                emitEvent(execution.eventSink(), execution.sessionId(), stepNumber, AgentStreamEventType.ACTION,
+                        actionToEventData(action));
+                log.info("Agent执行行动: tool={}, input={}", action.getToolName(), JSON.toJSONString(action.getInput()));
 
-                log.info("Agent执行行动: tool={}, input={}",
-                        action.getToolName(),
-                        JSON.toJSONString(action.getInput()));
-
-                SafetyAssessment actionAssessment = medicalSafetyService.assessAction(action, history);
+                SafetyAssessment actionAssessment = medicalSafetyService.assessAction(action, execution.history());
                 if (actionAssessment.isBlocked()) {
-                    history.add(Step.observation(actionAssessment.message()));
-                    messages.add(Message.user("Observation: " + actionAssessment.message()));
-                    emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.OBSERVATION,
-                            actionAssessment.message());
-                    context.addEvidence(action.getToolName(), "SAFETY_RULE", actionAssessment.message(),
-                            action.getInput());
-                    recordSafetyBlock(sessionId, customerId, doctorId, goal, actionAssessment, action);
-                    emitContextUpdated(sessionId, step + 1, context, action.getToolName(), eventSink);
-                    sessionService.updateSession(sessionId, history, messages, context, step + 1);
+                    applySyntheticObservation(execution, stepNumber, action, actionAssessment.message(), "SAFETY_RULE");
+                    recordSafetyBlock(execution.sessionId(), execution.customerId(), execution.doctorId(),
+                            execution.goal(), actionAssessment, action);
+                    sessionService.updateSession(execution.sessionId(), execution.history(), execution.messages(),
+                            execution.context(), stepNumber);
+                    continue;
+                }
+
+                if (isRepeatedAction(execution.context(), execution.history(), action)) {
+                    applySyntheticObservation(execution, stepNumber, action, buildDuplicateActionObservation(action),
+                            "DUPLICATE_ACTION_GUARD");
+                    agentMetrics.recordDuplicateToolSuppression(action.getToolName());
+                    sessionService.updateSession(execution.sessionId(), execution.history(), execution.messages(),
+                            execution.context(), stepNumber);
                     continue;
                 }
 
                 ActionResult actionResult = actionExecutor.execute(
                         action,
-                        customerId,
-                        doctorId,
-                        sessionId);
+                        execution.customerId(),
+                        execution.doctorId(),
+                        execution.sessionId());
 
                 if (actionResult.isNeedsApproval()) {
-                    log.info("行动需要医生确认，Agent暂停");
-                    sessionService.pauseSession(sessionId, history, messages, context);
-                    agentMetrics.recordPendingApproval(action.getToolName());
-
-                    AgentResult result = AgentResult.pendingApproval(
-                            sessionId,
-                            actionResult.getTask(),
-                            history,
-                            step + 1);
-                    emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.PENDING_APPROVAL,
-                            actionResult.getTask());
-                    emitSubAgentFinished(sessionId, step + 1, context, eventSink);
-                    emitDone(eventSink, sessionId, step + 1, result.getStatus().name());
-                    agentAuditService.recordSessionResult(
-                            sessionId,
-                            customerId,
-                            doctorId,
-                            goal,
-                            result,
-                            step + 1,
-                            System.currentTimeMillis() - startTime);
-                    return result;
+                    return finalizePendingApproval(execution, stepNumber, action, actionResult);
                 }
 
                 String observation = formatObservation(actionResult);
-                history.add(Step.observation(observation));
-                messages.add(Message.user("Observation: " + observation));
-                updateContextAfterAction(context, action, actionResult, observation);
-                emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.OBSERVATION, observation);
-
+                execution.history().add(Step.observation(observation));
+                execution.messages().add(Message.user("Observation: " + observation));
+                updateContextAfterAction(execution.context(), action, actionResult, observation);
+                emitContextUpdated(execution.sessionId(), stepNumber, execution.context(), action.getToolName(),
+                        execution.eventSink());
+                emitEvent(execution.eventSink(), execution.sessionId(), stepNumber, AgentStreamEventType.OBSERVATION,
+                        observation);
                 log.info("Agent观察结果: {}", observation);
-                sessionService.updateSession(sessionId, history, messages, context, step + 1);
+                sessionService.updateSession(execution.sessionId(), execution.history(), execution.messages(),
+                        execution.context(), stepNumber);
             } catch (Exception e) {
-                log.error("Agent执行异常", e);
-                sessionService.failSession(sessionId, e.getMessage());
-
-                long duration = System.currentTimeMillis() - startTime;
-                agentMetrics.recordExecutionFailure(e.getClass().getSimpleName(), step + 1, duration);
-
-                StructuredFinalAnswer degraded = medicalSafetyService.buildDegradedStructuredAnswer(
-                        buildExecutionDegradedSummary(e),
-                        "MEDIUM",
-                        buildExecutionRuntimeEvidence(e),
-                        List.of("请人工接管当前会话", "补充近期关键数据后再尝试重新分析"),
-                        List.of("当前未获得可用的自动分析结果"));
-                AgentResult result = AgentResult.error(sessionId, e.getMessage(), degraded, history, step + 1);
-                emitEvent(eventSink, sessionId, step + 1, AgentStreamEventType.ERROR,
-                        Map.of("message", e.getMessage(), "structuredFinalAnswer", degraded));
-                emitSubAgentFinished(sessionId, step + 1, context, eventSink);
-                emitDone(eventSink, sessionId, step + 1, result.getStatus().name());
-                agentAuditService.recordSessionResult(
-                        sessionId,
-                        customerId,
-                        doctorId,
-                        goal,
-                        result,
-                        step + 1,
-                        duration);
-                return result;
+                return finalizeError(execution, stepNumber, e);
             }
         }
 
+        return finalizeMaxSteps(execution);
+    }
+
+    private ParsedThought requestThought(
+            LoopExecution execution,
+            String systemPrompt,
+            int step,
+            int stepNumber) {
+        if (execution.eventSink() == null) {
+            return requestThoughtResult(systemPrompt, execution.messages(), step, execution.customerId(),
+                    execution.context());
+        }
+        return requestThoughtResultStream(systemPrompt, execution.messages(), step, execution.customerId(),
+                execution.sessionId(), execution.eventSink(), stepNumber, execution.context());
+    }
+
+    private AgentResult finalizeSuccess(LoopExecution execution, int stepNumber, StructuredFinalAnswer finalAnswer) {
+        SafetyAssessment finalAnswerAssessment = medicalSafetyService.assessFinalAnswer(finalAnswer, execution.history());
+        sessionService.completeSession(execution.sessionId(), execution.history(), execution.context());
+        long duration = System.currentTimeMillis() - execution.startTimeMs();
+        agentMetrics.recordExecutionSuccess(stepNumber, duration);
+
+        AgentResult result = AgentResult.success(
+                execution.sessionId(),
+                finalAnswerAssessment.isBlocked()
+                        ? medicalSafetyService.buildSafetyStructuredAnswer(finalAnswerAssessment.message())
+                        : finalAnswer,
+                execution.history(),
+                stepNumber);
+        if (finalAnswerAssessment.isBlocked()) {
+            recordSafetyBlock(execution.sessionId(), execution.customerId(), execution.doctorId(), execution.goal(),
+                    finalAnswerAssessment, finalAnswer);
+        }
+        emitEvent(execution.eventSink(), execution.sessionId(), stepNumber, AgentStreamEventType.FINAL_ANSWER,
+                result.getStructuredFinalAnswer());
+        emitSubAgentFinished(execution.sessionId(), stepNumber, execution.context(), execution.eventSink());
+        emitDone(execution.eventSink(), execution.sessionId(), stepNumber, result.getStatus().name());
+        agentAuditService.recordSessionResult(execution.sessionId(), execution.customerId(), execution.doctorId(),
+                execution.goal(), result, stepNumber, duration);
+        return result;
+    }
+
+    private AgentResult finalizePendingApproval(
+            LoopExecution execution,
+            int stepNumber,
+            ActionDecision action,
+            ActionResult actionResult) {
+        log.info("行动需要医生确认，Agent暂停");
+        sessionService.pauseSession(execution.sessionId(), execution.history(), execution.messages(), execution.context());
+        agentMetrics.recordPendingApproval(action.getToolName());
+
+        AgentResult result = AgentResult.pendingApproval(
+                execution.sessionId(),
+                actionResult.getTask(),
+                execution.history(),
+                stepNumber);
+        emitEvent(execution.eventSink(), execution.sessionId(), stepNumber, AgentStreamEventType.PENDING_APPROVAL,
+                actionResult.getTask());
+        emitSubAgentFinished(execution.sessionId(), stepNumber, execution.context(), execution.eventSink());
+        emitDone(execution.eventSink(), execution.sessionId(), stepNumber, result.getStatus().name());
+        agentAuditService.recordSessionResult(execution.sessionId(), execution.customerId(), execution.doctorId(),
+                execution.goal(), result, stepNumber, System.currentTimeMillis() - execution.startTimeMs());
+        return result;
+    }
+
+    private AgentResult finalizeError(LoopExecution execution, int stepNumber, Exception e) {
+        log.error("Agent执行异常", e);
+        sessionService.failSession(execution.sessionId(), e.getMessage());
+        long duration = System.currentTimeMillis() - execution.startTimeMs();
+        agentMetrics.recordExecutionFailure(e.getClass().getSimpleName(), stepNumber, duration);
+
+        StructuredFinalAnswer degraded = medicalSafetyService.buildDegradedStructuredAnswer(
+                buildExecutionDegradedSummary(e),
+                "MEDIUM",
+                buildExecutionRuntimeEvidence(e),
+                List.of("请人工接管当前会话", "补充近期关键数据后再尝试重新分析"),
+                List.of("当前未获得可用的自动分析结果"));
+        AgentResult result = AgentResult.error(execution.sessionId(), e.getMessage(), degraded, execution.history(),
+                stepNumber);
+        emitEvent(execution.eventSink(), execution.sessionId(), stepNumber, AgentStreamEventType.ERROR,
+                errorEventData(e, degraded));
+        emitSubAgentFinished(execution.sessionId(), stepNumber, execution.context(), execution.eventSink());
+        emitDone(execution.eventSink(), execution.sessionId(), stepNumber, result.getStatus().name());
+        agentAuditService.recordSessionResult(execution.sessionId(), execution.customerId(), execution.doctorId(),
+                execution.goal(), result, stepNumber, duration);
+        return result;
+    }
+
+    private AgentResult finalizeMaxSteps(LoopExecution execution) {
         log.warn("Agent达到最大步数限制");
-        sessionService.failSession(sessionId, "达到最大步数限制");
-        agentMetrics.recordMaxStepsReached(maxSteps, System.currentTimeMillis() - startTime);
+        sessionService.failSession(execution.sessionId(), "达到最大步数限制");
+        long duration = System.currentTimeMillis() - execution.startTimeMs();
+        agentMetrics.recordMaxStepsReached(maxSteps, duration);
 
         StructuredFinalAnswer degraded = medicalSafetyService.buildDegradedStructuredAnswer(
                 "自动分析已达到最大步数，未能收敛到最终结论。",
@@ -1086,19 +668,72 @@ public class ReActAgentEngine {
                 "达到最大步数限制",
                 List.of("请人工查看已有 Observation", "必要时缩小问题范围后重新发起分析"),
                 List.of("当前分析链路未完成"));
-        AgentResult result = AgentResult.maxStepsReached(sessionId, degraded, history, maxSteps);
-        emitEvent(eventSink, sessionId, maxSteps, AgentStreamEventType.FINAL_ANSWER, degraded);
-        emitSubAgentFinished(sessionId, maxSteps, context, eventSink);
-        emitDone(eventSink, sessionId, maxSteps, result.getStatus().name());
-        agentAuditService.recordSessionResult(
-                sessionId,
-                customerId,
-                doctorId,
-                goal,
-                result,
-                maxSteps,
-                System.currentTimeMillis() - startTime);
+        AgentResult result = AgentResult.maxStepsReached(execution.sessionId(), degraded, execution.history(), maxSteps);
+        emitEvent(execution.eventSink(), execution.sessionId(), maxSteps, AgentStreamEventType.FINAL_ANSWER, degraded);
+        emitSubAgentFinished(execution.sessionId(), maxSteps, execution.context(), execution.eventSink());
+        emitDone(execution.eventSink(), execution.sessionId(), maxSteps, result.getStatus().name());
+        agentAuditService.recordSessionResult(execution.sessionId(), execution.customerId(), execution.doctorId(),
+                execution.goal(), result, maxSteps, duration);
         return result;
+    }
+
+    private void applySyntheticObservation(
+            LoopExecution execution,
+            int stepNumber,
+            ActionDecision action,
+            String observation,
+            String evidenceSource) {
+        execution.history().add(Step.observation(observation));
+        execution.messages().add(Message.user("Observation: " + observation));
+        execution.context().addEvidence(action.getToolName(), evidenceSource, observation, action.getInput());
+        updateLastToolResult(execution.context(), action, observation);
+        emitContextUpdated(execution.sessionId(), stepNumber, execution.context(), action.getToolName(),
+                execution.eventSink());
+        emitEvent(execution.eventSink(), execution.sessionId(), stepNumber, AgentStreamEventType.OBSERVATION,
+                observation);
+    }
+
+    private boolean isRepeatedAction(AgentContext context, List<Step> history, ActionDecision action) {
+        if (action == null || context == null) {
+            return false;
+        }
+        ContextEntry lastToolEntry = context.getSlots().get("last_tool_result");
+        if (!(lastToolEntry != null && lastToolEntry.getValue() instanceof Map<?, ?> lastToolResult)) {
+            return false;
+        }
+        Object lastToolName = lastToolResult.get("toolName");
+        Object lastInput = lastToolResult.get("input");
+        if (!String.valueOf(lastToolName).equals(action.getToolName())) {
+            return false;
+        }
+        if (!JSON.toJSONString(lastInput).equals(JSON.toJSONString(action.getInput()))) {
+            return false;
+        }
+        long recentSameActions = history.stream()
+                .filter(step -> step.getType() == com.health.agent.model.StepType.ACTION)
+                .map(Step::getAction)
+                .filter(java.util.Objects::nonNull)
+                .filter(previous -> action.getToolName().equals(previous.getToolName()))
+                .limit(2)
+                .count();
+        return recentSameActions >= 1;
+    }
+
+    private String buildDuplicateActionObservation(ActionDecision action) {
+        return "检测到重复工具调用：该工具刚刚已用相同输入执行且未引入新信息，请改用其他工具补充证据，或基于现有证据直接收敛。";
+    }
+
+    private record LoopExecution(
+            String sessionId,
+            String goal,
+            String customerId,
+            String doctorId,
+            List<Step> history,
+            List<Message> messages,
+            int startStep,
+            long startTimeMs,
+            Consumer<AgentStreamEvent> eventSink,
+            AgentContext context) {
     }
 
     /**
@@ -1198,11 +833,15 @@ public class ReActAgentEngine {
         if (context == null) {
             return baseSystemPrompt;
         }
+        String contextSection = promptBuilder != null ? promptBuilder.buildContextPromptSection(context) : null;
+        if (contextSection == null || contextSection.isBlank()) {
+            contextSection = context.toPromptSection();
+        }
         return baseSystemPrompt + """
 
                 ## Current Structured Context
                 %s
-                """.formatted(context.toPromptSection());
+                """.formatted(contextSection);
     }
 
     private AgentSubAgent selectSubAgent(String goal, AgentContext context) {
@@ -1340,11 +979,7 @@ public class ReActAgentEngine {
             context.putSlot(slotKey, payload, action.getToolName());
             context.addEvidence(action.getToolName(), "TOOL_OUTPUT", observation, payload);
         }
-        context.putSlot("last_tool_result", Map.of(
-                "toolName", action.getToolName(),
-                "input", action.getInput(),
-                "observation", observation
-        ), action.getToolName());
+        updateLastToolResult(context, action, observation);
     }
 
     private String resolveContextSlot(String toolName) {
@@ -1360,6 +995,44 @@ public class ReActAgentEngine {
             case "get_health_knowledge" -> "health_knowledge";
             default -> toolName;
         };
+    }
+
+    private Map<String, Object> snapshotContextSlots(AgentContext context) {
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        if (context == null || context.getSlots() == null) {
+            return snapshot;
+        }
+        context.getSlots().forEach((key, entry) -> snapshot.put(key, entry != null ? entry.getValue() : null));
+        return snapshot;
+    }
+
+    private void recordResumeContextUpdate(
+            AgentSession session,
+            AgentContext context,
+            ActionDecision action,
+            Map<String, Object> beforeSlotSnapshot) {
+        if (agentAuditService == null || session == null || action == null) {
+            return;
+        }
+        agentAuditService.recordResumeContextUpdate(
+                session.getId(),
+                session.getCustomerId(),
+                session.getDoctorId(),
+                session.getGoal(),
+                action.getToolName(),
+                beforeSlotSnapshot,
+                snapshotContextSlots(context));
+    }
+
+    private void updateLastToolResult(AgentContext context, ActionDecision action, String observation) {
+        if (context == null || action == null) {
+            return;
+        }
+        Map<String, Object> lastToolResult = new LinkedHashMap<>();
+        lastToolResult.put("toolName", action.getToolName());
+        lastToolResult.put("input", action.getInput());
+        lastToolResult.put("observation", observation);
+        context.putSlot("last_tool_result", lastToolResult, action.getToolName());
     }
 
     /**
@@ -1461,6 +1134,13 @@ public class ReActAgentEngine {
 
     private void emitDone(Consumer<AgentStreamEvent> eventSink, String sessionId, int step, String status) {
         emitEvent(eventSink, sessionId, step, AgentStreamEventType.DONE, Map.of("status", status));
+    }
+
+    private Map<String, Object> errorEventData(Exception exception, StructuredFinalAnswer degraded) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("message", exception != null && exception.getMessage() != null ? exception.getMessage() : "unknown");
+        data.put("structuredFinalAnswer", degraded);
+        return data;
     }
 
     private void recordSafetyBlock(

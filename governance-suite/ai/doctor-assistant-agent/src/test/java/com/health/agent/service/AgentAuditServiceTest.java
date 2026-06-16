@@ -16,6 +16,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -151,5 +152,31 @@ class AgentAuditServiceTest {
         assertEquals("medical_safety_rule", log.getToolName());
         assertEquals("MEDICATION_ADJUSTMENT", log.getApprovalStatus());
         assertTrue(log.getErrorMessage().contains("不得自动生成药物调整结论"));
+    }
+
+    @Test
+    void shouldPersistResumeContextUpdateAudit() {
+        auditService.recordResumeContextUpdate(
+            "S001",
+            "C001",
+            "D001",
+            "恢复执行",
+            "get_weight_history",
+            Map.of("current_sub_agent", "DataCollectionAgent"),
+            Map.of(
+                "current_sub_agent", "WeightAnalysisAgent",
+                "weight_history", List.of(Map.of("date", "2026-06-01", "weight", 68.5))
+            )
+        );
+
+        ArgumentCaptor<AgentExecutionLog> captor = ArgumentCaptor.forClass(AgentExecutionLog.class);
+        verify(executionLogMapper).insert(captor.capture());
+
+        AgentExecutionLog log = captor.getValue();
+        assertEquals("RESUME_CONTEXT_UPDATED", log.getResultStatus());
+        assertEquals("get_weight_history", log.getToolName());
+        assertTrue(log.getToolInputJson().contains("current_sub_agent"));
+        assertTrue(log.getToolOutputJson().contains("weight_history"));
+        assertTrue(log.getErrorMessage().contains("added=[weight_history]"));
     }
 }
