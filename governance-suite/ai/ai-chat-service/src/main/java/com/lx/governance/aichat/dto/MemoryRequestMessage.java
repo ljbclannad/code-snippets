@@ -16,4 +16,5 @@ public class MemoryRequestMessage {
     private Double minConfidence;
     private Boolean verifiedOnly;
     private Integer recentDays;
+    private StructuredMemoryQuery structuredQuery;
 }

@@ -160,9 +160,9 @@ public class MemoryRerankService {
         }
 
         try {
-            // 找出需要重新打分的记忆（相似度为 0.0 的，通常来自 Redis）
+            // 找出需要重新打分的记忆（相似度缺失的候选）
             List<MemoryItemDTO> needRerank = memories.stream()
-                    .filter(m -> m.getSimilarity() == null || m.getSimilarity() == 0.0)
+                    .filter(m -> m.getSimilarity() == null)
                     .collect(Collectors.toList());
 
             if (needRerank.isEmpty()) {
@@ -214,7 +214,7 @@ public class MemoryRerankService {
         }
 
         List<MemoryItemDTO> needRerank = memories.stream()
-                .filter(m -> m.getSimilarity() == null || m.getSimilarity() == 0.0)
+                .filter(m -> m.getSimilarity() == null)
                 .collect(Collectors.toList());
 
         if (needRerank.isEmpty()) {

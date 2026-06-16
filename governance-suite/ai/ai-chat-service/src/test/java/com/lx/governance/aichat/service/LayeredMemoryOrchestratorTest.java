@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -22,6 +23,7 @@ import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.MessageSummary;
 import com.lx.governance.aichat.dto.RetrievalQuery;
 import com.lx.governance.aichat.dto.SessionContext;
+import com.lx.governance.aichat.dto.StructuredMemoryQuery;
 import com.lx.governance.aichat.dto.UserProfileDTO;
 
 class LayeredMemoryOrchestratorTest {
@@ -33,12 +35,14 @@ class LayeredMemoryOrchestratorTest {
     @Mock
     private IntentMemoryFilterStrategy intentMemoryFilterStrategy;
 
+    private MemorySelfQueryPlanner memorySelfQueryPlanner;
     private LayeredMemoryOrchestrator orchestrator;
 
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        orchestrator = new LayeredMemoryOrchestrator(memoryService, retrievalQueryRewriteService, intentMemoryFilterStrategy);
+        memorySelfQueryPlanner = new MemorySelfQueryPlanner(new StructuredMemoryQueryValidator());
+        orchestrator = new LayeredMemoryOrchestrator(memoryService, retrievalQueryRewriteService, intentMemoryFilterStrategy, memorySelfQueryPlanner);
         when(intentMemoryFilterStrategy.decide(any())).thenReturn(IntentMemoryFilterStrategy.MemoryFilterDecision.builder()
                 .memoryTypes(java.util.Set.of("DIET"))
                 .minConfidence(0.7)
@@ -91,8 +95,7 @@ class LayeredMemoryOrchestratorTest {
                         .suggestedMemoryTypes(new java.util.LinkedHashSet<>(List.of("DIET", "PREFERENCE")))
                         .suggestedRecentDays(30)
                         .build());
-        when(memoryService.retrieveMemories(eq("group-1"), eq("customer-1"), eq("减重管理 饮食建议 晚饭怎么吃 控糖"),
-                eq(java.util.Set.of("DIET")), eq(0.7), eq(false), eq(30)))
+        when(memoryService.retrieveMemories(eq("group-1"), eq("customer-1"), any(StructuredMemoryQuery.class)))
                 .thenReturn(CompletableFuture.completedFuture(List.of(longTerm)));
 
         LayeredMemories memories = orchestrator.loadMemories(
@@ -106,8 +109,14 @@ class LayeredMemoryOrchestratorTest {
 
         assertEquals(3, memories.getShortTermMemories().size());
         assertEquals(1, memories.getLongTermMemories().size());
-        verify(memoryService).retrieveMemories("group-1", "customer-1", "减重管理 饮食建议 晚饭怎么吃 控糖",
-                java.util.Set.of("DIET"), 0.7, false, 30);
+        verify(memoryService).retrieveMemories(eq("group-1"), eq("customer-1"),
+                org.mockito.ArgumentMatchers.<StructuredMemoryQuery>argThat(query -> "减重管理 饮食建议 晚饭怎么吃 控糖".equals(query.getSemanticQuery())
+                        && query.getFilter() != null
+                        && query.getFilterExpression() != null
+                        && "AND".equals(query.getFilterExpression().getOperator())
+                        && java.util.Set.of("DIET").equals(query.getFilter().getMemoryTypes())
+                        && Double.valueOf(0.7).equals(query.getFilter().getMinConfidence())
+                        && Integer.valueOf(30).equals(query.getFilter().getRecentDays())));
     }
 
     @Test
@@ -128,8 +137,7 @@ class LayeredMemoryOrchestratorTest {
                         .suggestedMemoryTypes(new java.util.LinkedHashSet<>(List.of("MEDICATION")))
                         .suggestedRecentDays(120)
                         .build());
-        when(memoryService.retrieveMemories(eq("group-1"), eq("customer-1"), eq("减重管理 饮食建议 晚饭怎么吃"),
-                eq(java.util.Set.of("DIET")), eq(0.7), eq(false), eq(90)))
+        when(memoryService.retrieveMemories(eq("group-1"), eq("customer-1"), any(StructuredMemoryQuery.class)))
                 .thenReturn(CompletableFuture.completedFuture(List.of(longTerm)));
 
         LayeredMemories memories = orchestrator.loadMemories(
@@ -142,8 +150,10 @@ class LayeredMemoryOrchestratorTest {
                 5).get();
 
         assertEquals(1, memories.getLongTermMemories().size());
-        verify(memoryService).retrieveMemories("group-1", "customer-1", "减重管理 饮食建议 晚饭怎么吃",
-                java.util.Set.of("DIET"), 0.7, false, 90);
+        verify(memoryService).retrieveMemories(eq("group-1"), eq("customer-1"),
+                org.mockito.ArgumentMatchers.<StructuredMemoryQuery>argThat(query -> "减重管理 饮食建议 晚饭怎么吃".equals(query.getSemanticQuery())
+                        && java.util.Set.of("DIET").equals(query.getFilter().getMemoryTypes())
+                        && Integer.valueOf(90).equals(query.getFilter().getRecentDays())));
     }
 
     @Test
@@ -164,8 +174,7 @@ class LayeredMemoryOrchestratorTest {
                         .rewrittenQuery("减重管理 饮食建议 那我这种情况晚饭怎么吃")
                         .contextDependent(true)
                         .build());
-        when(memoryService.retrieveMemories(eq("group-1"), eq("customer-1"), eq("减重管理 饮食建议 那我这种情况晚饭怎么吃"),
-                eq(java.util.Set.of("DIET")), eq(0.7), eq(false), eq(30)))
+        when(memoryService.retrieveMemories(eq("group-1"), eq("customer-1"), any(StructuredMemoryQuery.class)))
                 .thenReturn(CompletableFuture.completedFuture(List.of(longTerm)));
 
         LayeredMemories memories = orchestrator.loadMemories(
@@ -178,7 +187,9 @@ class LayeredMemoryOrchestratorTest {
                 5).get();
 
         assertEquals(1, memories.getLongTermMemories().size());
-        verify(memoryService).retrieveMemories("group-1", "customer-1", "减重管理 饮食建议 那我这种情况晚饭怎么吃",
-                java.util.Set.of("DIET"), 0.7, false, 30);
+        verify(memoryService).retrieveMemories(eq("group-1"), eq("customer-1"),
+                org.mockito.ArgumentMatchers.<StructuredMemoryQuery>argThat(query -> "减重管理 饮食建议 那我这种情况晚饭怎么吃".equals(query.getSemanticQuery())
+                        && Integer.valueOf(30).equals(query.getFilter().getRecentDays())
+                        && Boolean.FALSE.equals(query.getFilter().getVerifiedOnly())));
     }
 }

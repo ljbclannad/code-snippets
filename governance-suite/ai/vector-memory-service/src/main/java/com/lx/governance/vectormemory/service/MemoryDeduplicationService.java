@@ -32,12 +32,16 @@ public class MemoryDeduplicationService {
      * @param milvusMemories Milvus 检索的记忆
      * @return 去重后的记忆列表
      */
-    public List<MemoryItemDTO> mergeAndDeduplicate(List<MemoryItemDTO> redisMemories, List<MemoryItemDTO> milvusMemories) {
+    public List<MemoryItemDTO> mergeAndDeduplicate(
+            List<MemoryItemDTO> redisMemories,
+            List<MemoryItemDTO> milvusMemories,
+            List<MemoryItemDTO> keywordMemories) {
         long startTime = System.currentTimeMillis();
 
         // Step 1: ID 去重（基础去重）
-        List<MemoryItemDTO> idDeduped = deduplicateById(redisMemories, milvusMemories);
-        log.debug("ID 去重: {} -> {}", redisMemories.size() + milvusMemories.size(), idDeduped.size());
+        List<MemoryItemDTO> idDeduped = deduplicateById(redisMemories, milvusMemories, keywordMemories);
+        log.debug("ID 去重: {} -> {}",
+                redisMemories.size() + milvusMemories.size() + keywordMemories.size(), idDeduped.size());
 
         // Step 2: 语义去重（如果启用）
         List<MemoryItemDTO> finalResult = idDeduped;
@@ -48,7 +52,7 @@ public class MemoryDeduplicationService {
 
         long elapsedTime = System.currentTimeMillis() - startTime;
         log.info("去重完成: 原始={}, 最终={}, 耗时={}ms",
-                redisMemories.size() + milvusMemories.size(), finalResult.size(), elapsedTime);
+                redisMemories.size() + milvusMemories.size() + keywordMemories.size(), finalResult.size(), elapsedTime);
 
         return finalResult;
     }
@@ -57,33 +61,36 @@ public class MemoryDeduplicationService {
      * 基于 ID 的去重
      * 如果 ID 重复，保留相似度更高的记忆
      */
-    private List<MemoryItemDTO> deduplicateById(List<MemoryItemDTO> redisMemories, List<MemoryItemDTO> milvusMemories) {
+    private List<MemoryItemDTO> deduplicateById(
+            List<MemoryItemDTO> redisMemories,
+            List<MemoryItemDTO> milvusMemories,
+            List<MemoryItemDTO> keywordMemories) {
         Map<Long, MemoryItemDTO> memoryMap = new HashMap<>();
 
-        // 添加 Redis 记忆
-        for (MemoryItemDTO memory : redisMemories) {
-            if (memory.getId() != null) {
+        addOrReplace(memoryMap, redisMemories);
+        addOrReplace(memoryMap, milvusMemories);
+        addOrReplace(memoryMap, keywordMemories);
+
+        return new ArrayList<>(memoryMap.values());
+    }
+
+    private void addOrReplace(Map<Long, MemoryItemDTO> memoryMap, List<MemoryItemDTO> memories) {
+        for (MemoryItemDTO memory : memories) {
+            if (memory.getId() == null) {
+                continue;
+            }
+            MemoryItemDTO existing = memoryMap.get(memory.getId());
+            if (existing == null) {
+                memoryMap.put(memory.getId(), memory);
+                continue;
+            }
+
+            double existingSimilarity = existing.getSimilarity() != null ? existing.getSimilarity() : 0.0;
+            double newSimilarity = memory.getSimilarity() != null ? memory.getSimilarity() : 0.0;
+            if (newSimilarity > existingSimilarity) {
                 memoryMap.put(memory.getId(), memory);
             }
         }
-
-        // 添加 Milvus 记忆（如果 ID 重复，保留相似度更高的）
-        for (MemoryItemDTO memory : milvusMemories) {
-            if (memory.getId() != null) {
-                MemoryItemDTO existing = memoryMap.get(memory.getId());
-                if (existing == null) {
-                    memoryMap.put(memory.getId(), memory);
-                } else {
-                    double existingSimilarity = existing.getSimilarity() != null ? existing.getSimilarity() : 0.0;
-                    double newSimilarity = memory.getSimilarity() != null ? memory.getSimilarity() : 0.0;
-                    if (newSimilarity > existingSimilarity) {
-                        memoryMap.put(memory.getId(), memory);
-                    }
-                }
-            }
-        }
-
-        return new ArrayList<>(memoryMap.values());
     }
 
     /**

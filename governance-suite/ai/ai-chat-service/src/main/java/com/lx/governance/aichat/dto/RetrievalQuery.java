@@ -24,6 +24,9 @@ public class RetrievalQuery {
     private List<String> keywords = new ArrayList<>();
     @Builder.Default
     private Set<String> suggestedMemoryTypes = new LinkedHashSet<>();
+    private Double suggestedMinConfidence;
+    private Boolean suggestedVerifiedOnly;
     private Integer suggestedRecentDays;
     private Boolean contextDependent;
+    private StructuredMemoryQuery structuredQuery;
 }

@@ -130,6 +130,23 @@ logging:
 # 记忆检索配置
 memory:
   retrieval:
+    hybrid:
+      keyword-enabled: true
+      fetch-multiplier: 2
+      weights:
+        # 三路召回的默认初始权重：
+        # - vector: 语义最准，保留原始相似度并允许 scale 微调
+        # - redis: 偏近期上下文，给一个能过上游阈值的基础分，再叠加少量置信度
+        # - keyword: 偏精确命中，基础分略低于 redis，通过 title/key/content 命中补分
+        redis-base: 0.78
+        redis-confidence-bonus: 0.12
+        keyword-base: 0.74
+        keyword-title-bonus: 0.08
+        keyword-key-bonus: 0.06
+        keyword-content-bonus: 0.05
+        keyword-confidence-bonus: 0.08
+        vector-scale: 1.0
+
     # 是否启用 Rerank（语义重排序）
     rerank:
       enabled: true

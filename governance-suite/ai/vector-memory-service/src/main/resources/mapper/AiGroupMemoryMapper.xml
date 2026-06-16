@@ -134,6 +134,48 @@
         </if>
     </select>
 
+    <select id="selectByKeyword" resultMap="BaseResultMap">
+        SELECT
+        <include refid="Base_Column_List"/>
+        FROM b_ai_group_memory
+        WHERE group_id = #{groupId}
+          AND customer_id = #{customerId}
+          AND is_deleted = 0
+          AND (
+                memory_content LIKE CONCAT('%', #{query}, '%')
+                OR memory_key LIKE CONCAT('%', #{query}, '%')
+                OR memory_type LIKE CONCAT('%', #{query}, '%')
+          )
+        <if test="filter != null">
+            <if test="filter.memoryTypes != null and filter.memoryTypes.size() > 0">
+                AND memory_type IN
+                <foreach collection="filter.memoryTypes" item="memoryType" open="(" separator="," close=")">
+                    #{memoryType}
+                </foreach>
+            </if>
+            <if test="filter.minConfidence != null">
+                AND confidence_score <![CDATA[ >= ]]> #{filter.minConfidence}
+            </if>
+            <if test="filter.verifiedOnly != null and filter.verifiedOnly">
+                AND confidence_score <![CDATA[ >= ]]> 0.8
+            </if>
+            <if test="filter.recentDays != null and filter.recentDays > 0">
+                AND extracted_at <![CDATA[ >= ]]> DATE_SUB(NOW(), INTERVAL #{filter.recentDays} DAY)
+            </if>
+        </if>
+        ORDER BY
+            CASE
+                WHEN memory_key = #{query} THEN 0
+                WHEN memory_content = #{query} THEN 1
+                WHEN memory_key LIKE CONCAT(#{query}, '%') THEN 2
+                WHEN memory_content LIKE CONCAT(#{query}, '%') THEN 3
+                ELSE 4
+            END,
+            confidence_score DESC,
+            extracted_at DESC
+        LIMIT #{limit}
+    </select>
+
     <!-- 检查相似记忆 -->
     <select id="countSimilarMemory" resultType="int">
         SELECT COUNT(*)

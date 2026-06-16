@@ -12,6 +12,7 @@ import com.lx.governance.aichat.dto.LayeredMemories;
 import com.lx.governance.aichat.dto.MessageSummary;
 import com.lx.governance.aichat.dto.RetrievalQuery;
 import com.lx.governance.aichat.dto.SessionContext;
+import com.lx.governance.aichat.dto.StructuredMemoryQuery;
 import com.lx.governance.aichat.dto.UserProfileDTO;
 import com.lx.governance.aichat.util.MessageValidator;
 
@@ -26,6 +27,7 @@ public class LayeredMemoryOrchestrator {
     private final MemoryService memoryService;
     private final RetrievalQueryRewriteService retrievalQueryRewriteService;
     private final IntentMemoryFilterStrategy intentMemoryFilterStrategy;
+    private final MemorySelfQueryPlanner memorySelfQueryPlanner;
 
     public CompletableFuture<LayeredMemories> loadMemories(
             String groupId,
@@ -59,33 +61,31 @@ public class LayeredMemoryOrchestrator {
         RetrievalQuery retrievalQuery = retrievalQueryRewriteService
                 .rewrite(message, sessionContext, userProfile);
 
-        String retrievalText = mergeRetrievalQuery(
-                retrievalQuery.getRewrittenQuery(),
-                retrievalQuery.getKeywords());
-
         IntentMemoryFilterStrategy.MemoryFilterDecision filterDecision = mergeFilterDecision(
                 intentMemoryFilterStrategy.decide(sessionContext),
                 retrievalQuery);
+        StructuredMemoryQuery structuredQuery = memorySelfQueryPlanner.plan(message, retrievalQuery, filterDecision);
+        String retrievalText = mergeRetrievalQuery(
+                structuredQuery.getSemanticQuery(),
+                structuredQuery.getKeywords());
 
-        log.info("长期记忆检索策略 - query: {}, source: {}, reason: {}, keywords: {}, suggestedTypes: {}, suggestedRecentDays: {}, contextDependent: {}, finalTypes: {}, finalRecentDays: {}",
+        log.info("长期记忆检索策略 - query: {}, source: {}, reason: {}, keywords: {}, suggestedTypes: {}, suggestedRecentDays: {}, contextDependent: {}, finalTypes: {}, finalRecentDays: {}, finalMinConfidence: {}, finalVerifiedOnly: {}",
                 retrievalText,
-                retrievalQuery.getRewriteSource(),
-                retrievalQuery.getRewriteReason(),
-                retrievalQuery.getKeywords(),
+                structuredQuery.getPlanSource(),
+                structuredQuery.getPlanReason(),
+                structuredQuery.getKeywords(),
                 retrievalQuery.getSuggestedMemoryTypes(),
                 retrievalQuery.getSuggestedRecentDays(),
-                retrievalQuery.getContextDependent(),
-                filterDecision.getMemoryTypes(),
-                filterDecision.getRecentDays());
+                structuredQuery.getContextDependent(),
+                structuredQuery.getFilter().getMemoryTypes(),
+                structuredQuery.getFilter().getRecentDays(),
+                structuredQuery.getFilter().getMinConfidence(),
+                structuredQuery.getFilter().getVerifiedOnly());
 
         return memoryService.retrieveMemories(
                         groupId,
                         customerId,
-                        retrievalText,
-                        filterDecision.getMemoryTypes(),
-                        filterDecision.getMinConfidence(),
-                        filterDecision.getVerifiedOnly(),
-                        filterDecision.getRecentDays())
+                        structuredQuery.toBuilder().semanticQuery(retrievalText).build())
                 .thenApply(longTermMemories -> LayeredMemories.builder()
                         .shortTermMemories(shortTermMemories)
                         .longTermMemories(longTermMemories)

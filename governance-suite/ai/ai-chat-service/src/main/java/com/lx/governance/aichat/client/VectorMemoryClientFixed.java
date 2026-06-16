@@ -4,6 +4,7 @@ import com.lx.governance.aichat.dto.ExtractionRequestMessage;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.MemoryRequestMessage;
 import com.lx.governance.aichat.dto.MemoryResponseMessage;
+import com.lx.governance.aichat.dto.StructuredMemoryQuery;
 import com.lx.governance.common.trace.Trace;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -37,7 +38,7 @@ public class VectorMemoryClientFixed {
     private final Map<String, CompletableFuture<MemoryResponseMessage>> pendingRequests = new ConcurrentHashMap<>();
 
     public CompletableFuture<List<MemoryItemDTO>> requestMemories(String groupId, String customerId, String query, Integer topK) {
-        return requestMemories(groupId, customerId, query, topK, null, null, null, null);
+        return requestMemories(groupId, customerId, query, topK, null, null, null, null, null);
     }
 
     public CompletableFuture<List<MemoryItemDTO>> requestMemories(
@@ -48,7 +49,8 @@ public class VectorMemoryClientFixed {
             Set<String> memoryTypes,
             Double minConfidence,
             Boolean verifiedOnly,
-            Integer recentDays) {
+            Integer recentDays,
+            StructuredMemoryQuery structuredQuery) {
         String correlationId = Trace.getOrCreate();
         long startTime = System.currentTimeMillis();
 
@@ -66,6 +68,7 @@ public class VectorMemoryClientFixed {
         request.setMinConfidence(minConfidence);
         request.setVerifiedOnly(verifiedOnly);
         request.setRecentDays(recentDays);
+        request.setStructuredQuery(structuredQuery);
 
         CompletableFuture<MemoryResponseMessage> future = new CompletableFuture<>();
         pendingRequests.put(correlationId, future);

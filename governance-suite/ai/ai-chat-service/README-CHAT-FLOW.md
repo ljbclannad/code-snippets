@@ -118,10 +118,63 @@
 - `rewriteReason`
 - 可选 `keywords`
 - 可选 `suggestedMemoryTypes`
+- 可选 `suggestedMinConfidence`
+- 可选 `suggestedVerifiedOnly`
 - 可选 `suggestedRecentDays`
 - `contextDependent`
+- 可选 `filterExpression`
 
 这样可以避免直接拿原始口语消息去做长期记忆召回。
+
+当前最新变化：
+
+- `RetrievalRewriteClient` 已经支持让 LLM 直接输出原生 `filterExpression` JSON
+- `filterExpression` 不再只是扁平过滤，而是支持 `AND / OR / expressions` 形式的嵌套表达式树
+- 当前允许模型产出的 metadata 字段包括：
+  - `memoryType`
+  - `memoryKey`
+  - `memoryContent`
+  - `sourceMessage`
+  - `confidenceScore`
+  - `verifiedOnly`
+  - `recentDays`
+- 当前允许的操作符包括：
+  - `EQ`
+  - `IN`
+  - `GTE`
+  - `LTE`
+  - `CONTAINS`
+
+这意味着 Query Rewrite 现在已经不只是“改写一段检索文本”，而是开始产出一个更完整的 self-query 检索计划。
+
+### 5.1 Self-Query 规划
+
+这是最近新增的一个关键层。
+
+在 `RetrievalQueryRewriteService` 之后，`LayeredMemoryOrchestrator` 不会再直接把 `rewrittenQuery + suggestedFilters` 原样下发，而是会交给 `MemorySelfQueryPlanner` 和 `StructuredMemoryQueryValidator` 做一次结构化收口。
+
+当前职责拆分：
+
+- `MemorySelfQueryPlanner`
+  - 合并 rewrite 结果和 `IntentMemoryFilterStrategy` 的基础过滤策略
+  - 统一产出 `StructuredMemoryQuery`
+  - 当 LLM 没有直接给出复杂 DSL 时，自动补一份扁平 `AND` 表达式
+- `StructuredMemoryQueryValidator`
+  - 对字段名、操作符和值做白名单校验
+  - 对 `memoryType / confidenceScore / verifiedOnly / recentDays` 做归一化与裁剪
+  - 对非法子句进行剔除
+  - 兜底生成一个可执行的兼容表达式
+
+当前 `StructuredMemoryQuery` 的核心组成包括：
+
+- `originalMessage`
+- `semanticQuery`
+- `keywords`
+- `filter`
+- `filterExpression`
+- `planSource`
+- `planReason`
+- `contextDependent`
 
 ### 6. 分层记忆编排
 
@@ -155,6 +208,8 @@
 - 检索 Query 来自 `RetrievalQueryRewriteService`
 - 支持按意图动态生成长期记忆过滤策略
 - 会把 rewrite 结果里的建议过滤信号和意图策略合并
+- 合并后不再只传简单字段，而是统一落成 `StructuredMemoryQuery`
+- `semanticQuery` 会和 `keywords` 合并成最终检索文本
 - 当前已支持的过滤项包括：
   - `memoryType`
   - `minConfidence`
@@ -171,7 +226,98 @@
 
 当前限制：
 
-- `ai-chat-service` 已经会传递过滤条件，但下游 SQL 层下推是否完成取决于 `vector-memory-service` 实现
+- `ai-chat-service` 已经会传递结构化自查询条件
+- 下游目前对简单固定过滤支持 SQL 下推
+- 对 `OR / 嵌套表达式 / 文本 contains` 这类复杂条件，主要由 `vector-memory-service` 在召回后做运行时补充过滤
+
+### 6.1 长期记忆检索链路的最新形态
+
+当前长期记忆检索已经从“单一路径向量召回”升级为“多路召回 + 统一过滤 + 可选 rerank”。
+
+当前主链路如下：
+
+1. `LayeredMemoryOrchestrator` 产出 `StructuredMemoryQuery`
+2. `MemoryService` 通过 `VectorMemoryClientFixed` 把 `semanticQuery + fixed filter + filterExpression` 一起发给 `vector-memory-service`
+3. `VectorMemoryMessageListener` 调用 `StructuredMemoryQueryCompiler`
+4. `StructuredMemoryQueryCompiler` 把 DSL 编译成下游 `MemorySearchFilter`
+5. `MemoryRetrievalService` 执行混合检索
+6. 命中候选先合并、去重，再进入 rerank 或直接排序
+7. 结果回到 `ai-chat-service` 后，再经过上游统一相似度阈值过滤和裁剪
+
+这里最关键的一点是：`ai-chat-service` 的 `0.7` 阈值不是底层召回的唯一阈值，而是上游对所有召回结果再做一次统一质量门控。
+
+### 6.2 混合检索
+
+当前 `vector-memory-service` 已经不是只查 Milvus。
+
+目前长期记忆召回由三路组成：
+
+- Redis 最近记忆
+  - 来源于最近确认写入的记忆索引
+  - 目标是把“近期对话上下文”稳定带上来
+- Milvus 向量检索
+  - 主语义召回路径
+  - 保留原始语义相似度，并只允许通过 `vector-scale` 做整体缩放
+- MySQL 关键词检索
+  - 补足向量检索可能漏掉的显式字段命中
+  - 主要覆盖 `memoryKey / memoryType / memoryContent` 等文本命中
+
+这三路召回的候选会先进入统一去重，再决定是否 rerank。
+
+### 6.3 三路召回分数如何落地
+
+当前分数不是各自独立随便返回，而是都被归一化到了可比较区间，目的是让上游统一阈值过滤能真正成立。
+
+- Milvus 向量检索
+  - 使用原始语义相似度
+  - 只允许通过 `vector-scale` 做整体缩放
+  - 默认仍然是最可信的主分
+- Redis 最近记忆
+  - 不再返回 `0.0`
+  - 当前采用 `redis-base + confidence * redis-confidence-bonus`
+  - 默认会落在大约 `0.78` 到 `0.90`
+- 关键词检索
+  - 当前采用 `keyword-base` 打底
+  - 再叠加精确命中、`memoryKey / memoryType` 命中、`memoryContent` 命中和少量 `confidence` 加分
+  - 默认通常也会落在 `0.74+`
+
+当前整体经验仍然是：
+
+- `vector >= redis > keyword`
+- 三路尽量都保持在 `0.7+`
+
+原因是 `ai-chat-service` 仍然会在召回结果返回后，再按统一相似度阈值做二次过滤。
+
+### 6.4 Rerank
+
+Rerank 已经正式接入到 `vector-memory-service` 的召回链路中。
+
+当前策略：
+
+- `rerank.enabled = false`
+  - 直接按当前相似度排序
+- `rerank.enabled = true`
+  - 进入 `MemoryRerankService`
+  - 支持 `full` 和 `partial` 两种策略
+
+两种策略的区别：
+
+- `full`
+  - 对所有候选重新打分
+  - 更适合追求排序质量的场景
+- `partial`
+  - 只对缺少可靠语义分数的候选重打分
+  - 当前更适合混合检索默认路径
+
+当前 provider 也支持两种来源：
+
+- embedding 本地重打分
+- 外部 `bge-http` rerank 服务
+
+当前降级逻辑：
+
+- 外部 BGE 调用失败时，可按配置回退到 embedding-based rerank
+- rerank 整体失败时，保底返回原始候选顺序的 topK
 
 ### 7. Prompt 组装
 
@@ -297,9 +443,12 @@
   -> 画像诊断
   -> 是否需要检索的判断
   -> 检索 Query 重写
+  -> Self-Query 规划与校验
   -> 短期记忆直接提炼
-  -> 长期记忆过滤策略决策
-  -> 长期记忆通过 vector-memory-service 召回
+  -> 长期记忆过滤策略决策与合并
+  -> 长期记忆通过 vector-memory-service 做 Redis/Milvus/Keyword 混合召回
+  -> 可选 rerank
+  -> 上游统一阈值过滤与裁剪
   -> section pipeline Prompt 组装
   -> DeepSeek 生成回答
   -> 聊天历史异步持久化
@@ -314,8 +463,15 @@
 - 检索开关判断
 - 检索 Query Rewrite
 - `RULE / LLM / FALLBACK_RULE / BYPASS` 区分与监控
+- LLM 原生 `filterExpression` 输出
+- Self-Query DSL 规划、校验与下发
+- `AND / OR / 嵌套表达式` 支持
 - 短期/长期记忆分层编排
 - 按意图动态设置长期记忆过滤策略
+- Redis / Milvus / Keyword 三路混合召回
+- 三路召回统一分数归一化
+- Rerank 接入，支持 `full / partial`
+- 外部 BGE rerank provider 接入与降级
 - Prompt 中短期记忆与长期记忆分块
 - Prompt section pipeline 化
 - `vector-memory-service` 长期记忆元数据过滤
@@ -326,8 +482,9 @@
 
 - 流式链路还没有接入真实画像拉取
 - 流式链路完成后还没有把完整 assistant 响应写回会话上下文
-- Redis recent memory 路径的过滤一致性还需要继续补齐
-- 长期记忆元数据过滤是否做到 SQL 层下推，需要以下游 `vector-memory-service` 实现为准
+- 复杂 DSL 目前仍以“简单条件 SQL 下推 + 复杂条件运行时补充过滤”为主
+- 极复杂表达式场景下，后过滤可能会让初始召回 `fetchCount` 仍有继续放大的空间
+- 流式链路与普通链路在最新自查询与 rerank 路径上的可观测性还可以继续加强
 - 记忆冲突与画像冲突目前还是第一版实现，不是完整语义冲突系统
 
 ## 相关代码入口
@@ -337,7 +494,10 @@
 - [SessionContextService.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/ai-chat-service/src/main/java/com/lx/governance/aichat/service/SessionContextService.java:1)
 - [RetrievalQueryRewriteService.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/ai-chat-service/src/main/java/com/lx/governance/aichat/service/RetrievalQueryRewriteService.java:1)
 - [LayeredMemoryOrchestrator.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/ai-chat-service/src/main/java/com/lx/governance/aichat/service/LayeredMemoryOrchestrator.java:1)
+- [MemorySelfQueryPlanner.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/ai-chat-service/src/main/java/com/lx/governance/aichat/service/MemorySelfQueryPlanner.java:1)
+- [StructuredMemoryQueryValidator.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/ai-chat-service/src/main/java/com/lx/governance/aichat/service/StructuredMemoryQueryValidator.java:1)
 - [IntentMemoryFilterStrategy.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/ai-chat-service/src/main/java/com/lx/governance/aichat/service/IntentMemoryFilterStrategy.java:1)
+- [VectorMemoryClientFixed.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/ai-chat-service/src/main/java/com/lx/governance/aichat/client/VectorMemoryClientFixed.java:1)
 - [ContextBudgetManager.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/ai-chat-service/src/main/java/com/lx/governance/aichat/context/ContextBudgetManager.java:1)
 - [PromptSectionBuilder.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/ai-chat-service/src/main/java/com/lx/governance/aichat/context/PromptSectionBuilder.java:1)
 - [PromptSectionSupport.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/ai-chat-service/src/main/java/com/lx/governance/aichat/context/PromptSectionSupport.java:1)
@@ -381,8 +541,8 @@ sequenceDiagram
         S->>LMO: 加载分层记忆
         LMO->>RQ: 重写长期记忆检索 Query
         RQ-->>LMO: 返回 RetrievalQuery
-        LMO->>LMO: 计算意图过滤策略并合并 rewrite 建议
-        LMO->>MS: 按过滤条件检索长期记忆
+        LMO->>LMO: 计算意图过滤策略并规划 StructuredMemoryQuery
+        LMO->>MS: 按 semanticQuery + DSL 检索长期记忆
         MS-->>LMO: 返回长期记忆列表
         LMO-->>S: 返回 LayeredMemories
 

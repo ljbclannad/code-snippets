@@ -5,8 +5,10 @@ import com.lx.governance.vectormemory.dto.ExtractionRequestMessage;
 import com.lx.governance.vectormemory.dto.MemoryItemDTO;
 import com.lx.governance.vectormemory.dto.MemoryRequestMessage;
 import com.lx.governance.vectormemory.dto.MemoryResponseMessage;
+import com.lx.governance.vectormemory.dto.StructuredMemoryQuery;
 import com.lx.governance.vectormemory.service.MemoryExtractionService;
 import com.lx.governance.vectormemory.service.MemoryRetrievalService;
+import com.lx.governance.vectormemory.service.StructuredMemoryQueryCompiler;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.Message;
@@ -30,6 +32,7 @@ public class VectorMemoryMessageListener {
 
     private final MemoryRetrievalService memoryRetrievalService;
     private final MemoryExtractionService memoryExtractionService;
+    private final StructuredMemoryQueryCompiler structuredMemoryQueryCompiler;
     private final RabbitTemplate rabbitTemplate;
 
     /**
@@ -69,16 +72,34 @@ public class VectorMemoryMessageListener {
                 throw new IllegalArgumentException("topK must be between 1 and 20");
             }
 
+            StructuredMemoryQuery.MemoryFilter filter = request.getStructuredQuery() != null
+                    ? request.getStructuredQuery().getFilter()
+                    : null;
+            com.lx.governance.vectormemory.dto.MemorySearchFilter compiledFilter =
+                    structuredMemoryQueryCompiler.compile(
+                            request.getStructuredQuery(),
+                            com.lx.governance.vectormemory.dto.MemorySearchFilter.builder()
+                                    .memoryTypes(filter != null ? filter.getMemoryTypes() : request.getMemoryTypes())
+                                    .minConfidence(filter != null ? filter.getMinConfidence() : request.getMinConfidence())
+                                    .verifiedOnly(filter != null ? filter.getVerifiedOnly() : request.getVerifiedOnly())
+                                    .recentDays(filter != null ? filter.getRecentDays() : request.getRecentDays())
+                                    .build());
+            String effectiveQuery = request.getStructuredQuery() != null
+                    && request.getStructuredQuery().getSemanticQuery() != null
+                    && !request.getStructuredQuery().getSemanticQuery().isBlank()
+                    ? request.getStructuredQuery().getSemanticQuery()
+                    : request.getQuery();
+
             // 调用记忆检索服务
             List<MemoryItemDTO> memories = memoryRetrievalService.retrieveGroupMemories(
-                    request.getQuery(),
+                    effectiveQuery,
                     request.getGroupId(),
                     request.getCustomerId(),
                     topK,
-                    request.getMemoryTypes(),
-                    request.getMinConfidence(),
-                    Boolean.TRUE.equals(request.getVerifiedOnly()),
-                    request.getRecentDays()
+                    compiledFilter.getMemoryTypes(),
+                    compiledFilter.getMinConfidence(),
+                    Boolean.TRUE.equals(compiledFilter.getVerifiedOnly()),
+                    compiledFilter.getRecentDays()
             );
 
             // 构建成功响应

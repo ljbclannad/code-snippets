@@ -3,6 +3,7 @@ package com.lx.governance.aichat.service;
 import com.lx.governance.aichat.client.VectorMemoryClientFixed;
 import com.lx.governance.aichat.config.ContextBudgetProperties;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
+import com.lx.governance.aichat.dto.StructuredMemoryQuery;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
@@ -53,7 +54,7 @@ class MemoryServiceTest {
             mockMemories.add(memory);
         }
 
-        when(vectorMemoryClient.requestMemories(anyString(), anyString(), anyString(), anyInt()))
+        when(vectorMemoryClient.requestMemories(anyString(), anyString(), anyString(), anyInt(), any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.completedFuture(mockMemories));
 
         // 执行测试
@@ -70,7 +71,8 @@ class MemoryServiceTest {
             assertTrue(result.get(i).getSimilarity() >= result.get(i + 1).getSimilarity());
         }
 
-        verify(vectorMemoryClient).requestMemories(eq("group1"), eq("customer1"), eq("test query"), eq(10));
+        verify(vectorMemoryClient).requestMemories(eq("group1"), eq("customer1"), eq("test query"), eq(10),
+                isNull(), isNull(), isNull(), isNull(), any(StructuredMemoryQuery.class));
     }
 
     @Test
@@ -85,7 +87,7 @@ class MemoryServiceTest {
             mockMemories.add(memory);
         }
 
-        when(vectorMemoryClient.requestMemories(anyString(), anyString(), anyString(), anyInt()))
+        when(vectorMemoryClient.requestMemories(anyString(), anyString(), anyString(), anyInt(), any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.completedFuture(mockMemories));
 
         // 执行测试
@@ -120,7 +122,7 @@ class MemoryServiceTest {
         memory3.setSimilarity(0.8);
         mockMemories.add(memory3);
 
-        when(vectorMemoryClient.requestMemories(anyString(), anyString(), anyString(), anyInt()))
+        when(vectorMemoryClient.requestMemories(anyString(), anyString(), anyString(), anyInt(), any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.completedFuture(mockMemories));
 
         // 执行测试
@@ -135,7 +137,7 @@ class MemoryServiceTest {
 
     @Test
     void testRetrieveMemories_emptyResult() throws Exception {
-        when(vectorMemoryClient.requestMemories(anyString(), anyString(), anyString(), anyInt()))
+        when(vectorMemoryClient.requestMemories(anyString(), anyString(), anyString(), anyInt(), any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.completedFuture(new ArrayList<>()));
 
         List<MemoryItemDTO> result = memoryService.retrieveMemories("group1", "customer1", "query")
@@ -147,7 +149,7 @@ class MemoryServiceTest {
 
     @Test
     void testRetrieveMemories_clientError() throws Exception {
-        when(vectorMemoryClient.requestMemories(anyString(), anyString(), anyString(), anyInt()))
+        when(vectorMemoryClient.requestMemories(anyString(), anyString(), anyString(), anyInt(), any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.failedFuture(new RuntimeException("Client error")));
 
         List<MemoryItemDTO> result = memoryService.retrieveMemories("group1", "customer1", "query")
@@ -172,7 +174,7 @@ class MemoryServiceTest {
             mockMemories.add(memory);
         }
 
-        when(vectorMemoryClient.requestMemories(anyString(), anyString(), anyString(), anyInt()))
+        when(vectorMemoryClient.requestMemories(anyString(), anyString(), anyString(), anyInt(), any(), any(), any(), any(), any()))
                 .thenReturn(CompletableFuture.completedFuture(mockMemories));
 
         List<MemoryItemDTO> result = memoryService.retrieveMemories("group1", "customer1", "query")

@@ -5,6 +5,9 @@
 - 会话上下文的创建、读取与更新
 - 用户画像的 RabbitMQ RPC 获取
 - 短期记忆与长期记忆的装载流程
+- Self-Query DSL、自查询编译与下游过滤
+- Redis / Milvus / Keyword 三路混合检索
+- Rerank 模型接入与排序策略
 - `TaskTriggerRouter` 的升级判定
 - 普通对话与 Agent 升级两条分支
 - Agent 安全清洗、人工复核和回退普通对话
@@ -15,7 +18,9 @@
 - `AiChatController` / `AiChatService`
 - `SessionContextService` + Redis
 - `UserProfileClientFixed` + RabbitMQ + `user-profile-service`
-- `LayeredMemoryOrchestrator` / `RetrievalQueryRewriteService` / `MemoryService`
+- `LayeredMemoryOrchestrator` / `RetrievalQueryRewriteService` / `MemorySelfQueryPlanner` / `MemoryService`
+- `VectorMemoryClientFixed` / `VectorMemoryMessageListener`
+- `StructuredMemoryQueryCompiler` / `MemoryRetrievalService` / `MemoryRerankService`
 - `TaskTriggerRouter` / `AgentDispatchPolicy`
 - `HttpDoctorAssistantAgentGateway`
 - `PatientTaskController` / `PatientTaskAgentService` / `PatientTaskSafetyService`
@@ -41,8 +46,13 @@ sequenceDiagram
     participant MemoryOrch as LayeredMemoryOrchestrator
     participant Rewrite as RetrievalQueryRewriteService
     participant Filter as IntentMemoryFilterStrategy
+    participant Planner as MemorySelfQueryPlanner
     participant Memory as MemoryService
-    participant VectorSvc as vector-memory-service
+    participant MemoryClient as VectorMemoryClientFixed
+    participant VectorListener as VectorMemoryMessageListener
+    participant Compiler as StructuredMemoryQueryCompiler
+    participant VectorSvc as MemoryRetrievalService
+    participant Rerank as MemoryRerankService
     participant Router as TaskTriggerRouter
     participant Policy as AgentDispatchPolicy
     participant ReqFactory as DoctorAssistantTaskRequestFactory
@@ -108,14 +118,26 @@ sequenceDiagram
             MemoryOrch-->>Chat: shortTermMemories only
         else 需要长期记忆检索
             MemoryOrch->>Rewrite: rewrite(message, sessionContext, profile)
-            Rewrite-->>MemoryOrch: rewrittenQuery + keywords + suggested filters
+            Rewrite-->>MemoryOrch: rewrittenQuery + keywords + suggested filters + optional filterExpression
             MemoryOrch->>Filter: decide(sessionContext)
             Filter-->>MemoryOrch: memoryTypes/minConfidence/recentDays
-            MemoryOrch->>MemoryOrch: mergeRetrievalQuery + mergeFilterDecision
-            MemoryOrch->>Memory: retrieveMemories(groupId, customerId, query, filters)
-            Memory->>VectorSvc: requestMemories(...)
-            VectorSvc-->>Memory: candidate memories
-            Memory->>Memory: similarity filter + dedup + topK
+            MemoryOrch->>Planner: plan(message, retrievalQuery, filterDecision)
+            Planner-->>MemoryOrch: StructuredMemoryQuery
+            MemoryOrch->>Memory: retrieveMemories(groupId, customerId, structuredQuery)
+            Memory->>MemoryClient: requestMemories(structuredQuery)
+            MemoryClient->>VectorListener: vector.memory.request
+            VectorListener->>Compiler: compile(structuredQuery, fallbackFilter)
+            Compiler-->>VectorListener: MemorySearchFilter
+            VectorListener->>VectorSvc: retrieveGroupMemories(effectiveQuery, groupId, customerId, topK, compiledFilter)
+            Note over VectorSvc: 并行召回 Redis 最近记忆、Milvus 向量记忆、MySQL 关键词记忆
+            opt rerank.enabled = true
+                VectorSvc->>Rerank: rerank(...) or rerankPartial(...)
+                Rerank-->>VectorSvc: reranked memories
+            end
+            VectorSvc-->>VectorListener: candidate memories
+            VectorListener-->>MemoryClient: MemoryResponseMessage
+            MemoryClient-->>Memory: candidate memories
+            Memory->>Memory: similarity threshold + dedup + topK
             Memory-->>MemoryOrch: longTermMemories
             MemoryOrch-->>Chat: shortTermMemories + longTermMemories
         end
@@ -223,8 +245,76 @@ sequenceDiagram
 - 长期记忆检索由 `LayeredMemoryOrchestrator` 统一编排：
   - `RetrievalQueryRewriteService` 负责改写检索 query
   - `IntentMemoryFilterStrategy` 负责根据当前意图决定过滤策略
-  - `MemoryService` 负责向 `vector-memory-service` 发请求并做相似度过滤、去重和裁剪
+  - `MemorySelfQueryPlanner` 负责把 rewrite 结果和意图策略合并成 `StructuredMemoryQuery`
+  - `MemoryService` 负责向 `vector-memory-service` 发请求并做上游统一相似度过滤、去重和裁剪
 - 降级模式下可以完全跳过长期记忆检索。
+
+### 3.1 Self-Query DSL
+
+当前长期记忆检索已经从“文本 query + 几个 suggested filters”升级成“文本 query + 原生 DSL”。
+
+当前 DSL 特征：
+
+- 支持 `AND / OR`
+- 支持 `expressions` 递归嵌套
+- 支持字段：
+  - `memoryType`
+  - `memoryKey`
+  - `memoryContent`
+  - `sourceMessage`
+  - `confidenceScore`
+  - `verifiedOnly`
+  - `recentDays`
+- 支持操作符：
+  - `EQ`
+  - `IN`
+  - `GTE`
+  - `LTE`
+  - `CONTAINS`
+
+当前执行方式：
+
+- chat 侧由 `RetrievalRewriteClient` 解析 LLM 返回的 `filterExpression`
+- `StructuredMemoryQueryValidator` 做白名单校验和非法条件清洗
+- vector-memory 侧由 `StructuredMemoryQueryCompiler` 编译成 `MemorySearchFilter`
+- 简单过滤项可下推到 SQL
+- 复杂 `OR / 嵌套 / contains` 条件由运行时 matcher 补充执行
+
+### 3.2 混合检索
+
+当前 `vector-memory-service` 的长期记忆召回已经是三路并行：
+
+- Redis 最近记忆
+- Milvus 向量语义检索
+- MySQL 关键词检索
+
+这三路命中会先合并，再交给去重和 rerank。
+
+当前分数设计目标是让三路结果都能进入统一排序和阈值过滤：
+
+- 向量检索保留原始语义相似度，允许用 `vector-scale` 做整体缩放
+- Redis 最近记忆使用 `redis-base + confidence * redis-confidence-bonus`
+- 关键词检索使用 `keyword-base + 命中位置 bonus + confidence bonus`
+
+所以现在“最近上下文”和“关键词命中”即使没有 rerank，也通常不会被上游 `0.7` 阈值直接过滤掉。
+
+### 3.3 Rerank
+
+`MemoryRetrievalService` 在三路召回合并后，支持可选 rerank。
+
+当前支持：
+
+- `full`
+  - 对全部候选重排
+- `partial`
+  - 只对缺少可靠语义分数的候选重排
+
+当前 provider 支持：
+
+- embedding-based rerank
+- 外部 `bge-http` rerank
+
+如果外部 rerank 失败，可以按配置回退到 embedding rerank；如果整体 rerank 失败，则保底返回原有排序结果。
 
 ### 4. Agent 升级判定
 

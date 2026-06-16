@@ -77,6 +77,23 @@ public interface AiGroupMemoryMapper {
             @Param("filter") MemorySearchFilter filter);
 
     /**
+     * 基于关键词检索记忆，并在 SQL 层执行元数据过滤
+     *
+     * @param groupId 群组ID
+     * @param customerId 用户ID
+     * @param query 查询文本
+     * @param limit 返回数量
+     * @param filter 检索过滤条件
+     * @return 记忆列表
+     */
+    List<AiGroupMemoryEntity> selectByKeyword(
+            @Param("groupId") String groupId,
+            @Param("customerId") String customerId,
+            @Param("query") String query,
+            @Param("limit") int limit,
+            @Param("filter") MemorySearchFilter filter);
+
+    /**
      * 检查相似记忆
      *
      * @param groupId 群组ID

@@ -15,6 +15,7 @@ import com.lx.governance.aichat.dto.MessageSummary;
 import com.lx.governance.aichat.dto.RetrievalQuery;
 import com.lx.governance.aichat.dto.RetrievalRewriteResult;
 import com.lx.governance.aichat.dto.SessionContext;
+import com.lx.governance.aichat.dto.StructuredMemoryQuery;
 import com.lx.governance.aichat.dto.UserProfileDTO;
 
 class RetrievalQueryRewriteServiceTest {
@@ -63,6 +64,8 @@ class RetrievalQueryRewriteServiceTest {
                         .rewrittenQuery("减重管理 饮食建议 晚饭怎么吃")
                         .keywords(List.of("减重管理", "晚饭"))
                         .suggestedMemoryTypes(new java.util.LinkedHashSet<>(List.of("DIET", "PREFERENCE")))
+                        .suggestedMinConfidence(0.8)
+                        .suggestedVerifiedOnly(true)
                         .suggestedRecentDays(30)
                         .contextDependent(true)
                         .build();
@@ -84,8 +87,55 @@ class RetrievalQueryRewriteServiceTest {
         assertEquals("减重管理 饮食建议 晚饭怎么吃", query.getRewrittenQuery());
         assertEquals(List.of("减重管理", "晚饭"), query.getKeywords());
         assertTrue(query.getSuggestedMemoryTypes().contains("DIET"));
+        assertEquals(0.8, query.getSuggestedMinConfidence());
+        assertTrue(Boolean.TRUE.equals(query.getSuggestedVerifiedOnly()));
         assertEquals(30, query.getSuggestedRecentDays());
         assertTrue(Boolean.TRUE.equals(query.getContextDependent()));
+        assertEquals("减重管理 饮食建议 晚饭怎么吃", query.getStructuredQuery().getSemanticQuery());
+        assertTrue(query.getStructuredQuery().getFilter().getMemoryTypes().contains("DIET"));
+    }
+
+    @Test
+    void shouldCarryNativeFilterExpressionFromLlm() {
+        ContextBudgetProperties properties = new ContextBudgetProperties();
+        RetrievalRewriteClient rewriteClient = new RetrievalRewriteClient(null, properties) {
+            @Override
+            public RetrievalRewriteResult rewriteStructured(String message, SessionContext sessionContext, UserProfileDTO userProfile, String baselineQuery) {
+                return RetrievalRewriteResult.builder()
+                        .rewrittenQuery("减重管理 饮食建议 晚饭怎么吃")
+                        .filterExpression(StructuredMemoryQuery.FilterExpression.builder()
+                                .operator("AND")
+                                .clauses(List.of(
+                                        StructuredMemoryQuery.FilterClause.builder()
+                                                .field("memoryTypes")
+                                                .op("IN")
+                                                .values(List.of("DIET", "PREFERENCE"))
+                                                .build(),
+                                        StructuredMemoryQuery.FilterClause.builder()
+                                                .field("recentDays")
+                                                .op("LTE")
+                                                .values(List.of("30"))
+                                                .build()))
+                                .build())
+                        .contextDependent(true)
+                        .build();
+            }
+        };
+        RetrievalQueryRewriteService llmService = new RetrievalQueryRewriteService(properties, rewriteClient);
+
+        SessionContext sessionContext = SessionContext.builder()
+                .currentTopic("减重管理")
+                .userIntent("饮食建议")
+                .complexity("complex")
+                .build();
+
+        RetrievalQuery query = llmService.rewrite("那我这种情况晚饭怎么吃？", sessionContext, null);
+
+        assertEquals("LLM", query.getRewriteSource());
+        assertTrue(query.getStructuredQuery().getFilterExpression() != null);
+        assertEquals("AND", query.getStructuredQuery().getFilterExpression().getOperator());
+        assertEquals(2, query.getStructuredQuery().getFilterExpression().getClauses().size());
+        assertEquals("memoryTypes", query.getStructuredQuery().getFilterExpression().getClauses().get(0).getField());
     }
 
     @Test

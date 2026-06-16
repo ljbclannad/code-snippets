@@ -1,18 +1,21 @@
 package com.lx.governance.aichat.service;
 
-import com.lx.governance.aichat.client.VectorMemoryClientFixed;
-import com.lx.governance.aichat.config.ContextBudgetProperties;
-import com.lx.governance.aichat.dto.MemoryItemDTO;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
-
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
+
+import org.springframework.stereotype.Service;
+
+import com.lx.governance.aichat.client.VectorMemoryClientFixed;
+import com.lx.governance.aichat.config.ContextBudgetProperties;
+import com.lx.governance.aichat.dto.MemoryItemDTO;
+import com.lx.governance.aichat.dto.StructuredMemoryQuery;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * 记忆服务 - 实现分层检索策略
@@ -33,9 +36,9 @@ public class MemoryService {
      * 3. 去重（如果启用）
      * 4. 限制数量
      *
-     * @param groupId 群组ID
+     * @param groupId    群组ID
      * @param customerId 客户ID
-     * @param query 查询文本
+     * @param query      查询文本
      * @return 记忆列表
      */
     public CompletableFuture<List<MemoryItemDTO>> retrieveMemories(
@@ -48,11 +51,54 @@ public class MemoryService {
     public CompletableFuture<List<MemoryItemDTO>> retrieveMemories(
             String groupId,
             String customerId,
+            StructuredMemoryQuery structuredQuery) {
+
+        StructuredMemoryQuery.MemoryFilter filter = structuredQuery != null ? structuredQuery.getFilter() : null;
+        return retrieveMemories(
+                groupId,
+                customerId,
+                structuredQuery != null ? structuredQuery.getSemanticQuery() : "",
+                filter != null ? filter.getMemoryTypes() : null,
+                filter != null ? filter.getMinConfidence() : null,
+                filter != null ? filter.getVerifiedOnly() : null,
+                filter != null ? filter.getRecentDays() : null,
+                structuredQuery);
+    }
+
+    public CompletableFuture<List<MemoryItemDTO>> retrieveMemories(
+            String groupId,
+            String customerId,
             String query,
             Set<String> memoryTypes,
             Double minConfidence,
             Boolean verifiedOnly,
             Integer recentDays) {
+        return retrieveMemories(groupId, customerId, query, memoryTypes, minConfidence, verifiedOnly, recentDays, null);
+    }
+
+    private CompletableFuture<List<MemoryItemDTO>> retrieveMemories(
+            String groupId,
+            String customerId,
+            String query,
+            Set<String> memoryTypes,
+            Double minConfidence,
+            Boolean verifiedOnly,
+            Integer recentDays,
+            StructuredMemoryQuery structuredQuery) {
+        StructuredMemoryQuery effectiveStructuredQuery = structuredQuery != null
+                ? structuredQuery
+                : StructuredMemoryQuery.builder()
+                        .originalMessage(query)
+                        .semanticQuery(query)
+                        .filter(StructuredMemoryQuery.MemoryFilter.builder()
+                                .memoryTypes(memoryTypes)
+                                .minConfidence(minConfidence)
+                                .verifiedOnly(verifiedOnly)
+                                .recentDays(recentDays)
+                                .build())
+                        .planSource("LEGACY")
+                        .planReason("compatibility_bridge")
+                        .build();
 
         int maxCount = properties.getMemory().getMaxCount();
         double similarityThreshold = properties.getMemory().getSimilarityThreshold();
@@ -72,11 +118,12 @@ public class MemoryService {
                         memoryTypes,
                         minConfidence,
                         verifiedOnly,
-                        recentDays)
+                        recentDays,
+                        effectiveStructuredQuery)
                 .thenApply(memories -> {
                     log.info("向量检索返回 {} 条记忆", memories.size());
 
-                    // 2. 按相似度过滤
+                    // 2. 按相似度过滤（进行二次过滤，避免rerank后还是存在很多不相关文档，底层必须先做分数归一化，不然这层二次过滤会失真）
                     List<MemoryItemDTO> filtered = memories.stream()
                             .filter(m -> m.getSimilarity() != null && m.getSimilarity() >= similarityThreshold)
                             .collect(Collectors.toList());

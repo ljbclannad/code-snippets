@@ -5,10 +5,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.lenient;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -49,10 +51,13 @@ class MemoryRetrievalServiceTest {
     @BeforeEach
     void setUp() {
         MemoryRetrievalProperties properties = new MemoryRetrievalProperties();
+        properties.getHybrid().setKeywordEnabled(true);
         MemoryRetrievalProperties.RerankConfig rerankConfig = new MemoryRetrievalProperties.RerankConfig();
         rerankConfig.setEnabled(false);
         properties.setRerank(rerankConfig);
         org.springframework.test.util.ReflectionTestUtils.setField(memoryRetrievalService, "properties", properties);
+        lenient().when(memoryMapper.selectByKeyword(anyString(), anyString(), anyString(), anyInt(), any()))
+                .thenReturn(List.of());
     }
 
     @Test
@@ -61,7 +66,7 @@ class MemoryRetrievalServiceTest {
         AiGroupMemoryEntity symptomMemory = buildEntity(2L, "SYMPTOM", 0.65, LocalDateTime.now().minusDays(1));
 
         mockMilvusAndMapper(List.of(dietMemory, symptomMemory));
-        when(deduplicationService.mergeAndDeduplicate(anyList(), anyList()))
+        when(deduplicationService.mergeAndDeduplicate(anyList(), anyList(), anyList()))
                 .thenAnswer(invocation -> invocation.getArgument(1));
 
         List<MemoryItemDTO> results = memoryRetrievalService.retrieveGroupMemories(
@@ -87,7 +92,7 @@ class MemoryRetrievalServiceTest {
         AiGroupMemoryEntity unverifiedMemory = buildEntity(2L, "DIET", 0.70, LocalDateTime.now().minusDays(1));
 
         mockMilvusAndMapper(List.of(verifiedMemory, unverifiedMemory));
-        when(deduplicationService.mergeAndDeduplicate(anyList(), anyList()))
+        when(deduplicationService.mergeAndDeduplicate(anyList(), anyList(), anyList()))
                 .thenAnswer(invocation -> invocation.getArgument(1));
 
         List<MemoryItemDTO> results = memoryRetrievalService.retrieveGroupMemories(
@@ -111,7 +116,7 @@ class MemoryRetrievalServiceTest {
         AiGroupMemoryEntity oldMemory = buildEntity(2L, "DIET", 0.95, LocalDateTime.now().minusDays(20));
 
         mockMilvusAndMapper(List.of(recentMemory, oldMemory));
-        when(deduplicationService.mergeAndDeduplicate(anyList(), anyList()))
+        when(deduplicationService.mergeAndDeduplicate(anyList(), anyList(), anyList()))
                 .thenAnswer(invocation -> invocation.getArgument(1));
 
         List<MemoryItemDTO> results = memoryRetrievalService.retrieveGroupMemories(
@@ -143,7 +148,7 @@ class MemoryRetrievalServiceTest {
                 .thenReturn(documents);
         when(memoryMapper.selectByEmbeddingIds(anyList())).thenReturn(List.of(memory));
         when(redisMemoryIndexService.getRecentMemoryEntries(eq("group-1"), anyInt())).thenReturn(List.of());
-        when(deduplicationService.mergeAndDeduplicate(anyList(), anyList()))
+        when(deduplicationService.mergeAndDeduplicate(anyList(), anyList(), anyList()))
                 .thenAnswer(invocation -> invocation.getArgument(1));
 
         List<MemoryItemDTO> results = memoryRetrievalService.retrieveGroupMemories(
@@ -173,7 +178,7 @@ class MemoryRetrievalServiceTest {
                         invocation.getArgument(1)));
         when(vectorStoreService.searchGroupMemories(eq("晚饭怎么吃"), eq("group-1"), eq("customer-1"), anyInt()))
                 .thenReturn(List.of());
-        when(deduplicationService.mergeAndDeduplicate(anyList(), anyList()))
+        when(deduplicationService.mergeAndDeduplicate(anyList(), anyList(), anyList()))
                 .thenAnswer(invocation -> invocation.getArgument(0));
 
         List<MemoryItemDTO> results = memoryRetrievalService.retrieveGroupMemories(
@@ -191,6 +196,31 @@ class MemoryRetrievalServiceTest {
         assertEquals("RECENT_CACHE", results.get(0).getSource());
         assertTrue(Boolean.TRUE.equals(results.get(0).getVerified()));
         verify(memoryMapper).selectByIdsWithFilter(anyList(), any(MemorySearchFilter.class));
+    }
+
+    @Test
+    void shouldIncludeKeywordMemoriesWithWeightedSimilarity() {
+        AiGroupMemoryEntity keywordMemory = buildEntity(3L, "DIET", 0.90, LocalDateTime.now().minusDays(1));
+        keywordMemory.setMemoryKey("晚饭");
+        keywordMemory.setMemoryContent("晚饭建议少油少盐");
+
+        when(redisMemoryIndexService.getRecentMemoryEntries(eq("group-1"), anyInt())).thenReturn(List.of());
+        when(vectorStoreService.searchGroupMemories(eq("晚饭"), eq("group-1"), eq("customer-1"), anyInt()))
+                .thenReturn(List.of());
+        when(memoryMapper.selectByKeyword(eq("group-1"), eq("customer-1"), eq("晚饭"), anyInt(), any()))
+                .thenReturn(List.of(keywordMemory));
+        when(deduplicationService.mergeAndDeduplicate(anyList(), anyList(), anyList()))
+                .thenAnswer(invocation -> invocation.getArgument(2));
+
+        List<MemoryItemDTO> results = memoryRetrievalService.retrieveGroupMemories(
+                "晚饭",
+                "group-1",
+                "customer-1",
+                5);
+
+        assertEquals(1, results.size());
+        assertEquals("KEYWORD", results.get(0).getSource());
+        assertTrue(results.get(0).getSimilarity() >= 0.7);
     }
 
     private void mockMilvusAndMapper(List<AiGroupMemoryEntity> entities) {

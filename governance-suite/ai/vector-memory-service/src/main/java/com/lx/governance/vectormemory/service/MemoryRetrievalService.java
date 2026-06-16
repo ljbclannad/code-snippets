@@ -36,6 +36,7 @@ public class MemoryRetrievalService {
     private final RedisMemoryIndexService redisMemoryIndexService;
     private final MemoryRerankService rerankService;
     private final MemoryDeduplicationService deduplicationService;
+    private final StructuredMemoryFilterMatcher structuredMemoryFilterMatcher;
     private final MemoryRetrievalProperties properties;
 
     /**
@@ -88,11 +89,12 @@ public class MemoryRetrievalService {
         log.info("Retrieving group memories with hybrid search + rerank: query={}, groupId={}, customerId={}, topK={}",
                 query, groupId, customerId, topK);
 
-        // Step 1: 并行检索 Redis 和 Milvus（请求 2 倍数量以便 rerank 后筛选）
-        int fetchCount = topK * 2;
+        // Step 1: 并行检索 Redis、Milvus 和 Keyword（请求更多数量以便 rerank 后筛选）
+        int fetchCount = topK * Math.max(1, properties.getHybrid().getFetchMultiplier());
 
         List<MemoryItemDTO> recentMemories = new ArrayList<>();
         List<MemoryItemDTO> milvusMemories = new ArrayList<>();
+        List<MemoryItemDTO> keywordMemories = new ArrayList<>();
 
         // 1.1 从 Redis 获取最近记忆
         try {
@@ -123,6 +125,8 @@ public class MemoryRetrievalService {
                             : memoryMapper.selectByEmbeddingIds(embeddingIds);
 
                 if (!memoryEntities.isEmpty()) {
+                    memoryEntities = applyExpressionFilter(memoryEntities, filter);
+
                     // 构建 embeddingId -> similarity 映射
                     Map<String, Double> similarityMap = new HashMap<>();
                     for (Document doc : documents) {
@@ -139,7 +143,8 @@ public class MemoryRetrievalService {
                     // 转换为 MemoryItemDTO
                     milvusMemories = memoryEntities.stream()
                             .map(entity -> {
-                                Double similarity = similarityMap.getOrDefault(entity.getEmbeddingId(), 0.0);
+                                Double similarity = normalizeVectorSimilarity(
+                                        similarityMap.getOrDefault(entity.getEmbeddingId(), 0.0));
                                 return MemoryItemDTO.builder()
                                         .id(entity.getId())
                                         .content(entity.getMemoryContent())
@@ -160,16 +165,33 @@ public class MemoryRetrievalService {
             log.warn("Failed to retrieve from Milvus: {}", e.getMessage());
         }
 
+        // 1.3 从 MySQL 获取关键词命中记忆
+        if (properties.getHybrid().isKeywordEnabled() && query != null && !query.isBlank()) {
+            try {
+                keywordMemories = applyExpressionFilter(
+                                memoryMapper.selectByKeyword(groupId, customerId, query.trim(), fetchCount, filter),
+                                filter).stream()
+                        .map(entity -> toKeywordMemoryDto(entity, query))
+                        .collect(Collectors.toList());
+                log.debug("Retrieved {} keyword memories from MySQL", keywordMemories.size());
+            } catch (Exception e) {
+                log.warn("Failed to retrieve keyword memories: {}", e.getMessage());
+            }
+        }
+
         // Step 2: 合并结果并去重（使用增强去重策略）
-        List<MemoryItemDTO> allCandidates = deduplicationService.mergeAndDeduplicate(recentMemories, milvusMemories);
+        List<MemoryItemDTO> allCandidates = deduplicationService.mergeAndDeduplicate(
+                recentMemories,
+                milvusMemories,
+                keywordMemories);
 
         if (allCandidates.isEmpty()) {
-            log.info("No memories found from both Redis and Milvus");
+            log.info("No memories found from Redis, Milvus, or keyword search");
             return new ArrayList<>();
         }
 
-        log.info("Merged candidates: total={} (Redis={}, Milvus={})",
-                allCandidates.size(), recentMemories.size(), milvusMemories.size());
+        log.info("Merged candidates: total={} (Redis={}, Milvus={}, Keyword={})",
+                allCandidates.size(), recentMemories.size(), milvusMemories.size(), keywordMemories.size());
 
         // Step 3: Rerank（基于语义相关性重新排序）
         List<MemoryItemDTO> finalResults;
@@ -239,6 +261,7 @@ public class MemoryRetrievalService {
                         .map(memoryMapper::selectById)
                         .filter(entity -> entity != null && entity.getIsDeleted() != null && entity.getIsDeleted() == 0)
                         .collect(Collectors.toList());
+        memoryEntities = applyExpressionFilter(memoryEntities, filter);
 
         return memoryEntities.stream()
                 .map(entity -> toRecentMemoryDto(entity, contentById.getOrDefault(entity.getId(), entity.getMemoryContent())))
@@ -250,11 +273,76 @@ public class MemoryRetrievalService {
         return MemoryItemDTO.builder()
                 .id(entity.getId())
                 .content(content)
-                .similarity(0.0)
+                .similarity(calculateRedisSimilarity(confidence))
                 .confidenceScore(entity.getConfidenceScore() != null ? confidence : null)
                 .verified(confidence >= 0.8)
                 .source("RECENT_CACHE")
                 .build();
+    }
+
+    private MemoryItemDTO toKeywordMemoryDto(AiGroupMemoryEntity entity, String query) {
+        double confidence = entity.getConfidenceScore() != null ? entity.getConfidenceScore().doubleValue() : 0.0;
+        return MemoryItemDTO.builder()
+                .id(entity.getId())
+                .content(entity.getMemoryContent())
+                .similarity(calculateKeywordSimilarity(entity, query, confidence))
+                .confidenceScore(entity.getConfidenceScore() != null ? confidence : null)
+                .verified(confidence >= 0.8)
+                .source("KEYWORD")
+                .build();
+    }
+
+    private double calculateRedisSimilarity(double confidence) {
+        MemoryRetrievalProperties.WeightConfig weights = properties.getHybrid().getWeights();
+        return clamp01(weights.getRedisBase() + (clamp01(confidence) * weights.getRedisConfidenceBonus()));
+    }
+
+    private double calculateKeywordSimilarity(AiGroupMemoryEntity entity, String query, double confidence) {
+        MemoryRetrievalProperties.WeightConfig weights = properties.getHybrid().getWeights();
+        String normalizedQuery = query == null ? "" : query.trim().toLowerCase();
+        String memoryKey = lower(entity.getMemoryKey());
+        String memoryType = lower(entity.getMemoryType());
+        String content = lower(entity.getMemoryContent());
+
+        double score = weights.getKeywordBase();
+        if (!normalizedQuery.isEmpty()) {
+            if (memoryKey.equals(normalizedQuery) || content.equals(normalizedQuery)) {
+                score += weights.getKeywordTitleBonus();
+            }
+            if (memoryKey.contains(normalizedQuery) || memoryType.contains(normalizedQuery)) {
+                score += weights.getKeywordKeyBonus();
+            }
+            if (content.contains(normalizedQuery)) {
+                score += weights.getKeywordContentBonus();
+            }
+        }
+        score += clamp01(confidence) * weights.getKeywordConfidenceBonus();
+        return clamp01(score);
+    }
+
+    private double normalizeVectorSimilarity(double similarity) {
+        return clamp01(similarity * properties.getHybrid().getWeights().getVectorScale());
+    }
+
+    private double clamp01(double value) {
+        return Math.max(0.0, Math.min(1.0, value));
+    }
+
+    private String lower(String value) {
+        return value == null ? "" : value.toLowerCase();
+    }
+
+    /**
+     * SQL 下推优先解决基础过滤，复杂 DSL 表达式在这里做补充过滤。
+     * 这样既保留现有数据库查询效率，也支持 OR / 嵌套 / 文本条件等更灵活的 self-query 表达式。
+     */
+    private List<AiGroupMemoryEntity> applyExpressionFilter(List<AiGroupMemoryEntity> memoryEntities, MemorySearchFilter filter) {
+        if (memoryEntities == null || memoryEntities.isEmpty() || filter == null || filter.getExpression() == null) {
+            return memoryEntities;
+        }
+        return memoryEntities.stream()
+                .filter(entity -> structuredMemoryFilterMatcher.matches(entity, filter.getExpression()))
+                .collect(Collectors.toList());
     }
 
     /**

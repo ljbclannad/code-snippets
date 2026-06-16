@@ -24,9 +24,15 @@ public class RetrievalRewriteResult {
     @Builder.Default
     private Set<String> suggestedMemoryTypes = new LinkedHashSet<>();
 
+    private Double suggestedMinConfidence;
+
+    private Boolean suggestedVerifiedOnly;
+
     private Integer suggestedRecentDays;
 
     private Boolean contextDependent;
+
+    private StructuredMemoryQuery.FilterExpression filterExpression;
 
     private String rawResponse;
 }

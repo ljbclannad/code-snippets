@@ -14,6 +14,7 @@ import com.lx.governance.aichat.dto.MessageSummary;
 import com.lx.governance.aichat.dto.RetrievalQuery;
 import com.lx.governance.aichat.dto.RetrievalRewriteResult;
 import com.lx.governance.aichat.dto.SessionContext;
+import com.lx.governance.aichat.dto.StructuredMemoryQuery;
 import com.lx.governance.aichat.dto.UserProfileDTO;
 import com.lx.governance.aichat.metrics.AiChatMetrics;
 
@@ -141,8 +142,25 @@ public class RetrievalQueryRewriteService {
                 .rewriteReason(determineLlmReason(normalizedMessage, sessionContext))
                 .keywords(rewriteResult.getKeywords())
                 .suggestedMemoryTypes(rewriteResult.getSuggestedMemoryTypes())
+                .suggestedMinConfidence(rewriteResult.getSuggestedMinConfidence())
+                .suggestedVerifiedOnly(rewriteResult.getSuggestedVerifiedOnly())
                 .suggestedRecentDays(rewriteResult.getSuggestedRecentDays())
                 .contextDependent(rewriteResult.getContextDependent())
+                .structuredQuery(StructuredMemoryQuery.builder()
+                        .originalMessage(message)
+                        .semanticQuery(llmQuery)
+                        .keywords(rewriteResult.getKeywords())
+                        .filter(StructuredMemoryQuery.MemoryFilter.builder()
+                                .memoryTypes(rewriteResult.getSuggestedMemoryTypes())
+                                .minConfidence(rewriteResult.getSuggestedMinConfidence())
+                                .verifiedOnly(rewriteResult.getSuggestedVerifiedOnly())
+                                .recentDays(rewriteResult.getSuggestedRecentDays())
+                                .build())
+                        .filterExpression(rewriteResult.getFilterExpression())
+                        .planSource("LLM")
+                        .planReason(determineLlmReason(normalizedMessage, sessionContext))
+                        .contextDependent(rewriteResult.getContextDependent())
+                        .build())
                 .build();
         recordRewriteMetrics(result, startTime);
         return result;
