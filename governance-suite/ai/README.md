@@ -139,6 +139,7 @@ bash sh/test/test-03-ai-chat.sh
 - [AI 服务体系文档](../docs/ai-services/README.md)
 - [AI Chat x Doctor Assistant Agent 整合时序图](AI_CHAT_AGENT_INTEGRATION_SEQUENCE.md)
 - [AI Chat Flow 详解](ai-chat-service/README-CHAT-FLOW.md)
+- [Vector Memory Service 说明](vector-memory-service/README.md)
 - [降级指南](../docs/ai-services/guides/degradation-guide.md)
 - [动态 Token Budget](../docs/analysis/dynamic-token-budget.md)
 - [记忆检索重排序](../docs/analysis/memory-retrieval-rerank.md)

@@ -3,6 +3,7 @@ package com.lx.governance.vectormemory.service;
 import com.lx.governance.vectormemory.config.MemoryRetrievalProperties;
 import com.lx.governance.vectormemory.dto.MemorySearchFilter;
 import com.lx.governance.vectormemory.dto.MemoryItemDTO;
+import com.lx.governance.vectormemory.enums.RetrievalSource;
 import com.lx.governance.vectormemory.entity.AiGroupMemoryEntity;
 import com.lx.governance.vectormemory.mapper.AiGroupMemoryMapper;
 import lombok.RequiredArgsConstructor;
@@ -38,6 +39,7 @@ public class MemoryRetrievalService {
     private final MemoryDeduplicationService deduplicationService;
     private final StructuredMemoryFilterMatcher structuredMemoryFilterMatcher;
     private final MemoryRetrievalProperties properties;
+    private final MemoryTypeNormalizer memoryTypeNormalizer;
 
     /**
      * 检索群组记忆（混合检索 + Rerank）
@@ -153,7 +155,7 @@ public class MemoryRetrievalService {
                                                 entity.getConfidenceScore().doubleValue() : null)
                                         .verified(entity.getConfidenceScore() != null &&
                                                 entity.getConfidenceScore().doubleValue() >= 0.8)
-                                        .source(entity.getMemoryType())
+                                        .source(memoryTypeNormalizer.normalize(entity.getMemoryType()))
                                         .build();
                             })
                             .collect(Collectors.toList());
@@ -180,10 +182,11 @@ public class MemoryRetrievalService {
         }
 
         // Step 2: 合并结果并去重（使用增强去重策略）
-        List<MemoryItemDTO> allCandidates = deduplicationService.mergeAndDeduplicate(
+        MemoryDeduplicationService.DeduplicationResult deduplicationResult = deduplicationService.mergeAndDeduplicateWithCache(
                 recentMemories,
                 milvusMemories,
                 keywordMemories);
+        List<MemoryItemDTO> allCandidates = deduplicationResult.memories();
 
         if (allCandidates.isEmpty()) {
             log.info("No memories found from Redis, Milvus, or keyword search");
@@ -202,10 +205,12 @@ public class MemoryRetrievalService {
 
             if ("full".equalsIgnoreCase(strategy)) {
                 // 全量重排序：对所有候选记忆重新计算相似度
-                finalResults = rerankService.rerank(query, allCandidates, topK);
+                finalResults = rerankService.rerank(
+                        query, allCandidates, topK, deduplicationResult.embeddingCache());
             } else {
                 // 部分重排序（默认）：仅对 Redis 缓存记忆重新计算相似度
-                finalResults = rerankService.rerankPartial(query, allCandidates, topK);
+                finalResults = rerankService.rerankPartial(
+                        query, allCandidates, topK, deduplicationResult.embeddingCache());
             }
         } else {
             // 不启用 Rerank，直接按现有相似度排序
@@ -276,7 +281,7 @@ public class MemoryRetrievalService {
                 .similarity(calculateRedisSimilarity(confidence))
                 .confidenceScore(entity.getConfidenceScore() != null ? confidence : null)
                 .verified(confidence >= 0.8)
-                .source("RECENT_CACHE")
+                .source(RetrievalSource.RECENT_CACHE.name())
                 .build();
     }
 
@@ -288,7 +293,7 @@ public class MemoryRetrievalService {
                 .similarity(calculateKeywordSimilarity(entity, query, confidence))
                 .confidenceScore(entity.getConfidenceScore() != null ? confidence : null)
                 .verified(confidence >= 0.8)
-                .source("KEYWORD")
+                .source(RetrievalSource.KEYWORD.name())
                 .build();
     }
 

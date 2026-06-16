@@ -8,7 +8,9 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -37,6 +39,11 @@ public class MemoryRerankService {
      * @return 重排序后的记忆列表
      */
     public List<MemoryItemDTO> rerank(String query, List<MemoryItemDTO> memories, int topK) {
+        return rerank(query, memories, topK, Map.of());
+    }
+
+    public List<MemoryItemDTO> rerank(String query, List<MemoryItemDTO> memories, int topK,
+                                      Map<String, float[]> embeddingCache) {
         if (useExternalBgeProvider()) {
             try {
                 return bgeRerankClient.rerank(query, memories, topK);
@@ -49,10 +56,11 @@ public class MemoryRerankService {
             }
         }
 
-        return rerankWithEmbeddings(query, memories, topK);
+        return rerankWithEmbeddings(query, memories, topK, embeddingCache);
     }
 
-    private List<MemoryItemDTO> rerankWithEmbeddings(String query, List<MemoryItemDTO> memories, int topK) {
+    private List<MemoryItemDTO> rerankWithEmbeddings(String query, List<MemoryItemDTO> memories, int topK,
+                                                     Map<String, float[]> embeddingCache) {
         long startTime = System.currentTimeMillis();
 
         if (memories == null || memories.isEmpty()) {
@@ -77,7 +85,7 @@ public class MemoryRerankService {
                     .map(MemoryItemDTO::getContent)
                     .collect(Collectors.toList());
 
-            List<float[]> memoryVectors = embeddingService.generateEmbeddings(memoryContents);
+            List<float[]> memoryVectors = resolveMemoryVectors(memoryContents, embeddingCache);
             log.debug("Generated {} memory embeddings", memoryVectors.size());
 
             // Step 3: 计算每条记忆与查询的相似度
@@ -137,6 +145,11 @@ public class MemoryRerankService {
      * @return 重排序后的记忆列表
      */
     public List<MemoryItemDTO> rerankPartial(String query, List<MemoryItemDTO> memories, int topK) {
+        return rerankPartial(query, memories, topK, Map.of());
+    }
+
+    public List<MemoryItemDTO> rerankPartial(String query, List<MemoryItemDTO> memories, int topK,
+                                             Map<String, float[]> embeddingCache) {
         if (useExternalBgeProvider()) {
             try {
                 return rerankPartialWithExternalProvider(query, memories, topK);
@@ -149,10 +162,11 @@ public class MemoryRerankService {
             }
         }
 
-        return rerankPartialWithEmbeddings(query, memories, topK);
+        return rerankPartialWithEmbeddings(query, memories, topK, embeddingCache);
     }
 
-    private List<MemoryItemDTO> rerankPartialWithEmbeddings(String query, List<MemoryItemDTO> memories, int topK) {
+    private List<MemoryItemDTO> rerankPartialWithEmbeddings(String query, List<MemoryItemDTO> memories, int topK,
+                                                            Map<String, float[]> embeddingCache) {
         long startTime = System.currentTimeMillis();
 
         if (memories == null || memories.isEmpty()) {
@@ -183,7 +197,7 @@ public class MemoryRerankService {
                     .map(MemoryItemDTO::getContent)
                     .collect(Collectors.toList());
 
-            List<float[]> vectors = embeddingService.generateEmbeddings(contents);
+            List<float[]> vectors = resolveMemoryVectors(contents, embeddingCache);
 
             // 计算相似度
             for (int i = 0; i < needRerank.size(); i++) {
@@ -234,5 +248,37 @@ public class MemoryRerankService {
     private boolean useExternalBgeProvider() {
         String provider = properties.getRerank().getProvider();
         return "bge-http".equalsIgnoreCase(provider);
+    }
+
+    private List<float[]> resolveMemoryVectors(List<String> memoryContents, Map<String, float[]> embeddingCache) {
+        Map<String, float[]> reusableCache = embeddingCache != null ? embeddingCache : new HashMap<>();
+        List<float[]> vectors = new ArrayList<>(memoryContents.size());
+        List<String> missingContents = new ArrayList<>();
+
+        for (String content : memoryContents) {
+            float[] cached = reusableCache.get(content);
+            if (cached != null) {
+                vectors.add(cached);
+            } else {
+                vectors.add(null);
+                missingContents.add(content);
+            }
+        }
+
+        if (!missingContents.isEmpty()) {
+            List<float[]> generated = embeddingService.generateEmbeddings(missingContents);
+            int generatedIndex = 0;
+            for (int i = 0; i < memoryContents.size(); i++) {
+                if (vectors.get(i) != null) {
+                    continue;
+                }
+                float[] vector = generated.get(generatedIndex++);
+                String content = memoryContents.get(i);
+                vectors.set(i, vector);
+                reusableCache.put(content, vector);
+            }
+        }
+
+        return vectors;
     }
 }

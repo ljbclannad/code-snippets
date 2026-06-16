@@ -47,7 +47,28 @@ public class VectorStoreService {
 
         // 生成 UUID 作为 embeddingId
         String embeddingId = UUID.randomUUID().toString();
+        addGroupMemoryDocument(memory, embeddingId);
 
+        log.info("Group memory saved successfully: embeddingId={}", embeddingId);
+        return embeddingId;
+    }
+
+    /**
+     * 使用指定的 embeddingId 保存群组记忆。
+     * 适合作为“写新向量、后续再切换 MySQL 指针”的基础能力。
+     */
+    @Retryable(maxAttempts = 3)
+    public String saveGroupMemory(AiGroupMemoryEntity memory, String embeddingId) {
+        log.info("Saving group memory to Milvus with fixed embeddingId: groupId={}, customerId={}, memoryType={}, embeddingId={}",
+                memory.getGroupId(), memory.getCustomerId(), memory.getMemoryType(), embeddingId);
+        addGroupMemoryDocument(memory, embeddingId);
+
+        log.info("Group memory saved successfully: embeddingId={}", embeddingId);
+        return embeddingId;
+    }
+
+    private void addGroupMemoryDocument(AiGroupMemoryEntity memory, String embeddingId) {
+        
         // 构建 metadata
         Map<String, Object> metadata = new HashMap<>();
         metadata.put("db_id", memory.getId());
@@ -63,9 +84,6 @@ public class VectorStoreService {
 
         // 调用 VectorStore 保存
         groupMemoryVectorStore.add(List.of(document));
-
-        log.info("Group memory saved successfully: embeddingId={}", embeddingId);
-        return embeddingId;
     }
 
     /**

@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import com.lx.governance.vectormemory.dto.MemoryExtractionResult;
+import com.lx.governance.vectormemory.enums.CandidateStatus;
 import com.lx.governance.vectormemory.entity.AiGroupMemoryCandidateEntity;
 import com.lx.governance.vectormemory.entity.AiGroupMemoryConflictEntity;
 import com.lx.governance.vectormemory.entity.AiGroupMemoryEntity;
@@ -34,6 +35,7 @@ public class CandidateMemoryService {
     private final RedisMemoryIndexService redisMemoryIndexService;
     private final SemanticMemoryConflictDetector conflictDetector;
     private final AiGroupMemoryReviewAuditMapper reviewAuditMapper;
+    private final MemoryTypeNormalizer memoryTypeNormalizer;
 
     @Autowired
     public CandidateMemoryService(
@@ -42,9 +44,10 @@ public class CandidateMemoryService {
             AiGroupMemoryMapper confirmedMemoryMapper,
             VectorStoreService vectorStoreService,
             RedisMemoryIndexService redisMemoryIndexService,
+            MemoryTypeNormalizer memoryTypeNormalizer,
             AiGroupMemoryReviewAuditMapper reviewAuditMapper) {
         this(candidateMapper, conflictMapper, confirmedMemoryMapper, vectorStoreService,
-                redisMemoryIndexService, new SemanticMemoryConflictDetector(), reviewAuditMapper);
+                redisMemoryIndexService, new SemanticMemoryConflictDetector(), reviewAuditMapper, memoryTypeNormalizer);
     }
 
     public CandidateMemoryService(
@@ -54,7 +57,8 @@ public class CandidateMemoryService {
             VectorStoreService vectorStoreService,
             RedisMemoryIndexService redisMemoryIndexService,
             SemanticMemoryConflictDetector conflictDetector,
-            AiGroupMemoryReviewAuditMapper reviewAuditMapper) {
+            AiGroupMemoryReviewAuditMapper reviewAuditMapper,
+            MemoryTypeNormalizer memoryTypeNormalizer) {
         this.candidateMapper = candidateMapper;
         this.conflictMapper = conflictMapper;
         this.confirmedMemoryMapper = confirmedMemoryMapper;
@@ -62,13 +66,14 @@ public class CandidateMemoryService {
         this.redisMemoryIndexService = redisMemoryIndexService;
         this.conflictDetector = conflictDetector;
         this.reviewAuditMapper = reviewAuditMapper;
+        this.memoryTypeNormalizer = memoryTypeNormalizer;
     }
 
     public void processCandidate(String groupId,
                                  String customerId,
                                  MemoryExtractionResult.ExtractedMemory extracted,
                                  String sourceMessage) {
-        String memoryType = mapCategoryToType(extracted.getCategory());
+        String memoryType = normalizeMemoryType(extracted.getCategory());
         SemanticMemoryFingerprint fingerprint = conflictDetector.fingerprint(memoryType, extracted.getContent());
         String normalizedKey = fingerprint.getNormalizedKey();
         String normalizedValue = fingerprint.getNormalizedValue();
@@ -85,7 +90,7 @@ public class CandidateMemoryService {
             if (nextHitCount > AUTO_CONFIRM_HIT_THRESHOLD
                     && extracted.getConfidence() != null
                     && extracted.getConfidence() >= AUTO_CONFIRM_CONFIDENCE_THRESHOLD) {
-                confirmCandidate(existing.getId(), "SYSTEM");
+                handleAutoConfirmationDecision(existing.getId(), memoryType, fingerprint, now);
             }
             return;
         }
@@ -111,7 +116,7 @@ public class CandidateMemoryService {
         entity.setPolarity(fingerprint.getPolarity());
         entity.setMemoryContent(extracted.getContent());
         entity.setConfidenceScore(BigDecimal.valueOf(extracted.getConfidence()));
-        entity.setStatus(hasConflict ? "CONFLICT" : "CANDIDATE");
+        entity.setStatus(hasConflict ? CandidateStatus.CONFLICT.name() : CandidateStatus.CANDIDATE.name());
         entity.setHitCount(1);
         entity.setSourceMessage(sourceMessage);
         entity.setLastSeenAt(now);
@@ -169,7 +174,7 @@ public class CandidateMemoryService {
         }
 
         resolveConflicts(candidateId, "RESOLVED", resolutionReason, remarks);
-        candidateMapper.updateStatus(candidateId, "CONFIRMED", reviewer, LocalDateTime.now(), confirmedMemoryId);
+        candidateMapper.updateStatus(candidateId, CandidateStatus.CONFIRMED.name(), reviewer, LocalDateTime.now(), confirmedMemoryId);
         recordAudit(candidate, "CONFIRM", "CONFIRMED", reviewer, resolutionReason, remarks, confirmedMemoryId);
     }
 
@@ -182,23 +187,80 @@ public class CandidateMemoryService {
         if (candidate == null) {
             throw new IllegalArgumentException("Candidate memory not found: " + candidateId);
         }
-        resolveConflicts(candidateId, "REJECTED", resolutionReason, remarks);
-        candidateMapper.updateStatus(candidateId, "REJECTED", reviewer, LocalDateTime.now(), null);
-        recordAudit(candidate, "REJECT", "REJECTED", reviewer, resolutionReason, remarks, null);
+        resolveConflicts(candidateId, CandidateStatus.REJECTED.name(), resolutionReason, remarks);
+        candidateMapper.updateStatus(candidateId, CandidateStatus.REJECTED.name(), reviewer, LocalDateTime.now(), null);
+        recordAudit(candidate, "REJECT", CandidateStatus.REJECTED.name(), reviewer, resolutionReason, remarks, null);
     }
 
-    private String mapCategoryToType(String category) {
-        if (category == null) {
-            return "OTHER";
+    private void handleAutoConfirmationDecision(Long candidateId,
+                                                String memoryType,
+                                                SemanticMemoryFingerprint fingerprint,
+                                                LocalDateTime reviewedAt) {
+        AiGroupMemoryCandidateEntity candidate = candidateMapper.selectById(candidateId);
+        if (candidate == null) {
+            throw new IllegalArgumentException("Candidate memory not found: " + candidateId);
         }
-        return switch (category.toLowerCase()) {
-            case "preference" -> "PREFERENCE";
-            case "health" -> "SYMPTOM";
-            case "goal" -> "OTHER";
-            case "fact" -> "OTHER";
-            case "emotion" -> "OTHER";
-            default -> "OTHER";
-        };
+
+        List<AiGroupMemoryEntity> confirmedMemories = confirmedMemoryMapper.selectByGroupIdAndCustomerId(
+                candidate.getGroupId(), candidate.getCustomerId());
+        if (confirmedMemories == null || confirmedMemories.isEmpty()) {
+            confirmCandidate(candidateId, "SYSTEM", "auto_confirm", null);
+            return;
+        }
+
+        ConfirmedMemoryMatch match = findConfirmedMemoryMatch(memoryType, fingerprint, confirmedMemories);
+        if (match == null) {
+            confirmCandidate(candidateId, "SYSTEM", "auto_confirm", null);
+            return;
+        }
+
+        if (match.equivalent()) {
+            absorbIntoConfirmed(candidate, match.memory(), reviewedAt);
+            return;
+        }
+
+        moveToConflict(candidate, match.memory(), match.analysis(), reviewedAt);
+    }
+
+    private void absorbIntoConfirmed(AiGroupMemoryCandidateEntity candidate,
+                                     AiGroupMemoryEntity confirmedMemory,
+                                     LocalDateTime reviewedAt) {
+        resolveConflicts(candidate.getId(), "RESOLVED", "duplicate_confirmed_memory", null);
+        candidateMapper.updateStatus(candidate.getId(), CandidateStatus.CONFIRMED.name(), "SYSTEM", reviewedAt, confirmedMemory.getId());
+        recordAudit(candidate, "AUTO_MERGE", CandidateStatus.CONFIRMED.name(), "SYSTEM",
+                "duplicate_confirmed_memory", null, confirmedMemory.getId());
+    }
+
+    private void moveToConflict(AiGroupMemoryCandidateEntity candidate,
+                                AiGroupMemoryEntity confirmedMemory,
+                                SemanticConflictAnalysis analysis,
+                                LocalDateTime reviewedAt) {
+        candidateMapper.updateStatus(candidate.getId(), CandidateStatus.CONFLICT.name(), "SYSTEM", reviewedAt, null);
+
+        boolean hasOpenConflict = conflictMapper.selectByCandidateId(candidate.getId()).stream()
+                .anyMatch(conflict -> "OPEN".equalsIgnoreCase(conflict.getResolutionStatus())
+                        && "CONFIRMED".equalsIgnoreCase(conflict.getConflictTargetType())
+                        && confirmedMemory.getId().equals(conflict.getConflictTargetId()));
+
+        if (!hasOpenConflict) {
+            AiGroupMemoryConflictEntity conflict = new AiGroupMemoryConflictEntity();
+            conflict.setCustomerId(candidate.getCustomerId());
+            conflict.setGroupId(candidate.getGroupId());
+            conflict.setCandidateId(candidate.getId());
+            conflict.setConflictTargetType("CONFIRMED");
+            conflict.setConflictTargetId(confirmedMemory.getId());
+            conflict.setConflictReason(analysis != null ? analysis.getConflictReason() : "confirmed_memory_exists");
+            conflict.setConflictScore(BigDecimal.valueOf(analysis != null ? analysis.getConflictScore() : 1.0d));
+            conflict.setResolutionStatus("OPEN");
+            conflictMapper.insert(conflict);
+        }
+
+        recordAudit(candidate, "REVIEW_REQUIRED", CandidateStatus.CONFLICT.name(), "SYSTEM",
+                "confirmed_memory_exists", null, confirmedMemory.getId());
+    }
+
+    private String normalizeMemoryType(String rawType) {
+        return memoryTypeNormalizer.normalize(rawType);
     }
 
     private String extractMemoryKey(String content) {
@@ -278,6 +340,51 @@ public class CandidateMemoryService {
                 .orElse(null);
     }
 
+    private ConfirmedMemoryMatch findConfirmedMemoryMatch(String memoryType,
+                                                          SemanticMemoryFingerprint fingerprint,
+                                                          List<AiGroupMemoryEntity> confirmedMemories) {
+        return confirmedMemories.stream()
+                .map(memory -> {
+                    SemanticMemoryFingerprint confirmedFingerprint = conflictDetector.fingerprint(
+                            memory.getMemoryType(), memory.getMemoryContent());
+
+                    boolean equivalent = equalsIgnoreCase(fingerprint.getNormalizedKey(), confirmedFingerprint.getNormalizedKey())
+                            && equalsIgnoreCase(fingerprint.getNormalizedValue(), confirmedFingerprint.getNormalizedValue())
+                            && equalsIgnoreCase(fingerprint.getPolarity(), confirmedFingerprint.getPolarity());
+                    if (equivalent) {
+                        return new ConfirmedMemoryMatch(memory, null, true);
+                    }
+
+                    boolean sameSlot = equalsIgnoreCase(fingerprint.getNormalizedKey(), confirmedFingerprint.getNormalizedKey())
+                            && equalsIgnoreCase(memoryType, memory.getMemoryType());
+                    if (!sameSlot) {
+                        return null;
+                    }
+
+                    SemanticConflictAnalysis analysis = conflictDetector.analyze(fingerprint, confirmedFingerprint);
+                    return new ConfirmedMemoryMatch(memory, analysis, false);
+                })
+                .filter(match -> match != null)
+                .findFirst()
+                .orElse(null);
+    }
+
+    private boolean equalsIgnoreCase(String left, String right) {
+        if (left == null && right == null) {
+            return true;
+        }
+        if (left == null || right == null) {
+            return false;
+        }
+        return left.equalsIgnoreCase(right);
+    }
+
     private record ConflictTarget(String targetType, Long targetId, SemanticConflictAnalysis analysis) {
+    }
+
+    private record ConfirmedMemoryMatch(
+            AiGroupMemoryEntity memory,
+            SemanticConflictAnalysis analysis,
+            boolean equivalent) {
     }
 }

@@ -47,6 +47,21 @@
         WHERE id = #{id}
     </update>
 
+    <update id="updateConfirmedMemory" parameterType="com.lx.governance.vectormemory.entity.AiGroupMemoryEntity">
+        UPDATE b_ai_group_memory
+        SET customer_id = #{customerId},
+            group_id = #{groupId},
+            memory_type = #{memoryType},
+            memory_key = #{memoryKey},
+            memory_content = #{memoryContent},
+            embedding_id = #{embeddingId},
+            confidence_score = #{confidenceScore},
+            source_message = #{sourceMessage},
+            extracted_at = #{extractedAt},
+            update_time = NOW()
+        WHERE id = #{id}
+    </update>
+
     <!-- 查询群组记忆 -->
     <select id="selectByGroupIdAndCustomerId" resultMap="BaseResultMap">
         SELECT

@@ -29,6 +29,13 @@ public interface AiGroupMemoryMapper {
     void updateEmbeddingId(@Param("id") Long id, @Param("embeddingId") String embeddingId);
 
     /**
+     * 更新正式记忆的核心字段和向量ID
+     *
+     * @param entity 记忆实体
+     */
+    void updateConfirmedMemory(AiGroupMemoryEntity entity);
+
+    /**
      * 查询群组记忆
      *
      * @param groupId 群组ID

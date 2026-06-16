@@ -2,13 +2,17 @@ package com.lx.governance.vectormemory.service;
 
 import com.lx.governance.vectormemory.dto.MemorySearchFilter;
 import com.lx.governance.vectormemory.entity.AiGroupMemoryEntity;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
 @Component
+@RequiredArgsConstructor
 public class StructuredMemoryFilterMatcher {
+
+    private final MemoryTypeNormalizer memoryTypeNormalizer;
 
     /**
      * 递归执行编译后的表达式树。
@@ -65,7 +69,7 @@ public class StructuredMemoryFilterMatcher {
         List<String> values = condition.getValues();
 
         return switch (field) {
-            case "memoryType", "memoryTypes" -> matchString(entity.getMemoryType(), op, values);
+            case "memoryType", "memoryTypes" -> matchMemoryType(entity.getMemoryType(), op, values);
             case "memoryKey" -> matchString(entity.getMemoryKey(), op, values);
             case "memoryContent" -> matchString(entity.getMemoryContent(), op, values);
             case "sourceMessage" -> matchString(entity.getSourceMessage(), op, values);
@@ -85,6 +89,14 @@ public class StructuredMemoryFilterMatcher {
             case "CONTAINS" -> values.stream().anyMatch(value -> normalized.contains(value.toLowerCase()));
             default -> true;
         };
+    }
+
+    private boolean matchMemoryType(String actual, String op, List<String> values) {
+        String normalizedActual = memoryTypeNormalizer.normalize(actual);
+        List<String> normalizedValues = values.stream()
+                .map(memoryTypeNormalizer::normalize)
+                .toList();
+        return matchString(normalizedActual, op, normalizedValues);
     }
 
     private boolean matchNumber(Double actual, String op, List<String> values) {

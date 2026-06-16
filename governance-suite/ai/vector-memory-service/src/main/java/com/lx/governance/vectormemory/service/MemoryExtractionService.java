@@ -23,7 +23,7 @@ public class MemoryExtractionService {
 
     private static final int LOG_CONTENT_MAX_LENGTH = 50;
 
-    private final DeepSeekDirectService deepSeekDirectService;
+    private final DeepSeekService deepSeekService;
     private final RedisMemoryIndexService redisMemoryIndexService;
     private final CandidateMemoryService candidateMemoryService;
 
@@ -43,7 +43,7 @@ public class MemoryExtractionService {
 
         try {
             // Step 1: 调用 DeepSeek 提取记忆
-            MemoryExtractionResult result = deepSeekDirectService.extractMemories(userMessage, aiResponse);
+            MemoryExtractionResult result = deepSeekService.extractMemories(userMessage, aiResponse);
 
             if (result == null || result.getMemories() == null || result.getMemories().isEmpty()) {
                 log.info("未提取到任何记忆 - groupId: {}, customerId: {}", groupId, customerId);

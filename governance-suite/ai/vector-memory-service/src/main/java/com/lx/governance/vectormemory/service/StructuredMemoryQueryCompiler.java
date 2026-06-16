@@ -2,6 +2,7 @@ package com.lx.governance.vectormemory.service;
 
 import com.lx.governance.vectormemory.dto.MemorySearchFilter;
 import com.lx.governance.vectormemory.dto.StructuredMemoryQuery;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.LinkedHashSet;
@@ -9,7 +10,10 @@ import java.util.List;
 import java.util.Set;
 
 @Component
+@RequiredArgsConstructor
 public class StructuredMemoryQueryCompiler {
+
+    private final MemoryTypeNormalizer memoryTypeNormalizer;
 
     public MemorySearchFilter compile(StructuredMemoryQuery structuredQuery, MemorySearchFilter fallbackFilter) {
         // 如果上游没有提供 DSL，就完全走兼容路径，沿用原来的固定字段过滤。
@@ -44,7 +48,9 @@ public class StructuredMemoryQueryCompiler {
             switch (field) {
                 case "memoryType", "memoryTypes" -> {
                     if ("IN".equals(op)) {
-                        memoryTypes = new LinkedHashSet<>(values);
+                        memoryTypes = values.stream()
+                                .map(memoryTypeNormalizer::normalize)
+                                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
                     }
                 }
                 case "confidenceScore", "minConfidence" -> {
