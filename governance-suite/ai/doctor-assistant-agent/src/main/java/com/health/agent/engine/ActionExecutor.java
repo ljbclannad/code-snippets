@@ -258,6 +258,15 @@ public class ActionExecutor {
             case "detect_weight_plateau" -> "plateau_assessment";
             case "analyze_adherence_signals" -> "adherence_analysis";
             case "get_health_knowledge" -> "health_knowledge";
+            case "triage_red_flags" -> "red_flag_triage";
+            case "analyze_medication_adherence" -> "medication_adherence_analysis";
+            case "summarize_symptom_timeline" -> "symptom_timeline";
+            case "assess_follow_up_urgency" -> "follow_up_urgency_assessment";
+            case "generate_patient_education_points" -> "patient_education_points";
+            case "check_self_monitoring_completeness" -> "self_monitoring_completeness";
+            case "extract_structured_symptoms" -> "structured_symptoms";
+            case "screen_mental_health_risk" -> "mental_health_risk_screen";
+            case "recommend_follow_up_data_requests" -> "follow_up_data_requests";
             default -> toolName;
         };
     }

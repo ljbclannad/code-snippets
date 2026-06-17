@@ -13,7 +13,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class StructuredMemoryFilterMatcherTest {
 
-    private final StructuredMemoryFilterMatcher matcher = new StructuredMemoryFilterMatcher();
+    private final StructuredMemoryFilterMatcher matcher =
+            new StructuredMemoryFilterMatcher(new MemoryTypeNormalizer());
 
     @Test
     void shouldMatchNestedOrExpression() {

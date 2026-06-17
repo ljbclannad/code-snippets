@@ -20,6 +20,7 @@ class SubAgentCoordinatorTest {
         ReflectionTestUtils.setField(coordinator, "dataCollectionSubAgent", new DataCollectionSubAgent());
         ReflectionTestUtils.setField(coordinator, "weightAnalysisSubAgent", new WeightAnalysisSubAgent());
         ReflectionTestUtils.setField(coordinator, "carePlanningSubAgent", new CarePlanningSubAgent());
+        ReflectionTestUtils.setField(coordinator, "riskTriageSubAgent", new RiskTriageSubAgent());
     }
 
     @Test
@@ -70,5 +71,15 @@ class SubAgentCoordinatorTest {
         context.putSlot("weight_trend_analysis", Map.of("trend", "DOWN"), "test");
 
         assertEquals("CarePlanningAgent", coordinator.select("给出下一步随访建议", context).name());
+    }
+
+    @Test
+    void shouldSelectRiskTriageAgentForRiskEscalationTaskWithPreloadedSignals() {
+        AgentContext context = AgentContext.initialize("C001", "D001", "患者反馈胸痛并伴随呼吸困难，需要判断风险");
+        context.putSlot("patient_task_request",
+                Map.of("taskType", TaskType.RISK_STRATIFICATION_AND_ESCALATION.name()), "test");
+        context.putSlot("patient_message", Map.of("content", "这两天有胸痛和呼吸困难"), "test");
+
+        assertEquals("RiskTriageAgent", coordinator.select("患者反馈胸痛并伴随呼吸困难，需要判断风险", context).name());
     }
 }

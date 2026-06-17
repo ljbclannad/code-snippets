@@ -19,6 +19,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import jakarta.annotation.PostConstruct;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -145,6 +147,106 @@ public class ToolRegistry {
                 "topic", Map.of("type", "string", "required", true, "maxLength", 100)
             ))
             .executor(this::getHealthKnowledge)
+            .build());
+
+        register(Tool.builder()
+            .name("triage_red_flags")
+            .description("基于近期聊天内容识别红旗症状并给出分诊级别")
+            .riskLevel(ToolRiskLevel.LOW)
+            .inputSchema(Map.of(
+                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
+                "limit", Map.of("type", "integer", "default", 20, "min", 1, "max", 50)
+            ))
+            .executor(this::triageRedFlags)
+            .build());
+
+        register(Tool.builder()
+            .name("analyze_medication_adherence")
+            .description("分析近期聊天和处方历史中的漏服、停药、自行调药风险")
+            .riskLevel(ToolRiskLevel.LOW)
+            .inputSchema(Map.of(
+                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
+                "chatLimit", Map.of("type", "integer", "default", 20, "min", 1, "max", 50),
+                "prescriptionLimit", Map.of("type", "integer", "default", 10, "min", 1, "max", 30)
+            ))
+            .executor(this::analyzeMedicationAdherence)
+            .build());
+
+        register(Tool.builder()
+            .name("summarize_symptom_timeline")
+            .description("从近期聊天内容中抽取症状出现时间、持续时长、变化趋势和伴随症状")
+            .riskLevel(ToolRiskLevel.LOW)
+            .inputSchema(Map.of(
+                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
+                "limit", Map.of("type", "integer", "default", 20, "min", 1, "max", 50)
+            ))
+            .executor(this::summarizeSymptomTimeline)
+            .build());
+
+        register(Tool.builder()
+            .name("assess_follow_up_urgency")
+            .description("结合近期聊天风险信号评估随访紧急度和推荐时窗")
+            .riskLevel(ToolRiskLevel.LOW)
+            .inputSchema(Map.of(
+                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
+                "limit", Map.of("type", "integer", "default", 20, "min", 1, "max", 50)
+            ))
+            .executor(this::assessFollowUpUrgency)
+            .build());
+
+        register(Tool.builder()
+            .name("generate_patient_education_points")
+            .description("生成患者教育要点，强调生活方式、监测提醒和何时寻求帮助")
+            .riskLevel(ToolRiskLevel.LOW)
+            .inputSchema(Map.of(
+                "topic", Map.of("type", "string", "required", true, "maxLength", 100),
+                "riskLevel", Map.of("type", "string", "required", false, "maxLength", 16)
+            ))
+            .executor(this::generatePatientEducationPoints)
+            .build());
+
+        register(Tool.builder()
+            .name("check_self_monitoring_completeness")
+            .description("检查近期自我监测数据是否缺关键项目，如体重、症状或聊天随访反馈")
+            .riskLevel(ToolRiskLevel.LOW)
+            .inputSchema(Map.of(
+                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
+                "recentDays", Map.of("type", "integer", "default", 14, "min", 3, "max", 30)
+            ))
+            .executor(this::checkSelfMonitoringCompleteness)
+            .build());
+
+        register(Tool.builder()
+            .name("extract_structured_symptoms")
+            .description("从近期聊天中结构化抽取症状、程度、频率、诱因和缓解因素")
+            .riskLevel(ToolRiskLevel.LOW)
+            .inputSchema(Map.of(
+                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
+                "limit", Map.of("type", "integer", "default", 20, "min", 1, "max", 50)
+            ))
+            .executor(this::extractStructuredSymptoms)
+            .build());
+
+        register(Tool.builder()
+            .name("screen_mental_health_risk")
+            .description("筛查近期聊天中的焦虑、抑郁、失眠和轻生等心理风险")
+            .riskLevel(ToolRiskLevel.LOW)
+            .inputSchema(Map.of(
+                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
+                "limit", Map.of("type", "integer", "default", 20, "min", 1, "max", 50)
+            ))
+            .executor(this::screenMentalHealthRisk)
+            .build());
+
+        register(Tool.builder()
+            .name("recommend_follow_up_data_requests")
+            .description("根据当前数据缺口给出下一轮随访需补充的关键数据字段")
+            .riskLevel(ToolRiskLevel.LOW)
+            .inputSchema(Map.of(
+                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
+                "taskType", Map.of("type", "string", "required", false, "maxLength", 64)
+            ))
+            .executor(this::recommendFollowUpDataRequests)
             .build());
 
         // 中风险工具：通知类
@@ -674,5 +776,495 @@ public class ToolRegistry {
             .data(Map.of("blocked", true))
             .summary("高风险工具不允许直接执行")
             .build();
+    }
+
+    private Object triageRedFlags(Map<String, Object> input) {
+        String customerId = (String) input.get("customerId");
+        Integer limit = (Integer) input.getOrDefault("limit", 20);
+        List<ChatMessage> messages = patientService.getChatHistory(customerId, limit);
+        String conversation = combineChatMessages(messages);
+
+        List<String> urgentKeywords = findKeywords(conversation, List.of(
+            "胸痛", "呼吸困难", "胸闷", "心悸", "晕厥", "昏迷", "抽搐", "便血", "呕血"));
+        List<String> sameDayKeywords = findKeywords(conversation, List.of(
+            "发热", "持续头晕", "明显加重", "无法进食", "剧烈疼痛", "严重乏力"));
+        List<String> cautionKeywords = findKeywords(conversation, List.of(
+            "恶心", "呕吐", "腹泻", "睡眠差", "焦虑", "抑郁", "失眠", "食欲差"));
+
+        String triageLevel;
+        String recommendedWindow;
+        if (!urgentKeywords.isEmpty()) {
+            triageLevel = "EMERGENCY";
+            recommendedWindow = "立即线下就医或急诊";
+        } else if (!sameDayKeywords.isEmpty()) {
+            triageLevel = "HIGH";
+            recommendedWindow = "24小时内联系医生";
+        } else if (!cautionKeywords.isEmpty()) {
+            triageLevel = "MEDIUM";
+            recommendedWindow = "48-72小时内随访";
+        } else {
+            triageLevel = "LOW";
+            recommendedWindow = "常规随访";
+        }
+
+        List<String> redFlags = new ArrayList<>();
+        redFlags.addAll(urgentKeywords);
+        redFlags.addAll(sameDayKeywords);
+        redFlags.addAll(cautionKeywords);
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("triageLevel", triageLevel);
+        data.put("recommendedWindow", recommendedWindow);
+        data.put("requiresImmediateCare", "EMERGENCY".equals(triageLevel));
+        data.put("redFlags", redFlags);
+        data.put("evidence", buildEvidenceLines(messages, redFlags));
+        data.put("evidenceSources", List.of("CHAT_HISTORY"));
+        return toolOutput("red_flag_triage", data, "已完成红旗分诊", "CHAT_HISTORY");
+    }
+
+    private Object analyzeMedicationAdherence(Map<String, Object> input) {
+        String customerId = (String) input.get("customerId");
+        Integer chatLimit = (Integer) input.getOrDefault("chatLimit", 20);
+        Integer prescriptionLimit = (Integer) input.getOrDefault("prescriptionLimit", 10);
+        List<ChatMessage> messages = patientService.getChatHistory(customerId, chatLimit);
+        List<PrescriptionRecord> prescriptions = patientService.getPrescriptionHistory(customerId, prescriptionLimit);
+        String conversation = combineChatMessages(messages);
+
+        List<String> missedDoseSignals = findKeywords(conversation, List.of("漏服", "忘记吃药", "没吃药", "断药"));
+        List<String> stopSignals = findKeywords(conversation, List.of("停药", "自行停药", "不想吃药"));
+        List<String> adjustSignals = findKeywords(conversation, List.of("加量", "减量", "自己调药", "换药"));
+        String adherenceLevel = !stopSignals.isEmpty() || !adjustSignals.isEmpty() ? "HIGH_RISK"
+                : !missedDoseSignals.isEmpty() ? "MEDIUM_RISK" : "STABLE";
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("adherenceLevel", adherenceLevel);
+        data.put("activePrescriptionCount", prescriptions.size());
+        data.put("missedDoseSignals", missedDoseSignals);
+        data.put("selfAdjustmentSignals", mergeLists(stopSignals, adjustSignals));
+        data.put("recommendedActions", medicationAdherenceActions(adherenceLevel));
+        data.put("evidence", buildEvidenceLines(messages, mergeLists(missedDoseSignals, stopSignals, adjustSignals)));
+        data.put("evidenceSources", List.of("CHAT_HISTORY", "PRESCRIPTION_HISTORY"));
+        return toolOutput("medication_adherence_analysis", data, "已完成用药依从性分析", "CHAT_HISTORY");
+    }
+
+    private Object summarizeSymptomTimeline(Map<String, Object> input) {
+        String customerId = (String) input.get("customerId");
+        Integer limit = (Integer) input.getOrDefault("limit", 20);
+        List<ChatMessage> messages = patientService.getChatHistory(customerId, limit);
+        List<Map<String, Object>> symptoms = detectSymptoms(messages);
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("summary", symptoms.isEmpty() ? "近期聊天中未抽取到明确症状时间线" : "已抽取到近期症状时间线");
+        data.put("timeline", symptoms);
+        data.put("latestSymptomDate", latestChatDate(messages));
+        data.put("evidenceSources", List.of("CHAT_HISTORY"));
+        return toolOutput("symptom_timeline", data, "已完成症状时间线总结", "CHAT_HISTORY");
+    }
+
+    private Object assessFollowUpUrgency(Map<String, Object> input) {
+        String customerId = (String) input.get("customerId");
+        Integer limit = (Integer) input.getOrDefault("limit", 20);
+        List<ChatMessage> messages = patientService.getChatHistory(customerId, limit);
+        String conversation = combineChatMessages(messages);
+
+        boolean emergency = !findKeywords(conversation, List.of("胸痛", "呼吸困难", "晕厥", "便血", "呕血")).isEmpty();
+        boolean severe = !findKeywords(conversation, List.of("明显加重", "持续头晕", "剧烈疼痛", "停药")).isEmpty();
+        boolean moderate = !findKeywords(conversation, List.of("失眠", "焦虑", "食欲差", "恶心")).isEmpty();
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        if (emergency) {
+            data.put("urgencyLevel", "IMMEDIATE");
+            data.put("recommendedWindow", "立即处理");
+            data.put("reason", "近期聊天中出现急症红旗症状");
+        } else if (severe) {
+            data.put("urgencyLevel", "WITHIN_24H");
+            data.put("recommendedWindow", "24小时内");
+            data.put("reason", "近期聊天中出现恶化或用药中断信号");
+        } else if (moderate) {
+            data.put("urgencyLevel", "WITHIN_3_DAYS");
+            data.put("recommendedWindow", "3天内");
+            data.put("reason", "近期聊天中有持续不适或情绪睡眠问题");
+        } else {
+            data.put("urgencyLevel", "ROUTINE");
+            data.put("recommendedWindow", "常规随访");
+            data.put("reason", "当前未见高危或明显恶化信号");
+        }
+        data.put("evidence", summarizeRecentMessages(messages, 3));
+        data.put("evidenceSources", List.of("CHAT_HISTORY"));
+        return toolOutput("follow_up_urgency_assessment", data, "已完成随访紧急度评估", "CHAT_HISTORY");
+    }
+
+    private Object generatePatientEducationPoints(Map<String, Object> input) {
+        String topic = (String) input.get("topic");
+        String riskLevel = (String) input.getOrDefault("riskLevel", "LOW");
+        List<HealthKnowledge> knowledgeList = healthKnowledgeService.getByTopic(topic, 3);
+        if (knowledgeList.isEmpty()) {
+            knowledgeList = healthKnowledgeService.searchByKeyword(topic, 3);
+        }
+
+        List<String> points = new ArrayList<>();
+        for (HealthKnowledge knowledge : knowledgeList) {
+            points.add(abbreviate(knowledge.getContent(), 80));
+        }
+        if (points.isEmpty()) {
+            points.add("继续记录症状变化和日常监测数据，如有明显加重及时联系医生。");
+        }
+        if ("HIGH".equalsIgnoreCase(riskLevel) || "EMERGENCY".equalsIgnoreCase(riskLevel)) {
+            points.add("如出现明显加重或急症信号，应优先线下就医，不要仅依赖线上观察。");
+        }
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("topic", topic);
+        data.put("riskLevel", riskLevel);
+        data.put("educationPoints", points.stream().limit(5).toList());
+        data.put("evidenceSources", List.of("HEALTH_KNOWLEDGE"));
+        return toolOutput("patient_education_points", data, "已生成患者教育要点", "HEALTH_KNOWLEDGE");
+    }
+
+    private Object checkSelfMonitoringCompleteness(Map<String, Object> input) {
+        String customerId = (String) input.get("customerId");
+        Integer recentDays = (Integer) input.getOrDefault("recentDays", 14);
+        PatientProfile profile = patientService.getProfile(customerId);
+        List<WeightRecord> weightRecords = patientService.getWeightHistory(customerId, recentDays);
+        List<ChatMessage> messages = patientService.getChatHistory(customerId, 10);
+
+        List<String> present = new ArrayList<>();
+        List<String> missing = new ArrayList<>();
+        if (profile != null) {
+            present.add("patient_profile");
+        } else {
+            missing.add("patient_profile");
+        }
+        if (!weightRecords.isEmpty()) {
+            present.add("weight_history");
+        } else {
+            missing.add("weight_history");
+        }
+        boolean hasSymptomNarrative = messages.stream().map(ChatMessage::getMessage).anyMatch(this::containsSymptomKeyword);
+        if (hasSymptomNarrative) {
+            present.add("symptom_notes");
+        } else {
+            missing.add("symptom_notes");
+        }
+        boolean hasRecentConversation = !messages.isEmpty();
+        if (hasRecentConversation) {
+            present.add("chat_follow_up");
+        } else {
+            missing.add("chat_follow_up");
+        }
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("recentDays", recentDays);
+        data.put("presentDataTypes", present);
+        data.put("missingDataTypes", missing);
+        data.put("isComplete", missing.isEmpty());
+        data.put("recommendedRequests", dataRequestsForMissing(missing));
+        data.put("evidenceSources", List.of("PATIENT_PROFILE", "WEIGHT_HISTORY", "CHAT_HISTORY"));
+        return toolOutput("self_monitoring_completeness", data, "已完成自我监测完整性检查", "PATIENT_PROFILE");
+    }
+
+    private Object extractStructuredSymptoms(Map<String, Object> input) {
+        String customerId = (String) input.get("customerId");
+        Integer limit = (Integer) input.getOrDefault("limit", 20);
+        List<Map<String, Object>> symptoms = detectSymptoms(patientService.getChatHistory(customerId, limit));
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("symptoms", symptoms);
+        data.put("symptomCount", symptoms.size());
+        data.put("evidenceSources", List.of("CHAT_HISTORY"));
+        return toolOutput("structured_symptoms", data, "已完成症状结构化抽取", "CHAT_HISTORY");
+    }
+
+    private Object screenMentalHealthRisk(Map<String, Object> input) {
+        String customerId = (String) input.get("customerId");
+        Integer limit = (Integer) input.getOrDefault("limit", 20);
+        List<ChatMessage> messages = patientService.getChatHistory(customerId, limit);
+        String conversation = combineChatMessages(messages);
+
+        List<String> crisisKeywords = findKeywords(conversation, List.of("轻生", "自杀", "不想活", "结束自己"));
+        List<String> highRiskKeywords = findKeywords(conversation, List.of("抑郁", "绝望", "崩溃"));
+        List<String> mediumRiskKeywords = findKeywords(conversation, List.of("焦虑", "失眠", "心烦", "压力大"));
+
+        String riskLevel = !crisisKeywords.isEmpty() ? "CRISIS"
+                : !highRiskKeywords.isEmpty() ? "HIGH"
+                : !mediumRiskKeywords.isEmpty() ? "MEDIUM" : "LOW";
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("riskLevel", riskLevel);
+        data.put("flags", mergeLists(crisisKeywords, highRiskKeywords, mediumRiskKeywords));
+        data.put("recommendedActions", mentalHealthActions(riskLevel));
+        data.put("evidence", buildEvidenceLines(messages,
+                mergeLists(crisisKeywords, highRiskKeywords, mediumRiskKeywords)));
+        data.put("evidenceSources", List.of("CHAT_HISTORY"));
+        return toolOutput("mental_health_risk_screen", data, "已完成心理风险筛查", "CHAT_HISTORY");
+    }
+
+    private Object recommendFollowUpDataRequests(Map<String, Object> input) {
+        String customerId = (String) input.get("customerId");
+        String taskType = (String) input.getOrDefault("taskType", "");
+
+        ToolExecutionOutput completeness = (ToolExecutionOutput) checkSelfMonitoringCompleteness(Map.of(
+                "customerId", customerId,
+                "recentDays", 14));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> completenessData = completeness.getData() instanceof Map<?, ?>
+                ? (Map<String, Object>) completeness.getData()
+                : Map.of();
+        @SuppressWarnings("unchecked")
+        List<String> missing = (List<String>) completenessData.getOrDefault("missingDataTypes", List.of());
+
+        List<Map<String, Object>> requests = new ArrayList<>();
+        for (String item : missing) {
+            requests.add(buildDataRequest(item, taskType));
+        }
+        if (requests.isEmpty()) {
+            requests.add(Map.of(
+                "field", "recent_symptom_update",
+                "question", "请继续保持近3天的症状与执行情况记录，后续随访可直接复用。",
+                "reason", "当前关键数据已较完整"));
+        }
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("taskType", taskType);
+        data.put("requests", requests);
+        data.put("evidenceSources", List.of("PATIENT_PROFILE", "WEIGHT_HISTORY", "CHAT_HISTORY"));
+        return toolOutput("follow_up_data_requests", data, "已生成下一轮随访数据补充建议", "PATIENT_PROFILE");
+    }
+
+    private ToolExecutionOutput toolOutput(String slotName, Object data, String summary, String source) {
+        return ToolExecutionOutput.builder()
+            .data(data)
+            .summary(summary)
+            .stateUpdates(Map.of(slotName, data))
+            .evidence(List.of(
+                ToolEvidence.builder()
+                    .source(source)
+                    .summary(summary)
+                    .payload(data)
+                    .build()
+            ))
+            .build();
+    }
+
+    private String combineChatMessages(List<ChatMessage> messages) {
+        return messages.stream()
+            .sorted(Comparator.comparing(ChatMessage::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder())))
+            .map(ChatMessage::getMessage)
+            .filter(Objects::nonNull)
+            .collect(Collectors.joining("；"));
+    }
+
+    private List<String> findKeywords(String text, List<String> keywords) {
+        if (text == null || text.isBlank()) {
+            return List.of();
+        }
+        return keywords.stream()
+            .filter(text::contains)
+            .distinct()
+            .toList();
+    }
+
+    @SafeVarargs
+    private final List<String> mergeLists(List<String>... lists) {
+        return Arrays.stream(lists)
+            .filter(Objects::nonNull)
+            .flatMap(Collection::stream)
+            .distinct()
+            .toList();
+    }
+
+    private List<String> medicationAdherenceActions(String adherenceLevel) {
+        return switch (adherenceLevel) {
+            case "HIGH_RISK" -> List.of("尽快由医生确认当前用药执行情况", "不要自行停药或调药");
+            case "MEDIUM_RISK" -> List.of("补充近1周漏服频次", "确认是否需要提醒或简化用药计划");
+            default -> List.of("继续保持当前记录", "下次随访继续核对用药执行情况");
+        };
+    }
+
+    private String latestChatDate(List<ChatMessage> messages) {
+        return messages.stream()
+            .map(ChatMessage::getCreatedAt)
+            .filter(Objects::nonNull)
+            .max(LocalDateTime::compareTo)
+            .map(LocalDateTime::toLocalDate)
+            .map(LocalDate::toString)
+            .orElse("");
+    }
+
+    private List<Map<String, Object>> detectSymptoms(List<ChatMessage> messages) {
+        List<Map<String, Object>> symptoms = new ArrayList<>();
+        for (ChatMessage message : messages) {
+            if (message.getMessage() == null || message.getMessage().isBlank()) {
+                continue;
+            }
+            String text = message.getMessage();
+            for (String symptom : List.of("胸痛", "呼吸困难", "头晕", "恶心", "呕吐", "腹泻", "失眠", "焦虑", "抑郁", "食欲差")) {
+                if (text.contains(symptom)) {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("symptom", symptom);
+                    row.put("onset", inferOnset(text, message.getCreatedAt()));
+                    row.put("trend", inferTrend(text));
+                    row.put("severity", inferSeverity(text));
+                    row.put("frequency", inferFrequency(text));
+                    row.put("trigger", inferTrigger(text));
+                    row.put("relievingFactor", inferRelievingFactor(text));
+                    row.put("evidence", abbreviate(text, 60));
+                    symptoms.add(row);
+                }
+            }
+        }
+        return symptoms.stream().distinct().toList();
+    }
+
+    private String inferOnset(String text, LocalDateTime createdAt) {
+        if (text.contains("今天")) {
+            return "今天";
+        }
+        if (text.contains("昨")) {
+            return "昨天";
+        }
+        if (text.contains("近几天") || text.contains("这几天")) {
+            return "近几天";
+        }
+        if (text.contains("一周")) {
+            return "近一周";
+        }
+        return createdAt != null ? createdAt.toLocalDate().toString() : "时间未明确";
+    }
+
+    private String inferTrend(String text) {
+        if (text.contains("加重") || text.contains("更严重")) {
+            return "加重";
+        }
+        if (text.contains("缓解") || text.contains("好转")) {
+            return "缓解";
+        }
+        return "波动/未明确";
+    }
+
+    private String inferSeverity(String text) {
+        if (text.contains("剧烈") || text.contains("严重") || text.contains("明显")) {
+            return "重";
+        }
+        if (text.contains("轻微") || text.contains("一点")) {
+            return "轻";
+        }
+        return "中等/未明确";
+    }
+
+    private String inferFrequency(String text) {
+        if (text.contains("一直") || text.contains("持续")) {
+            return "持续";
+        }
+        if (text.contains("偶尔")) {
+            return "偶发";
+        }
+        if (text.contains("每天")) {
+            return "每日";
+        }
+        return "未明确";
+    }
+
+    private String inferTrigger(String text) {
+        for (String keyword : List.of("进食后", "运动后", "熬夜后", "停药后", "加班后", "情绪波动后")) {
+            if (text.contains(keyword)) {
+                return keyword;
+            }
+        }
+        return "未明确";
+    }
+
+    private String inferRelievingFactor(String text) {
+        for (String keyword : List.of("休息后缓解", "喝水后缓解", "进食后缓解", "服药后缓解")) {
+            if (text.contains(keyword)) {
+                return keyword;
+            }
+        }
+        return "未明确";
+    }
+
+    private List<String> mentalHealthActions(String riskLevel) {
+        return switch (riskLevel) {
+            case "CRISIS" -> List.of("立即转人工医生处理", "必要时建议患者尽快联系紧急支持资源");
+            case "HIGH" -> List.of("尽快由医生进一步评估心理状态", "补充睡眠、食欲和情绪持续时间");
+            case "MEDIUM" -> List.of("下一轮随访继续跟进情绪和睡眠变化", "补充压力来源和持续时间");
+            default -> List.of("当前未见明显心理高风险信号，继续常规观察");
+        };
+    }
+
+    private List<String> buildEvidenceLines(List<ChatMessage> messages, List<String> keywords) {
+        if (messages == null || messages.isEmpty()) {
+            return List.of("近期无聊天证据");
+        }
+        if (keywords == null || keywords.isEmpty()) {
+            return summarizeRecentMessages(messages, 2);
+        }
+        return messages.stream()
+            .map(ChatMessage::getMessage)
+            .filter(Objects::nonNull)
+            .filter(message -> keywords.stream().anyMatch(message::contains))
+            .map(message -> abbreviate(message, 80))
+            .distinct()
+            .limit(3)
+            .toList();
+    }
+
+    private List<String> summarizeRecentMessages(List<ChatMessage> messages, int limit) {
+        return messages.stream()
+            .sorted(Comparator.comparing(ChatMessage::getCreatedAt, Comparator.nullsLast(Comparator.reverseOrder())))
+            .limit(Math.max(1, limit))
+            .map(ChatMessage::getMessage)
+            .filter(Objects::nonNull)
+            .map(message -> abbreviate(message, 80))
+            .toList();
+    }
+
+    private boolean containsSymptomKeyword(String text) {
+        return !findKeywords(text, List.of(
+                "胸痛", "呼吸困难", "头晕", "恶心", "呕吐", "腹泻", "失眠", "焦虑", "抑郁", "食欲差")).isEmpty();
+    }
+
+    private List<String> dataRequestsForMissing(List<String> missing) {
+        return missing.stream()
+            .map(item -> switch (item) {
+                case "patient_profile" -> "补充当前身高、体重目标和既往慢病信息";
+                case "weight_history" -> "补充近7到14天体重记录";
+                case "symptom_notes" -> "补充症状出现时间、持续时长和变化趋势";
+                case "chat_follow_up" -> "补充最近执行情况、饮食运动和主观不适";
+                default -> "补充相关随访数据";
+            })
+            .toList();
+    }
+
+    private Map<String, Object> buildDataRequest(String missingField, String taskType) {
+        return switch (missingField) {
+            case "patient_profile" -> Map.of(
+                    "field", "patient_profile",
+                    "question", "请补充目前的基础档案信息，包括身高、当前体重、目标体重和既往慢病。",
+                    "reason", "缺少基础档案，难以判断风险和随访优先级");
+            case "weight_history" -> Map.of(
+                    "field", "weight_history",
+                    "question", "请补充近7到14天的体重记录，最好带日期。",
+                    "reason", "缺少近期体重趋势，无法判断是否恶化或进入平台期");
+            case "symptom_notes" -> Map.of(
+                    "field", "symptom_notes",
+                    "question", "请补充症状从什么时候开始、持续多久、有没有明显加重或缓解。",
+                    "reason", "缺少症状时间线，难以判断风险");
+            case "chat_follow_up" -> Map.of(
+                    "field", "chat_follow_up",
+                    "question", "请补充最近几天的饮食、运动、睡眠和主观不适变化。",
+                    "reason", "缺少随访执行情况，不利于生成下一步建议");
+            default -> Map.of(
+                    "field", missingField,
+                    "question", "请补充当前缺失的关键信息。",
+                    "reason", "当前任务 " + taskType + " 仍存在信息缺口");
+        };
+    }
+
+    private String abbreviate(String text, int maxLength) {
+        if (text == null || text.length() <= maxLength) {
+            return text;
+        }
+        return text.substring(0, Math.max(16, maxLength)) + "...";
     }
 }

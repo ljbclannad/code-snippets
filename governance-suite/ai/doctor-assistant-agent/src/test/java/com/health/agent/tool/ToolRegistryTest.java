@@ -3,6 +3,7 @@ package com.health.agent.tool;
 import com.health.agent.model.ChatMessage;
 import com.health.agent.model.FollowUpTask;
 import com.health.agent.model.PatientProfile;
+import com.health.agent.model.PrescriptionRecord;
 import com.health.agent.model.ToolExecutionOutput;
 import com.health.agent.model.WeightRecord;
 import com.health.agent.service.FollowUpTaskService;
@@ -83,6 +84,15 @@ class ToolRegistryTest {
         assertTrue(toolNames.contains("detect_weight_plateau"));
         assertTrue(toolNames.contains("analyze_adherence_signals"));
         assertTrue(toolNames.contains("get_health_knowledge"));
+        assertTrue(toolNames.contains("triage_red_flags"));
+        assertTrue(toolNames.contains("analyze_medication_adherence"));
+        assertTrue(toolNames.contains("summarize_symptom_timeline"));
+        assertTrue(toolNames.contains("assess_follow_up_urgency"));
+        assertTrue(toolNames.contains("generate_patient_education_points"));
+        assertTrue(toolNames.contains("check_self_monitoring_completeness"));
+        assertTrue(toolNames.contains("extract_structured_symptoms"));
+        assertTrue(toolNames.contains("screen_mental_health_risk"));
+        assertTrue(toolNames.contains("recommend_follow_up_data_requests"));
         assertTrue(toolNames.contains("send_reminder"));
         assertTrue(toolNames.contains("create_follow_up_task"));
         assertTrue(toolNames.contains("send_health_report"));
@@ -124,11 +134,19 @@ class ToolRegistryTest {
 
         ChatMessage chat = ChatMessage.builder()
             .sender("USER")
-            .message("我最近有在快走，也在控制饮食")
+            .message("我最近有在快走，也在控制饮食，但这几天有点焦虑和失眠，偶尔忘记吃药")
             .createdAt(LocalDateTime.now())
             .build();
         when(patientService.getChatHistory("C001", 20)).thenReturn(List.of(chat));
+        when(patientService.getChatHistory("C001", 10)).thenReturn(List.of(chat));
         when(followUpTaskService.getTasksByCustomerId("C001", 10)).thenReturn(List.of());
+        PrescriptionRecord prescription = PrescriptionRecord.builder()
+            .customerId("C001")
+            .medication("二甲双胍")
+            .dosage("0.5g bid")
+            .createdAt(LocalDateTime.now())
+            .build();
+        when(patientService.getPrescriptionHistory("C001", 10)).thenReturn(List.of(prescription));
 
         ToolExecutionOutput profileOutput = assertInstanceOf(
             ToolExecutionOutput.class,
@@ -157,5 +175,29 @@ class ToolRegistryTest {
             toolRegistry.getTool("analyze_adherence_signals").getExecutor().execute(Map.of("customerId", "C001"))
         );
         assertTrue(adherenceOutput.getStateUpdates().containsKey("adherence_analysis"));
+
+        ToolExecutionOutput triageOutput = assertInstanceOf(
+            ToolExecutionOutput.class,
+            toolRegistry.getTool("triage_red_flags").getExecutor().execute(Map.of("customerId", "C001"))
+        );
+        assertTrue(triageOutput.getStateUpdates().containsKey("red_flag_triage"));
+
+        ToolExecutionOutput medicationOutput = assertInstanceOf(
+            ToolExecutionOutput.class,
+            toolRegistry.getTool("analyze_medication_adherence").getExecutor().execute(Map.of("customerId", "C001"))
+        );
+        assertTrue(medicationOutput.getStateUpdates().containsKey("medication_adherence_analysis"));
+
+        ToolExecutionOutput mentalHealthOutput = assertInstanceOf(
+            ToolExecutionOutput.class,
+            toolRegistry.getTool("screen_mental_health_risk").getExecutor().execute(Map.of("customerId", "C001"))
+        );
+        assertTrue(mentalHealthOutput.getStateUpdates().containsKey("mental_health_risk_screen"));
+
+        ToolExecutionOutput followUpDataOutput = assertInstanceOf(
+            ToolExecutionOutput.class,
+            toolRegistry.getTool("recommend_follow_up_data_requests").getExecutor().execute(Map.of("customerId", "C001"))
+        );
+        assertTrue(followUpDataOutput.getStateUpdates().containsKey("follow_up_data_requests"));
     }
 }

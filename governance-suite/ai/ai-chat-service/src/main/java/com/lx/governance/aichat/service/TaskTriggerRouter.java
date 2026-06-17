@@ -20,6 +20,14 @@ import com.lx.governance.aichat.dto.TaskType;
 @Service
 public class TaskTriggerRouter {
 
+    private static final String INTENT_CASUAL_CHAT = "casual_chat";
+    private static final String INTENT_FACT_QUERY = "fact_query";
+    private static final String INTENT_GENERAL_HEALTH_CONSULTATION = "general_health_consultation";
+    private static final String INTENT_PROFILE_FOLLOW_UP_ANSWER = "profile_follow_up_answer";
+    private static final String INTENT_FOLLOW_UP_TREND_ANALYSIS = "follow_up_trend_analysis";
+    private static final String INTENT_RISK_REVIEW_REQUEST = "risk_review_request";
+    private static final String INTENT_NEXT_ACTION_RECOMMENDATION = "next_action_recommendation";
+
     private static final List<String> CASUAL_CHAT_KEYWORDS = List.of(
         "你好", "您好", "在吗", "谢谢", "感谢", "好的", "嗯", "哦", "哈喽"
     );
@@ -51,6 +59,7 @@ public class TaskTriggerRouter {
     public TaskTriggerDecision route(TaskTriggerContext context) {
         String message = normalize(context.getMessage());
         SessionContext sessionContext = context.getSessionContext();
+        String intent = normalize(sessionIntent(sessionContext));
 
         // 画像补全追问阶段优先级最高。
         // 这类消息通常是在回答系统追问，不应该再被升级到医生助手链路。
@@ -58,25 +67,36 @@ public class TaskTriggerRouter {
             return direct(TaskTriggerReason.PROFILE_COMPLETION_FOLLOW_UP, "当前会话仍处于画像补全追问阶段");
         }
 
+        // 当前置意图分析已经明确识别为“回答追问/补画像”时，也保持在普通对话路径，
+        // 避免用户一句简短补充被后续关键词规则误升级。
+        if (hasIntent(intent, INTENT_PROFILE_FOLLOW_UP_ANSWER)) {
+            return direct(TaskTriggerReason.PROFILE_COMPLETION_FOLLOW_UP, "前置意图识别为画像补全回答");
+        }
+
         // 先把寒暄、感谢、轻量闲聊挡在普通对话路径，
         // 避免把低价值消息误判成需要画像分析或医生助手处理。
-        if (containsAny(message, CASUAL_CHAT_KEYWORDS)) {
+        if (hasIntent(intent, INTENT_CASUAL_CHAT) || containsAny(message, CASUAL_CHAT_KEYWORDS)) {
             return direct(TaskTriggerReason.CASUAL_CHAT_SIGNAL, "命中寒暄或轻量闲聊信号");
         }
 
         // “是什么/解释一下”这类偏事实解释的问题，默认保持 direct chat。
         // 只有在同时带有明显分析诉求时，才继续往后看是否需要升级。
-        if (containsAny(message, SIMPLE_FACT_QUERY_KEYWORDS) && !containsAny(message, ANALYSIS_KEYWORDS)) {
+        if (hasIntent(intent, INTENT_FACT_QUERY)
+            || (containsAny(message, SIMPLE_FACT_QUERY_KEYWORDS) && !hasIntent(intent, INTENT_FOLLOW_UP_TREND_ANALYSIS)
+            && !containsAny(message, ANALYSIS_KEYWORDS))) {
             return direct(TaskTriggerReason.SIMPLE_FACT_QUERY, "当前请求更接近直接解释或事实查询");
         }
 
         // 这里把路由所需的语义信号一次性抽出来，后续分支只关心“组合条件是否成立”，
         // 让规则更容易读，也方便后续继续扩展更多触发因子。
-        boolean analysisRequest = containsAny(message, ANALYSIS_KEYWORDS);
-        boolean trendAnalysisRequest = containsAny(message, TREND_ANALYSIS_KEYWORDS);
-        boolean strongTrendAnalysisRequest = containsAny(message, STRONG_TREND_ANALYSIS_KEYWORDS);
-        boolean humanReviewSignal = containsAny(message, HUMAN_REVIEW_KEYWORDS);
-        boolean nextActionRequest = containsAny(message, NEXT_ACTION_KEYWORDS);
+        boolean trendIntent = hasIntent(intent, INTENT_FOLLOW_UP_TREND_ANALYSIS);
+        boolean riskIntent = hasIntent(intent, INTENT_RISK_REVIEW_REQUEST);
+        boolean nextActionIntent = hasIntent(intent, INTENT_NEXT_ACTION_RECOMMENDATION);
+        boolean analysisRequest = trendIntent || containsAny(message, ANALYSIS_KEYWORDS);
+        boolean trendAnalysisRequest = trendIntent || containsAny(message, TREND_ANALYSIS_KEYWORDS);
+        boolean strongTrendAnalysisRequest = trendIntent || containsAny(message, STRONG_TREND_ANALYSIS_KEYWORDS);
+        boolean humanReviewSignal = riskIntent || containsAny(message, HUMAN_REVIEW_KEYWORDS);
+        boolean nextActionRequest = nextActionIntent || containsAny(message, NEXT_ACTION_KEYWORDS);
         boolean complexContextSignal = "complex".equalsIgnoreCase(sessionComplexity(sessionContext))
             || hasRichConversationHistory(sessionContext);
 
@@ -91,7 +111,7 @@ public class TaskTriggerRouter {
 
         // “下一步怎么办”这类问题，只有在分析诉求、趋势语义或复杂上下文存在时才升级，
         // 目的是避免把过于泛化的建议类提问全部送进 Agent。
-        if (nextActionRequest && (analysisRequest || complexContextSignal || trendAnalysisRequest)) {
+        if (nextActionRequest && (nextActionIntent || analysisRequest || complexContextSignal || trendAnalysisRequest)) {
             return agent(
                 TaskType.NEXT_FOLLOW_UP_ACTION_RECOMMENDATION,
                 reasons(
@@ -105,7 +125,7 @@ public class TaskTriggerRouter {
 
         // 随访趋势分析是最后一层升级条件：
         // 要么用户明确要求分析且带有趋势语义，要么虽然表达较短，但强趋势词 + 复杂上下文同时成立。
-        if ((analysisRequest && trendAnalysisRequest) || (strongTrendAnalysisRequest && complexContextSignal)) {
+        if (trendIntent || (analysisRequest && trendAnalysisRequest) || (strongTrendAnalysisRequest && complexContextSignal)) {
             return agent(
                 TaskType.PATIENT_FOLLOW_UP_ANALYSIS,
                 reasons(
@@ -167,6 +187,14 @@ public class TaskTriggerRouter {
 
     private String sessionComplexity(SessionContext sessionContext) {
         return sessionContext == null ? null : sessionContext.getComplexity();
+    }
+
+    private String sessionIntent(SessionContext sessionContext) {
+        return sessionContext == null ? null : sessionContext.getUserIntent();
+    }
+
+    private boolean hasIntent(String normalizedIntent, String expectedIntent) {
+        return expectedIntent.equals(normalizedIntent);
     }
 
     private boolean containsAny(String normalizedText, List<String> keywords) {

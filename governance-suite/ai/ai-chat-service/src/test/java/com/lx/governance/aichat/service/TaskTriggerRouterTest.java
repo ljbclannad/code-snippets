@@ -36,7 +36,7 @@ class TaskTriggerRouterTest {
     void shouldRouteTrendAnalysisToFollowUpAgent() {
         TaskTriggerDecision decision = router.route(TaskTriggerContext.builder()
             .message("帮我分析一下最近两周的减重效果和变化趋势")
-            .sessionContext(baseContext("complex", 5))
+            .sessionContext(baseContext("complex", 5, "follow_up_trend_analysis"))
             .build());
 
         assertTrue(decision.shouldUpgradeToAgent());
@@ -49,7 +49,7 @@ class TaskTriggerRouterTest {
     void shouldRouteHumanReviewSignalToRiskStratification() {
         TaskTriggerDecision decision = router.route(TaskTriggerContext.builder()
             .message("患者最近状态恶化，是否需要转人工医生复核风险？")
-            .sessionContext(baseContext("complex", 6))
+            .sessionContext(baseContext("complex", 6, "risk_review_request"))
             .build());
 
         assertTrue(decision.shouldUpgradeToAgent());
@@ -61,7 +61,7 @@ class TaskTriggerRouterTest {
     void shouldRouteNextActionRequestToActionRecommendation() {
         TaskTriggerDecision decision = router.route(TaskTriggerContext.builder()
             .message("结合最近随访情况，下一步应该怎么做，给我建议")
-            .sessionContext(baseContext("complex", 4))
+            .sessionContext(baseContext("complex", 4, "next_action_recommendation"))
             .build());
 
         assertTrue(decision.shouldUpgradeToAgent());
@@ -96,10 +96,39 @@ class TaskTriggerRouterTest {
         assertTrue(decision.getReasons().contains(TaskTriggerReason.DEFAULT_DIRECT_CHAT));
     }
 
+    @Test
+    void shouldRouteTrendAnalysisByIntentEvenWhenMessageIsShort() {
+        TaskTriggerDecision decision = router.route(TaskTriggerContext.builder()
+            .message("帮我看下")
+            .sessionContext(baseContext("complex", 3, "follow_up_trend_analysis"))
+            .build());
+
+        assertTrue(decision.shouldUpgradeToAgent());
+        assertEquals(TaskType.PATIENT_FOLLOW_UP_ANALYSIS, decision.getTaskType());
+        assertTrue(decision.getReasons().contains(TaskTriggerReason.TREND_ANALYSIS_REQUEST));
+    }
+
+    @Test
+    void shouldKeepProfileFollowUpAnswerOnDirectPathEvenWithoutPendingQuestions() {
+        TaskTriggerDecision decision = router.route(TaskTriggerContext.builder()
+            .message("最近睡得一般")
+            .sessionContext(baseContext("simple", 2, "profile_follow_up_answer"))
+            .build());
+
+        assertFalse(decision.shouldUpgradeToAgent());
+        assertEquals(TaskTriggerRoute.DIRECT_CHAT, decision.getRoute());
+        assertTrue(decision.getReasons().contains(TaskTriggerReason.PROFILE_COMPLETION_FOLLOW_UP));
+    }
+
     private SessionContext baseContext(String complexity, int messageCount) {
+        return baseContext(complexity, messageCount, null);
+    }
+
+    private SessionContext baseContext(String complexity, int messageCount, String userIntent) {
         return SessionContext.builder()
             .complexity(complexity)
             .messageCount(messageCount)
+            .userIntent(userIntent)
             .build();
     }
 }

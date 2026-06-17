@@ -32,6 +32,8 @@ import com.lx.governance.vectormemory.mapper.AiGroupMemoryReviewAuditMapper;
 @ExtendWith(MockitoExtension.class)
 class CandidateMemoryServiceTest {
 
+    private final MemoryTypeNormalizer memoryTypeNormalizer = new MemoryTypeNormalizer();
+
     @Mock
     private AiGroupMemoryCandidateMapper candidateMapper;
     @Mock
@@ -56,7 +58,8 @@ class CandidateMemoryServiceTest {
                 vectorStoreService,
                 redisMemoryIndexService,
                 new SemanticMemoryConflictDetector(),
-                reviewAuditMapper);
+                reviewAuditMapper,
+                memoryTypeNormalizer);
     }
 
     @Test

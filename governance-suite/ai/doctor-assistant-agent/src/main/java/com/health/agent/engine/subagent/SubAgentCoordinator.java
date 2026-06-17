@@ -21,8 +21,14 @@ public class SubAgentCoordinator {
     @Autowired
     private CarePlanningSubAgent carePlanningSubAgent;
 
+    @Autowired
+    private RiskTriageSubAgent riskTriageSubAgent;
+
     public AgentSubAgent select(String goal, AgentContext context) {
         TaskType taskType = resolveTaskType(context);
+        if (shouldTriage(goal, context, taskType)) {
+            return riskTriageSubAgent;
+        }
         if (shouldCollect(goal, context, taskType)) {
             return dataCollectionSubAgent;
         }
@@ -48,6 +54,9 @@ public class SubAgentCoordinator {
         boolean missingChat = !hasAnySlot(context, "chat_history", "memory_snapshot", "recent_follow_up_signals");
 
         if (!hasProfile && !hasWeightHistory && !hasSessionSignals && !hasPreloadedMemory && !hasAnyAnalysis) {
+            if (taskType == TaskType.RISK_STRATIFICATION_AND_ESCALATION && hasSessionSignals) {
+                return false;
+            }
             return true;
         }
         if (!hasWeightHistory && !hasPreloadedMemory && !hasAnyAnalysis) {
@@ -59,6 +68,27 @@ public class SubAgentCoordinator {
             return true;
         }
         return goalNeedsChat && missingChat && !hasAnyAnalysis;
+    }
+
+    private boolean shouldTriage(String goal, AgentContext context, TaskType taskType) {
+        boolean riskTask = taskType == TaskType.RISK_STRATIFICATION_AND_ESCALATION;
+        boolean riskGoal = containsAny(goal,
+                "风险", "红旗", "急诊", "紧急", "恶化", "加重", "胸痛", "呼吸困难", "晕厥",
+                "便血", "呕血", "轻生", "自杀", "焦虑", "抑郁", "失眠", "停药", "漏服", "药物");
+        boolean hasSignals = hasAnySlot(context,
+                "patient_message", "chat_history", "session_context", "trigger_decision", "memory_snapshot");
+        boolean triageDone = hasAnySlot(context,
+                "red_flag_triage",
+                "follow_up_urgency_assessment",
+                "mental_health_risk_screen",
+                "medication_adherence_analysis");
+        if (!riskTask && !riskGoal) {
+            return false;
+        }
+        if (!hasSignals && !riskGoal) {
+            return false;
+        }
+        return !triageDone;
     }
 
     private boolean shouldAnalyze(String goal, AgentContext context, TaskType taskType) {

@@ -137,9 +137,14 @@ public class ReActPromptBuilder {
 
             你当前扮演：%s
             角色职责：%s
+            首选工具：%s
 
             你仍然必须遵守上方的 JSON 协议与安全约束，但应优先按照当前角色职责行动。
-            """.formatted(subAgent.name(), subAgent.responsibility());
+            当首选工具已足以完成当前步骤时，优先使用这些工具；只有在首选工具无法补齐关键证据时，再考虑其他工具。
+            """.formatted(
+                subAgent.name(),
+                subAgent.responsibility(),
+                formatPreferredTools(subAgent.preferredToolNames()));
     }
 
     /**
@@ -159,6 +164,13 @@ public class ReActPromptBuilder {
                 JSON.toJSONString(tool.getInputSchema())
             ))
             .collect(Collectors.joining("\n"));
+    }
+
+    private String formatPreferredTools(List<String> toolNames) {
+        if (toolNames == null || toolNames.isEmpty()) {
+            return "无固定偏好";
+        }
+        return String.join(", ", toolNames);
     }
 
     /**

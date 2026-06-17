@@ -18,6 +18,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
@@ -50,18 +52,18 @@ class MemoryRerankServiceTest {
 
         testMemories = new ArrayList<>();
 
-        // Redis 缓存的记忆（相似度为 0.0）
+        // Redis 缓存的记忆（partial 模式应按来源重新打分）
         testMemories.add(MemoryItemDTO.builder()
                 .id(1L)
                 .content("今天天气怎么样？")
-                .similarity(0.0)
+                .similarity(0.78)
                 .source("RECENT_CACHE")
                 .build());
 
         testMemories.add(MemoryItemDTO.builder()
                 .id(2L)
                 .content("明天会下雨吗？")
-                .similarity(0.0)
+                .similarity(0.76)
                 .source("RECENT_CACHE")
                 .build());
 
@@ -83,10 +85,9 @@ class MemoryRerankServiceTest {
 
     @Test
     void testRerankPartial_shouldOnlyRerankRedisMemories() {
-        // Mock embedding service
         float[] queryVector = new float[]{0.1f, 0.2f, 0.3f};
-        float[] memory1Vector = new float[]{0.05f, 0.1f, 0.15f}; // 低相似度
-        float[] memory2Vector = new float[]{0.08f, 0.12f, 0.18f}; // 低相似度
+        float[] memory1Vector = new float[]{0.05f, 0.1f, 0.15f};
+        float[] memory2Vector = new float[]{0.08f, 0.12f, 0.18f};
 
         when(embeddingService.generateEmbedding(testQuery)).thenReturn(queryVector);
         when(embeddingService.generateEmbeddings(anyList())).thenReturn(List.of(memory1Vector, memory2Vector));
@@ -99,11 +100,10 @@ class MemoryRerankServiceTest {
         assertNotNull(result);
         assertEquals(3, result.size());
 
-        // 验证排序：Milvus 记忆应该排在前面（相似度更高）
         assertEquals(3L, result.get(0).getId()); // Seata AT 模式 (0.85)
         assertEquals(4L, result.get(1).getId()); // Seata 配置 (0.80)
-        // 第三个应该是 Redis 记忆中相似度较高的
-        assertTrue(result.get(2).getSimilarity() > 0.0);
+        assertEquals(1L, result.get(2).getId());
+        assertEquals(0.3, result.get(2).getSimilarity());
     }
 
     @Test
@@ -116,7 +116,6 @@ class MemoryRerankServiceTest {
 
     @Test
     void testRerankPartial_withNoRedisMemories_shouldReturnSortedMilvusResults() {
-        // 只有 Milvus 记忆
         List<MemoryItemDTO> milvusOnly = List.of(
                 testMemories.get(2), // similarity: 0.85
                 testMemories.get(3)  // similarity: 0.80
@@ -128,6 +127,7 @@ class MemoryRerankServiceTest {
         assertEquals(2, result.size());
         assertEquals(3L, result.get(0).getId()); // 相似度更高的排在前面
         assertEquals(4L, result.get(1).getId());
+        verify(embeddingService, never()).generateEmbedding(any());
     }
 
     @Test
@@ -215,5 +215,34 @@ class MemoryRerankServiceTest {
         assertEquals(2, result.size());
         assertEquals(3L, result.get(0).getId());
         assertEquals(4L, result.get(1).getId());
+    }
+
+    @Test
+    void testRerankPartial_shouldUseExternalProviderScoresForRecentCache() {
+        properties.getRerank().setProvider("bge-http");
+
+        List<MemoryItemDTO> rescoredRecent = List.of(
+                MemoryItemDTO.builder()
+                        .id(1L)
+                        .content("今天天气怎么样？")
+                        .similarity(0.92)
+                        .source("RECENT_CACHE")
+                        .build(),
+                MemoryItemDTO.builder()
+                        .id(2L)
+                        .content("明天会下雨吗？")
+                        .similarity(0.91)
+                        .source("RECENT_CACHE")
+                        .build()
+        );
+        when(bgeRerankClient.rerank(eq(testQuery), anyList(), eq(2))).thenReturn(rescoredRecent);
+
+        List<MemoryItemDTO> result = rerankService.rerankPartial(testQuery, testMemories, 2);
+
+        assertEquals(2, result.size());
+        assertEquals(1L, result.get(0).getId());
+        assertEquals(0.92, result.get(0).getSimilarity());
+        assertEquals(2L, result.get(1).getId());
+        assertEquals(0.91, result.get(1).getSimilarity());
     }
 }

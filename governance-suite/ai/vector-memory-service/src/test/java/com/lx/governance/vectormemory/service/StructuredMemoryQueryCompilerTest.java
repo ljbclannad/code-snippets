@@ -12,7 +12,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class StructuredMemoryQueryCompilerTest {
 
-    private final StructuredMemoryQueryCompiler compiler = new StructuredMemoryQueryCompiler();
+    private final StructuredMemoryQueryCompiler compiler =
+            new StructuredMemoryQueryCompiler(new MemoryTypeNormalizer());
 
     @Test
     void shouldCompileDslExpressionToMemorySearchFilter() {

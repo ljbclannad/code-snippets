@@ -2,6 +2,7 @@ package com.lx.governance.vectormemory.service;
 
 import com.lx.governance.vectormemory.config.MemoryRetrievalProperties;
 import com.lx.governance.vectormemory.dto.MemoryItemDTO;
+import com.lx.governance.vectormemory.enums.RetrievalSource;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -174,13 +175,14 @@ public class MemoryRerankService {
         }
 
         try {
-            // 找出需要重新打分的记忆（相似度缺失的候选）
+            // partial 策略按来源挑选候选，而不是依赖 similarity 是否为空。
+            // RECENT_CACHE 的初始分数只是启发式时间/置信度分，需要重新映射到当前 query 的语义坐标系。
             List<MemoryItemDTO> needRerank = memories.stream()
-                    .filter(m -> m.getSimilarity() == null)
+                    .filter(this::shouldRerankInPartialMode)
                     .collect(Collectors.toList());
 
             if (needRerank.isEmpty()) {
-                log.debug("No memories need reranking, all have similarity scores");
+                log.debug("No memories need partial reranking");
                 return memories.stream()
                         .sorted(Comparator.comparing(MemoryItemDTO::getSimilarity).reversed())
                         .limit(topK)
@@ -228,7 +230,7 @@ public class MemoryRerankService {
         }
 
         List<MemoryItemDTO> needRerank = memories.stream()
-                .filter(m -> m.getSimilarity() == null)
+                .filter(this::shouldRerankInPartialMode)
                 .collect(Collectors.toList());
 
         if (needRerank.isEmpty()) {
@@ -238,11 +240,30 @@ public class MemoryRerankService {
                     .collect(Collectors.toList());
         }
 
-        bgeRerankClient.rerank(query, needRerank, needRerank.size());
+        List<MemoryItemDTO> rescored = bgeRerankClient.rerank(query, needRerank, needRerank.size());
+        Map<Long, Double> similarityById = rescored.stream()
+                .filter(memory -> memory.getId() != null && memory.getSimilarity() != null)
+                .collect(Collectors.toMap(MemoryItemDTO::getId, MemoryItemDTO::getSimilarity, (left, right) -> right));
+
+        for (MemoryItemDTO memory : needRerank) {
+            if (memory.getId() == null) {
+                continue;
+            }
+            Double similarity = similarityById.get(memory.getId());
+            if (similarity != null) {
+                memory.setSimilarity(similarity);
+            }
+        }
+
         return memories.stream()
                 .sorted(Comparator.comparing(MemoryItemDTO::getSimilarity).reversed())
                 .limit(topK)
                 .collect(Collectors.toList());
+    }
+
+    private boolean shouldRerankInPartialMode(MemoryItemDTO memory) {
+        return memory != null
+                && RetrievalSource.RECENT_CACHE.name().equalsIgnoreCase(memory.getSource());
     }
 
     private boolean useExternalBgeProvider() {
@@ -251,7 +272,9 @@ public class MemoryRerankService {
     }
 
     private List<float[]> resolveMemoryVectors(List<String> memoryContents, Map<String, float[]> embeddingCache) {
-        Map<String, float[]> reusableCache = embeddingCache != null ? embeddingCache : new HashMap<>();
+        Map<String, float[]> reusableCache = embeddingCache != null
+                ? new HashMap<>(embeddingCache)
+                : new HashMap<>();
         List<float[]> vectors = new ArrayList<>(memoryContents.size());
         List<String> missingContents = new ArrayList<>();
 
