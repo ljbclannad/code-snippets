@@ -5,6 +5,8 @@ import com.lx.governance.agentplatform.model.LoopOutcome;
 
 /**
  * 平台统一循环模板执行器。
+ * <p>
+ * 子类只需要实现单步执行、异常兜底和最大步数兜底，循环骨架由这里统一控制。
  */
 public abstract class AbstractPlatformLoopExecutor<S, R> implements PlatformLoopExecutor<S, R> {
 

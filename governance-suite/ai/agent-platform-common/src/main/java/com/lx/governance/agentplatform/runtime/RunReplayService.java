@@ -18,6 +18,8 @@ import com.lx.governance.agentplatform.model.RunStep;
 
 /**
  * 平台统一 run 回放聚合服务。
+ * <p>
+ * 按“主 run -> 快照 -> 事件/步骤/产物/审批/对话映射”的顺序拼装回放视图。
  */
 public class RunReplayService {
 
@@ -45,6 +47,7 @@ public class RunReplayService {
             return Optional.empty();
         }
 
+        // 优先读持久化快照；如果快照缺失，再从独立仓储补齐。
         Optional<RunPersistenceSnapshot> snapshotOptional = runPersistenceRepository.findSnapshotByRunId(runId);
         Optional<Run> runOptional = runRepository.findRunById(runId);
         if (snapshotOptional.isEmpty() && runOptional.isEmpty()) {
@@ -61,6 +64,7 @@ public class RunReplayService {
         List<RunEvent> events = snapshot != null && snapshot.getRun() != null && snapshot.getRun().getEvents() != null
                 ? sortEvents(snapshot.getRun().getEvents())
                 : sortEvents(runEventRepository.findEventsByRunId(runId));
+        // 审批、产物优先取快照，避免回放时和当前仓储状态漂移。
         List<ApprovalTask> approvalTasks = snapshot != null && snapshot.getApprovalTasks() != null
                 ? new ArrayList<>(snapshot.getApprovalTasks())
                 : List.of();

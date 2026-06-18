@@ -14,20 +14,27 @@ import lombok.Value;
 @Builder(toBuilder = true)
 public class RunPersistenceSnapshot {
 
+    /** 主 run 数据。 */
     Run run;
 
+    /** 关联审批任务。 */
     @Singular("approvalTask")
     List<ApprovalTask> approvalTasks;
 
+    /** 运行期间生成的产物。 */
     @Singular("artifact")
     List<ArtifactRecord> artifacts;
 
+    /** 遗留 run 表名。 */
     String legacyRunTable;
 
+    /** 遗留 run 主键。 */
     String legacyRunId;
 
+    /** 遗留审批表名。 */
     String legacyApprovalTable;
 
+    /** 遗留审批记录 id 列表。 */
     @Singular("legacyApprovalId")
     List<String> legacyApprovalIds;
 }

@@ -9,6 +9,8 @@ import com.lx.governance.agentplatform.model.PlatformDispatchDecision;
 
 /**
  * 平台治理层灰度/熔断/放行策略引擎。
+ * <p>
+ * 这是 agent 链路的入口门禁，先看开关，再看任务、分组、用户、租户和版本。
  */
 public class PlatformDispatchPolicyEngine {
 
@@ -35,6 +37,7 @@ public class PlatformDispatchPolicyEngine {
     }
 
     public PlatformDispatchDecision evaluate(PlatformDispatchContext context) {
+        // 熔断开关优先级最高。
         if (circuitBreakerOpen) {
             return decision(false, "agent_circuit_breaker_open");
         }

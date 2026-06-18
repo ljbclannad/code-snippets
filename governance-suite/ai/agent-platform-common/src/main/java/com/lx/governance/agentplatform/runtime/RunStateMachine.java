@@ -12,6 +12,8 @@ import java.util.Set;
 
 /**
  * 平台统一 run 状态机。
+ * <p>
+ * 这里集中维护状态转移表，避免各处手写 if/else 破坏一致性。
  */
 public class RunStateMachine {
 
@@ -36,6 +38,7 @@ public class RunStateMachine {
     }
 
     public RunTransition transition(String runId, RunStatus fromStatus, RunTransitionTrigger trigger, String reason) {
+        // 先校验转移是否合法，再把状态变化落成统一的审计对象。
         RunStatus toStatus = nextStatus(fromStatus, trigger);
         return RunTransition.builder()
             .runId(runId)
@@ -55,9 +58,11 @@ public class RunStateMachine {
 
     private Map<RunStatus, Map<RunTransitionTrigger, RunStatus>> buildTransitions() {
         Map<RunStatus, Map<RunTransitionTrigger, RunStatus>> matrix = new EnumMap<>(RunStatus.class);
+        // PENDING 只允许启动或取消。
         matrix.put(RunStatus.PENDING, mapOf(
             RunTransitionTrigger.START, RunStatus.RUNNING,
             RunTransitionTrigger.CANCEL, RunStatus.CANCELLED));
+        // RUNNING 是主执行态，允许完成、失败、降级、等待审批和取消。
         matrix.put(RunStatus.RUNNING, mapOf(
             RunTransitionTrigger.WAIT_FOR_APPROVAL, RunStatus.WAITING_APPROVAL,
             RunTransitionTrigger.COMPLETE, RunStatus.COMPLETED,
@@ -65,10 +70,12 @@ public class RunStateMachine {
             RunTransitionTrigger.DEGRADE, RunStatus.DEGRADED,
             RunTransitionTrigger.FALLBACK_TO_DIRECT_CHAT, RunStatus.DEGRADED,
             RunTransitionTrigger.CANCEL, RunStatus.CANCELLED));
+        // 审批通过或拒绝后都要恢复到可继续执行的 RUNNING。
         matrix.put(RunStatus.WAITING_APPROVAL, mapOf(
             RunTransitionTrigger.APPROVAL_APPROVED_RESUME, RunStatus.RUNNING,
             RunTransitionTrigger.APPROVAL_REJECTED_RESUME, RunStatus.RUNNING,
             RunTransitionTrigger.CANCEL, RunStatus.CANCELLED));
+        // 失败和降级都允许重试或直接取消。
         matrix.put(RunStatus.FAILED, mapOf(
             RunTransitionTrigger.RETRY, RunStatus.RUNNING,
             RunTransitionTrigger.CANCEL, RunStatus.CANCELLED));
@@ -89,6 +96,7 @@ public class RunStateMachine {
     }
 
     private RunEventType toEventType(RunTransitionTrigger trigger, RunStatus toStatus) {
+        // 事件类型按触发器归一化，保证审计记录可读。
         return switch (trigger) {
             case START -> RunEventType.RUN_STARTED;
             case WAIT_FOR_APPROVAL -> RunEventType.WAITING_APPROVAL;

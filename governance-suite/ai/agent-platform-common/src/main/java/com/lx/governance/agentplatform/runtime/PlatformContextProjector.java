@@ -6,6 +6,8 @@ import com.lx.governance.agentplatform.model.PlatformContextChannel;
 
 /**
  * 平台上下文投影器。
+ * <p>
+ * 负责把完整上下文按通道和预算裁成目标场景可消费的子集。
  */
 public interface PlatformContextProjector {
 

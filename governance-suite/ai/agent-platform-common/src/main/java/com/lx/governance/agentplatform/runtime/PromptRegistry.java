@@ -10,6 +10,8 @@ import com.lx.governance.agentplatform.model.PromptTemplateType;
 
 /**
  * 平台 Prompt 模板注册中心。
+ * <p>
+ * 维护模板、版本和激活态，供上层按场景渲染。
  */
 public interface PromptRegistry {
 

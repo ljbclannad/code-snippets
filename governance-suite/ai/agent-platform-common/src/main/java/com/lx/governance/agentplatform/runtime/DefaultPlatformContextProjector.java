@@ -14,6 +14,8 @@ import com.lx.governance.agentplatform.model.PlatformToolOutput;
 
 /**
  * 默认平台上下文投影器。
+ * <p>
+ * 负责按通道和预算裁剪上下文，避免把完整载荷直接下发给下游。
  */
 @Component
 public class DefaultPlatformContextProjector implements PlatformContextProjector {
@@ -28,6 +30,7 @@ public class DefaultPlatformContextProjector implements PlatformContextProjector
         if (source == null) {
             return null;
         }
+        // 预算为空时退化为不额外裁剪，但仍保留默认版本和目标通道。
         PlatformContextBudget safeBudget = budget != null ? budget : PlatformContextBudget.builder().build();
         List<PlatformContextField> projectedFields = projectFields(source.getFields(), safeBudget);
         List<PlatformContextEvidence> projectedEvidences = projectEvidences(source.getEvidences(), safeBudget);
@@ -52,6 +55,7 @@ public class DefaultPlatformContextProjector implements PlatformContextProjector
         if (fields == null || fields.isEmpty()) {
             return projected;
         }
+        // 字段裁剪同时受数量、单字段长度和总长度约束。
         int maxFields = safeInt(budget.getMaxFields(), fields.size());
         int maxFieldChars = safeInt(budget.getMaxFieldChars(), Integer.MAX_VALUE);
         int maxTotalChars = safeInt(budget.getMaxTotalChars(), Integer.MAX_VALUE);
@@ -78,6 +82,7 @@ public class DefaultPlatformContextProjector implements PlatformContextProjector
         if (evidences == null || evidences.isEmpty()) {
             return projected;
         }
+        // 证据按上限截断，保持顺序不变。
         int max = safeInt(budget.getMaxEvidences(), evidences.size());
         for (PlatformContextEvidence evidence : evidences) {
             if (evidence == null || projected.size() >= max) {
@@ -95,6 +100,7 @@ public class DefaultPlatformContextProjector implements PlatformContextProjector
         if (toolOutputs == null || toolOutputs.isEmpty()) {
             return projected;
         }
+        // 工具输出同样按上限截断，避免把过大的执行痕迹透传出去。
         int max = safeInt(budget.getMaxToolOutputs(), toolOutputs.size());
         for (PlatformToolOutput toolOutput : toolOutputs) {
             if (toolOutput == null || projected.size() >= max) {
