@@ -1,5 +1,6 @@
 package com.health.agent.safety;
 
+import com.health.agent.config.DoctorSafetyProperties;
 import com.health.agent.model.ActionDecision;
 import com.health.agent.model.Step;
 import com.health.agent.model.StepType;
@@ -15,36 +16,50 @@ import java.util.Locale;
 @Component
 public class MedicalSafetyService {
 
-    private static final List<String> EMERGENCY_KEYWORDS = List.of(
-        "胸痛", "呼吸困难", "胸闷", "心悸", "晕厥", "昏迷", "抽搐", "便血", "呕血", "自杀", "轻生"
-    );
+    private List<String> emergencyKeywords = List.of(
+            "胸痛", "呼吸困难", "胸闷", "心悸", "晕厥", "昏迷", "抽搐", "便血", "呕血", "自杀", "轻生");
+    private List<String> prescriptionKeywords = List.of(
+            "处方", "开药", "开具", "用药", "药物", "剂量", "mg", "毫克", "奥利司他", "司美格鲁肽", "利拉鲁肽");
+    private List<String> medicationAdjustmentKeywords = List.of(
+            "调整药物", "调整剂量", "加量", "减量", "停药", "换药", "剂量加倍", "增加剂量", "减少剂量");
+    private List<String> followUpDelayKeywords = List.of(
+            "暂缓复诊", "无需复诊", "不用复诊", "继续线上观察", "继续观察", "不必就医", "不用就医");
+    private List<String> medicalAdviceKeywords = List.of(
+            "继续当前减重方案", "调整减重方案", "治疗方案", "医学建议", "诊疗建议");
+    private List<String> highRiskToolNames = List.of(
+            "draft_weight_management_plan", "recommend_medical_review");
+    private int highRiskMinSupportingEvidence = 2;
+    private int highRiskMinEvidenceSources = 1;
 
-    private static final List<String> PRESCRIPTION_KEYWORDS = List.of(
-        "处方", "开药", "开具", "用药", "药物", "剂量", "mg", "毫克", "奥利司他", "司美格鲁肽", "利拉鲁肽"
-    );
+    public MedicalSafetyService() {
+    }
 
-    private static final List<String> MEDICATION_ADJUSTMENT_KEYWORDS = List.of(
-        "调整药物", "调整剂量", "加量", "减量", "停药", "换药", "剂量加倍", "增加剂量", "减少剂量"
-    );
+    public MedicalSafetyService(DoctorSafetyProperties properties) {
+        applyProperties(properties);
+    }
 
-    private static final List<String> FOLLOW_UP_DELAY_KEYWORDS = List.of(
-        "暂缓复诊", "无需复诊", "不用复诊", "继续线上观察", "继续观察", "不必就医", "不用就医"
-    );
-
-    private static final List<String> MEDICAL_ADVICE_KEYWORDS = List.of(
-        "继续当前减重方案", "调整减重方案", "治疗方案", "医学建议", "诊疗建议"
-    );
-
-    private static final List<String> HIGH_RISK_TOOL_NAMES = List.of(
-        "draft_weight_management_plan", "recommend_medical_review"
-    );
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void applyProperties(DoctorSafetyProperties properties) {
+        if (properties == null || properties.getRules() == null) {
+            return;
+        }
+        DoctorSafetyProperties.Rules rules = properties.getRules();
+        this.emergencyKeywords = rules.getEmergencyKeywords();
+        this.prescriptionKeywords = rules.getPrescriptionKeywords();
+        this.medicationAdjustmentKeywords = rules.getMedicationAdjustmentKeywords();
+        this.followUpDelayKeywords = rules.getFollowUpDelayKeywords();
+        this.medicalAdviceKeywords = rules.getMedicalAdviceKeywords();
+        this.highRiskToolNames = rules.getHighRiskToolNames();
+        this.highRiskMinSupportingEvidence = rules.getHighRiskMinSupportingEvidence();
+        this.highRiskMinEvidenceSources = rules.getHighRiskMinEvidenceSources();
+    }
 
     public boolean hasEmergencySignal(String text) {
-        return containsAny(text, EMERGENCY_KEYWORDS);
+        return containsAny(text, emergencyKeywords);
     }
 
     public boolean hasPrescriptionRisk(String text) {
-        return containsAny(text, PRESCRIPTION_KEYWORDS) || containsAny(text, MEDICATION_ADJUSTMENT_KEYWORDS);
+        return containsAny(text, prescriptionKeywords) || containsAny(text, medicationAdjustmentKeywords);
     }
 
     public SafetyAssessment assessGoal(String goal) {
@@ -64,7 +79,7 @@ public class MedicalSafetyService {
     }
 
     public SafetyAssessment assessAction(ActionDecision action, List<Step> history) {
-        if (!HIGH_RISK_TOOL_NAMES.contains(action.getToolName())) {
+        if (!highRiskToolNames.contains(action.getToolName())) {
             return SafetyAssessment.allow();
         }
 
@@ -100,7 +115,7 @@ public class MedicalSafetyService {
             );
         }
 
-        if (containsAny(combinedAnswer, FOLLOW_UP_DELAY_KEYWORDS)) {
+        if (containsAny(combinedAnswer, followUpDelayKeywords)) {
             return SafetyAssessment.block(
                 "FOLLOW_UP",
                 "检测到可能延误线下复诊或就医的建议，减重管理场景中出现不适、风险或证据不足时应提示复诊或转人工医生处理。"
@@ -109,7 +124,7 @@ public class MedicalSafetyService {
 
         boolean hasWeightEvidence = containsObservation(history, "\"weight\"")
             || containsObservation(history, "\"date\"");
-        boolean hasRiskyDirective = containsAny(combinedAnswer, MEDICAL_ADVICE_KEYWORDS);
+        boolean hasRiskyDirective = containsAny(combinedAnswer, medicalAdviceKeywords);
         if (hasRiskyDirective && !hasWeightEvidence) {
             return SafetyAssessment.block(
                 "MEDICAL_ADVICE",
@@ -120,16 +135,18 @@ public class MedicalSafetyService {
         if (finalAnswer != null && "HIGH".equalsIgnoreCase(finalAnswer.getRiskLevel())) {
             int evidenceCount = finalAnswer.getSupportingEvidence() == null ? 0 : finalAnswer.getSupportingEvidence().size();
             int sourceCount = finalAnswer.getEvidenceSources() == null ? 0 : finalAnswer.getEvidenceSources().size();
-            if (evidenceCount < 2) {
+            if (evidenceCount < highRiskMinSupportingEvidence) {
                 return SafetyAssessment.block(
                     "MEDICAL_ADVICE",
-                    "高风险建议至少带 2 条 supportingEvidence，当前证据不足，请补充更多事实依据后再继续。"
+                    "高风险建议至少带 %d 条 supportingEvidence，当前证据不足，请补充更多事实依据后再继续。"
+                            .formatted(highRiskMinSupportingEvidence)
                 );
             }
-            if (sourceCount < 1) {
+            if (sourceCount < highRiskMinEvidenceSources) {
                 return SafetyAssessment.block(
                     "MEDICAL_ADVICE",
-                    "高风险建议缺少 evidenceSources，请补充真实数据来源后再继续。"
+                    "高风险建议至少带 %d 个 evidenceSources，请补充真实数据来源后再继续。"
+                            .formatted(highRiskMinEvidenceSources)
                 );
             }
         }

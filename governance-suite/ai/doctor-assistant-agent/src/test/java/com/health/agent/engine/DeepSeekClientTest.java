@@ -2,6 +2,7 @@ package com.health.agent.engine;
 
 import com.health.agent.client.DeepSeekClient;
 import com.health.agent.model.Message;
+import com.lx.governance.agentplatform.runtime.PlatformMetricsService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -29,6 +30,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import reactor.core.publisher.Flux;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 @ExtendWith(MockitoExtension.class)
 class DeepSeekClientTest {
@@ -37,14 +39,19 @@ class DeepSeekClientTest {
     private ChatModel chatModel;
 
     private DeepSeekClient deepSeekClient;
+    private SimpleMeterRegistry meterRegistry;
 
     @BeforeEach
     void setUp() {
         deepSeekClient = new DeepSeekClient(chatModel);
+        meterRegistry = new SimpleMeterRegistry();
         ReflectionTestUtils.setField(deepSeekClient, "temperature", 0.7d);
         ReflectionTestUtils.setField(deepSeekClient, "maxTokens", 2000);
         ReflectionTestUtils.setField(deepSeekClient, "requestTimeout", Duration.ofMillis(100));
         ReflectionTestUtils.setField(deepSeekClient, "maxRetries", 2);
+        ReflectionTestUtils.setField(deepSeekClient, "promptPricePer1kTokens", 0.5D);
+        ReflectionTestUtils.setField(deepSeekClient, "completionPricePer1kTokens", 1.0D);
+        ReflectionTestUtils.setField(deepSeekClient, "platformMetricsService", new PlatformMetricsService(meterRegistry));
     }
 
     @Test
@@ -95,6 +102,20 @@ class DeepSeekClientTest {
         assertEquals(List.of("我需要", "先查看", "患者体重记录"), deltas);
         assertEquals("我需要先查看患者体重记录", response.getContent());
         verify(chatModel).stream(any(Prompt.class));
+    }
+
+    @Test
+    void shouldRecordAgentWorkflowTokenCostToPlatformMetrics() {
+        when(chatModel.call(any(Prompt.class))).thenReturn(successResponse("ok"));
+
+        deepSeekClient.chat("system", List.of(Message.user("hello")));
+
+        assertEquals(30.0, meterRegistry.get("platform.tokens.total")
+            .tag("scope", "AGENT_WORKFLOW")
+            .summary().totalAmount());
+        assertEquals(0.025D, meterRegistry.get("platform.cost.estimated")
+            .tag("scope", "AGENT_WORKFLOW")
+            .summary().totalAmount(), 0.0001D);
     }
 
     private ChatResponse successResponse(String content) {

@@ -19,6 +19,9 @@ import com.health.agent.dto.patient.TaskType;
 import com.health.agent.model.AgentResult;
 import com.health.agent.model.PendingTask;
 import com.health.agent.model.StructuredFinalAnswer;
+import com.lx.governance.agentplatform.model.PlatformTraceContext;
+import com.lx.governance.agentplatform.model.WorkbenchActionType;
+import com.lx.governance.agentplatform.model.WorkbenchViewType;
 
 class PatientTaskAgentResultMapperTest {
 
@@ -95,6 +98,11 @@ class PatientTaskAgentResultMapperTest {
         DoctorAssistantTaskRequest request = DoctorAssistantTaskRequest.builder()
                 .conversationId("conv-1")
                 .correlationId("corr-1")
+                .traceContext(PlatformTraceContext.builder()
+                        .traceId("trace-1")
+                        .conversationId("conv-1")
+                        .correlationId("corr-1")
+                        .build())
                 .build();
         AgentExecutionCommand command = AgentExecutionCommand.builder()
                 .source(AgentTaskSource.PATIENT_DIALOG_AI_CHAT)
@@ -122,6 +130,29 @@ class PatientTaskAgentResultMapperTest {
         assertEquals(List.of("WEIGHT_HISTORY"), payload.getAgentEvidenceSources());
         assertEquals(List.of("AI_CHAT_SESSION_CONTEXT"), payload.getUpstreamEvidenceSources());
         assertEquals(List.of("需要人工确认"), payload.getInferenceEvidence());
+
+        var platformPayload = mapper.toPlatformWorkbenchPayload(
+                request,
+                command,
+                "task-1",
+                "session-1",
+                structuredResult,
+                true,
+                pendingTaskPayload,
+                "AGENT",
+                "PENDING_APPROVAL",
+                null);
+        assertEquals(WorkbenchViewType.APPROVAL, platformPayload.getViewType());
+        assertEquals(4, platformPayload.getAvailableActions().size());
+        assertEquals(WorkbenchActionType.APPROVE, platformPayload.getAvailableActions().get(0).getActionType());
+        assertEquals(List.of("需要人工确认"), platformPayload.getViewData().get("inferenceEvidence"));
+        assertEquals(List.of("WEIGHT_HISTORY"), platformPayload.getExtensions().get("agentEvidenceSources"));
+
+        var traceContext = mapper.toTraceContext(request, command, "run-1", "agent-1", "create_follow_up_task");
+        assertEquals("trace-1", traceContext.getTraceId());
+        assertEquals("run-1", traceContext.getRunId());
+        assertEquals("agent-1", traceContext.getAgentId());
+        assertEquals("create_follow_up_task", traceContext.getToolName());
     }
 
     @Test

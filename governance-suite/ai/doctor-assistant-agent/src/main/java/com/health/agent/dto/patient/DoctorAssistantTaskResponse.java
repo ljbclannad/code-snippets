@@ -1,5 +1,8 @@
 package com.health.agent.dto.patient;
 
+import com.lx.governance.agentplatform.model.WorkbenchPayload;
+import com.lx.governance.agentplatform.model.PlatformTraceContext;
+
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -62,6 +65,16 @@ public class DoctorAssistantTaskResponse {
      * 面向工作台和治理系统的内部载荷。
      */
     private DoctorWorkbenchPayload doctorWorkbenchPayload;
+
+    /**
+     * 面向平台统一工作台协议的共享载荷。
+     */
+    private WorkbenchPayload platformWorkbenchPayload;
+
+    /**
+     * 平台统一 trace 上下文。
+     */
+    private PlatformTraceContext traceContext;
 
     /**
      * 实际执行路径，例如真实 Agent 成功或模板兜底。

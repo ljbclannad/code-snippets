@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.health.agent.mapper.PendingTaskMapper;
 import com.health.agent.model.PendingTask;
 import com.health.agent.model.TaskStatus;
+import com.lx.governance.agentplatform.runtime.ApprovalRepository;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -16,7 +17,7 @@ import java.util.List;
  */
 @Slf4j
 @Service
-public class PendingTaskService {
+public class PendingTaskService implements ApprovalRepository<PendingTask> {
 
     @Autowired
     private PendingTaskMapper taskMapper;
@@ -24,13 +25,17 @@ public class PendingTaskService {
     @Autowired
     private AgentAuditService agentAuditService;
 
+    @Autowired(required = false)
+    private DoctorPlatformRunPersistenceService platformRunPersistenceService;
+
     /**
      * 保存待确认任务
      */
-    public void save(PendingTask task) {
+    public PendingTask save(PendingTask task) {
         taskMapper.insert(task);
         log.info("创建待确认任务: taskId={}, tool={}, customerId={}",
             task.getId(), task.getToolName(), task.getCustomerId());
+        return task;
     }
 
     /**
@@ -38,6 +43,18 @@ public class PendingTaskService {
      */
     public PendingTask getById(Long taskId) {
         return taskMapper.selectById(taskId);
+    }
+
+    public PendingTask findById(String approvalTaskId) {
+        if (approvalTaskId == null || approvalTaskId.isBlank()) {
+            return null;
+        }
+        try {
+            return getById(Long.valueOf(approvalTaskId));
+        } catch (NumberFormatException e) {
+            log.warn("无效的审批任务ID: {}", approvalTaskId);
+            return null;
+        }
     }
 
     /**
@@ -66,11 +83,11 @@ public class PendingTaskService {
     /**
      * 批准任务
      */
-    public void approve(Long taskId, String reviewComment) {
+    public PendingTask approve(Long taskId, String reviewComment) {
         PendingTask task = getById(taskId);
         if (task == null) {
             log.warn("任务不存在: {}", taskId);
-            return;
+            return null;
         }
 
         task.setStatus(TaskStatus.APPROVED.name());
@@ -78,18 +95,20 @@ public class PendingTaskService {
         task.setReviewedAt(LocalDateTime.now());
 
         taskMapper.updateById(task);
+        syncPlatformApprovalStatus(task);
         agentAuditService.recordTaskReview(taskId, TaskStatus.APPROVED.name(), reviewComment);
         log.info("批准任务: taskId={}, tool={}", taskId, task.getToolName());
+        return task;
     }
 
     /**
      * 拒绝任务
      */
-    public void reject(Long taskId, String reviewComment) {
+    public PendingTask reject(Long taskId, String reviewComment) {
         PendingTask task = getById(taskId);
         if (task == null) {
             log.warn("任务不存在: {}", taskId);
-            return;
+            return null;
         }
 
         task.setStatus(TaskStatus.REJECTED.name());
@@ -97,8 +116,10 @@ public class PendingTaskService {
         task.setReviewedAt(LocalDateTime.now());
 
         taskMapper.updateById(task);
+        syncPlatformApprovalStatus(task);
         agentAuditService.recordTaskReview(taskId, TaskStatus.REJECTED.name(), reviewComment);
         log.info("拒绝任务: taskId={}, tool={}", taskId, task.getToolName());
+        return task;
     }
 
     /**
@@ -118,5 +139,11 @@ public class PendingTaskService {
 
         log.info("清理过期任务: count={}", expiredTasks.size());
         return expiredTasks.size();
+    }
+
+    private void syncPlatformApprovalStatus(PendingTask task) {
+        if (platformRunPersistenceService != null && task != null) {
+            platformRunPersistenceService.syncApprovalStatus(task);
+        }
     }
 }

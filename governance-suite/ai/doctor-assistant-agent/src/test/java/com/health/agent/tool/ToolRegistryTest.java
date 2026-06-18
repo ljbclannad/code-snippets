@@ -11,6 +11,7 @@ import com.health.agent.service.HealthKnowledgeService;
 import com.health.agent.service.PatientService;
 import com.health.agent.service.AdherenceAnalysisService;
 import com.health.agent.service.WeightPlateauService;
+import com.health.agent.scene.doctor.tool.DoctorToolDefinitionRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -60,7 +61,7 @@ class ToolRegistryTest {
         ReflectionTestUtils.setField(adherenceAnalysisService, "analysisWindowDays", 14);
         ReflectionTestUtils.setField(adherenceAnalysisService, "minWeightRecords", 3);
 
-        toolRegistry = new ToolRegistry();
+        toolRegistry = new ToolRegistry(new DoctorToolDefinitionRegistry());
         ReflectionTestUtils.setField(toolRegistry, "patientService", patientService);
         ReflectionTestUtils.setField(toolRegistry, "followUpTaskService", followUpTaskService);
         ReflectionTestUtils.setField(toolRegistry, "healthKnowledgeService", healthKnowledgeService);

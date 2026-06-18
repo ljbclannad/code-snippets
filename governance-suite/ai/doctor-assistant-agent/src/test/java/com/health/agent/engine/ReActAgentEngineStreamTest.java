@@ -2,6 +2,7 @@ package com.health.agent.engine;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -26,6 +27,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import com.alibaba.fastjson2.JSON;
 import com.health.agent.client.DeepSeekClient;
+import com.health.agent.config.DoctorSafetyProperties;
 import com.health.agent.dto.agent.AgentExecutionCommand;
 import com.health.agent.dto.patient.AgentTaskConstraints;
 import com.health.agent.dto.patient.AgentTaskSource;
@@ -33,12 +35,14 @@ import com.health.agent.dto.patient.MemorySnapshot;
 import com.health.agent.dto.patient.TaskType;
 import com.health.agent.engine.subagent.CarePlanningSubAgent;
 import com.health.agent.engine.subagent.DataCollectionSubAgent;
+import com.health.agent.engine.subagent.RiskTriageSubAgent;
 import com.health.agent.engine.subagent.SubAgentCoordinator;
 import com.health.agent.engine.subagent.WeightAnalysisSubAgent;
 import com.health.agent.metrics.AgentMetrics;
 import com.health.agent.model.ActionDecision;
 import com.health.agent.model.ActionResult;
 import com.health.agent.model.AgentContext;
+import com.health.agent.model.AgentResult;
 import com.health.agent.model.AgentSession;
 import com.health.agent.model.AgentStreamEvent;
 import com.health.agent.model.AgentStreamEventType;
@@ -50,10 +54,21 @@ import com.health.agent.model.TaskStatus;
 import com.health.agent.model.ToolExecutionOutput;
 import com.health.agent.safety.MedicalSafetyService;
 import com.health.agent.service.AgentAuditService;
+import com.health.agent.service.AgentApprovalResumeState;
+import com.health.agent.service.AgentContextMutationService;
+import com.health.agent.service.AgentSessionWorkflowService;
 import com.health.agent.service.AgentSessionService;
+import com.health.agent.service.ContextPrivacySanitizer;
 import com.health.agent.tool.Tool;
 import com.health.agent.tool.ToolRegistry;
 import com.health.agent.tool.ToolRiskLevel;
+import com.lx.governance.agentplatform.model.AgentDefinition;
+import com.lx.governance.agentplatform.model.AgentStatus;
+import com.lx.governance.agentplatform.model.AgentType;
+import com.lx.governance.agentplatform.model.PlatformAgentHandoff;
+import com.lx.governance.agentplatform.model.PlatformContextVisibility;
+import com.lx.governance.agentplatform.model.ToolDescriptor;
+import com.lx.governance.agentplatform.registry.InMemoryAgentRegistry;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
@@ -73,6 +88,9 @@ class ReActAgentEngineStreamTest {
     private AgentSessionService sessionService;
 
     @Mock
+    private AgentSessionWorkflowService workflowService;
+
+    @Mock
     private AgentAuditService agentAuditService;
 
     private ReActAgentEngine engine;
@@ -86,30 +104,78 @@ class ReActAgentEngineStreamTest {
         ReflectionTestUtils.setField(engine, "actionExecutor", actionExecutor);
         ReflectionTestUtils.setField(engine, "toolRegistry", toolRegistry);
         ReflectionTestUtils.setField(engine, "sessionService", sessionService);
+        ReflectionTestUtils.setField(engine, "workflowService", workflowService);
+        ReflectionTestUtils.setField(engine, "contextMutationService", new AgentContextMutationService());
         ReflectionTestUtils.setField(engine, "agentMetrics", new AgentMetrics(new SimpleMeterRegistry()));
         ReflectionTestUtils.setField(engine, "medicalSafetyService", new MedicalSafetyService());
         ReflectionTestUtils.setField(engine, "agentAuditService", agentAuditService);
-        SubAgentCoordinator coordinator = new SubAgentCoordinator();
-        ReflectionTestUtils.setField(coordinator, "dataCollectionSubAgent", new DataCollectionSubAgent());
-        ReflectionTestUtils.setField(coordinator, "weightAnalysisSubAgent", new WeightAnalysisSubAgent());
-        ReflectionTestUtils.setField(coordinator, "carePlanningSubAgent", new CarePlanningSubAgent());
+        ReflectionTestUtils.setField(engine, "contextPrivacySanitizer",
+                new ContextPrivacySanitizer(new DoctorSafetyProperties()));
+        InMemoryAgentRegistry agentRegistry = new InMemoryAgentRegistry();
+        List<com.health.agent.engine.subagent.AgentSubAgent> subAgents = List.of(
+                new DataCollectionSubAgent(),
+                new WeightAnalysisSubAgent(),
+                new CarePlanningSubAgent(),
+                new RiskTriageSubAgent());
+        subAgents.forEach(subAgent -> register(agentRegistry, subAgent));
+        SubAgentCoordinator coordinator = new SubAgentCoordinator(agentRegistry, subAgents);
         ReflectionTestUtils.setField(engine, "subAgentCoordinator", coordinator);
         ReflectionTestUtils.setField(engine, "maxSteps", 4);
         ReflectionTestUtils.setField(engine, "useMock", false);
         ReflectionTestUtils.setField(engine, "protocolRepairAttempts", 1);
     }
 
+    private void register(
+            InMemoryAgentRegistry agentRegistry,
+            com.health.agent.engine.subagent.AgentSubAgent subAgent) {
+        agentRegistry.register(AgentDefinition.builder()
+                .agentId(subAgent.agentId())
+                .displayName(subAgent.name())
+                .agentType(AgentType.SUB_AGENT)
+                .capabilities(capabilitiesOf(subAgent.name()))
+                .supportedTaskType(TaskType.PATIENT_FOLLOW_UP_ANALYSIS.name())
+                .supportedTaskType(TaskType.RISK_STRATIFICATION_AND_ESCALATION.name())
+                .supportedTaskType(TaskType.NEXT_FOLLOW_UP_ACTION_RECOMMENDATION.name())
+                .allowedTools(subAgent.preferredToolNames())
+                .riskLevel("MEDIUM")
+                .owner("test")
+                .version("v1")
+                .status(AgentStatus.ENABLED)
+                .build());
+    }
+
+    private List<String> capabilitiesOf(String subAgentName) {
+        return switch (subAgentName) {
+            case "DataCollectionAgent" -> List.of(SubAgentCoordinator.CAPABILITY_DATA_COLLECTION);
+            case "WeightAnalysisAgent" -> List.of(SubAgentCoordinator.CAPABILITY_WEIGHT_ANALYSIS);
+            case "CarePlanningAgent" -> List.of(SubAgentCoordinator.CAPABILITY_CARE_PLANNING);
+            case "RiskTriageAgent" -> List.of(SubAgentCoordinator.CAPABILITY_RISK_TRIAGE);
+            default -> List.of();
+        };
+    }
+
+    private List<ToolDescriptor> descriptorsOf(List<Tool> tools) {
+        return tools.stream()
+                .map(tool -> ToolDescriptor.builder()
+                        .toolName(tool.getName())
+                        .description(tool.getDescription())
+                        .riskLevel(tool.getRiskLevel() != null ? tool.getRiskLevel().name() : "UNKNOWN")
+                        .inputSchema(tool.getInputSchema())
+                        .build())
+                .toList();
+    }
+
     @Test
     void shouldEmitThoughtActionObservationFinalAnswerAndDoneEvents() {
         AgentSession session = AgentSession.builder().id("1").build();
         when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
-        when(toolRegistry.getAllTools()).thenReturn(List.of(
+        when(toolRegistry.listToolDescriptors()).thenReturn(descriptorsOf(List.of(
                 Tool.builder()
                         .name("detect_weight_plateau")
                         .description("识别是否进入减重停滞期")
                         .riskLevel(ToolRiskLevel.LOW)
                         .inputSchema(Map.of("weightRecords", Map.of("type", "array")))
-                        .build()));
+                        .build())));
 
         DeepSeekClient.DeepSeekResponse first = new DeepSeekClient.DeepSeekResponse();
         first.setContent("""
@@ -157,7 +223,7 @@ class ReActAgentEngineStreamTest {
             sink.accept(response.getContent());
             return response;
         }).when(deepSeekClient).chatStream(anyString(), anyList(), any());
-        when(actionExecutor.execute(any(), anyString(), anyString(), anyString())).thenReturn(
+        when(actionExecutor.execute(any(), anyString(), anyString(), anyString(), any())).thenReturn(
                 ActionResult.success(Map.of("isPlateau", true)));
 
         List<AgentStreamEvent> events = new ArrayList<>();
@@ -179,6 +245,23 @@ class ReActAgentEngineStreamTest {
         assertTrue(eventTypes.contains(AgentStreamEventType.SUBAGENT_FINISHED));
         assertEquals("1", events.get(0).getSessionId());
         assertInstanceOf(Map.class, events.get(0).getData());
+        @SuppressWarnings("unchecked")
+        Map<String, Object> subAgentStarted = (Map<String, Object>) events.get(0).getData();
+        assertInstanceOf(PlatformAgentHandoff.class, subAgentStarted.get("handoff"));
+        PlatformAgentHandoff handoff = (PlatformAgentHandoff) subAgentStarted.get("handoff");
+        assertNotNull(handoff.getToAgentName());
+        assertTrue(handoff.getItems().isEmpty() || handoff.getItems().size() <= 11);
+        assertTrue(handoff.getItems().stream()
+                .noneMatch(item -> "trigger_decision".equals(item.getKey())));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> profilePayload = handoff.getItems().stream()
+                .filter(item -> "patient_profile".equals(item.getKey()))
+                .findFirst()
+                .map(item -> (Map<String, Object>) item.getPayload())
+                .orElse(Map.of());
+        if (!profilePayload.isEmpty()) {
+            assertEquals("张*", profilePayload.get("name"));
+        }
         assertInstanceOf(String.class, events.get(1).getData());
         assertInstanceOf(String.class, events.get(2).getData());
         assertInstanceOf(Map.class, events.get(3).getData());
@@ -195,13 +278,13 @@ class ReActAgentEngineStreamTest {
     void shouldEmitPendingApprovalThenDoneWhenActionNeedsApproval() {
         AgentSession session = AgentSession.builder().id("1").build();
         when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
-        when(toolRegistry.getAllTools()).thenReturn(List.of(
+        when(toolRegistry.listToolDescriptors()).thenReturn(descriptorsOf(List.of(
                 Tool.builder()
                         .name("create_follow_up_task")
                         .description("创建随访任务")
                         .riskLevel(ToolRiskLevel.MEDIUM)
                         .inputSchema(Map.of("customerId", Map.of("type", "string"), "title", Map.of("type", "string")))
-                        .build()));
+                        .build())));
 
         DeepSeekClient.DeepSeekResponse first = new DeepSeekClient.DeepSeekResponse();
         first.setContent("""
@@ -225,7 +308,7 @@ class ReActAgentEngineStreamTest {
             sink.accept(first.getContent());
             return first;
         }).when(deepSeekClient).chatStream(anyString(), anyList(), any());
-        when(actionExecutor.execute(any(), anyString(), anyString(), anyString())).thenReturn(
+        when(actionExecutor.execute(any(), anyString(), anyString(), anyString(), any())).thenReturn(
                 ActionResult.pendingApproval(PendingTask.builder().id(101L).toolName("create_follow_up_task").build()));
 
         List<AgentStreamEvent> events = new ArrayList<>();
@@ -245,16 +328,143 @@ class ReActAgentEngineStreamTest {
     }
 
     @Test
+    void shouldConsumeParallelSelectionPlanAcrossLoopSteps() {
+        AgentSession session = AgentSession.builder().id("1").build();
+        when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
+        AtomicReference<AgentContext> finalContextRef = new AtomicReference<>();
+        doAnswer(invocation -> {
+            finalContextRef.set(invocation.getArgument(2));
+            return null;
+        }).when(sessionService).completeSession(anyString(), anyList(), any(AgentContext.class));
+        when(toolRegistry.listToolDescriptors()).thenReturn(descriptorsOf(List.of(
+                Tool.builder()
+                        .name("collect_medical_history")
+                        .description("收集病史")
+                        .riskLevel(ToolRiskLevel.LOW)
+                        .inputSchema(Map.of("question", Map.of("type", "string")))
+                        .build())));
+
+        DeepSeekClient.DeepSeekResponse first = new DeepSeekClient.DeepSeekResponse();
+        first.setContent("""
+                {
+                  "protocolVersion": "v1",
+                  "thinking": "先由风险分诊角色评估胸痛与呼吸困难的紧急程度。",
+                  "finished": false,
+                  "action": {
+                    "toolName": "collect_medical_history",
+                    "input": {
+                      "question": "请补充胸痛持续时间和伴随症状"
+                    },
+                    "reason": "先完成初步风险识别"
+                  }
+                }
+                """);
+        DeepSeekClient.DeepSeekResponse second = new DeepSeekClient.DeepSeekResponse();
+        second.setContent("""
+                {
+                  "protocolVersion": "v1",
+                  "thinking": "接着由资料收集角色补齐随访信息。",
+                  "finished": false,
+                  "action": {
+                    "toolName": "collect_medical_history",
+                    "input": {
+                      "question": "请补充近期用药与体重变化"
+                    },
+                    "reason": "补足后续随访与风险判断所需资料"
+                  }
+                }
+                """);
+        DeepSeekClient.DeepSeekResponse third = new DeepSeekClient.DeepSeekResponse();
+        third.setContent("""
+                {
+                  "protocolVersion": "v1",
+                  "thinking": "已经完成首轮风险分诊与资料补齐。",
+                  "finished": true,
+                  "finalAnswer": {
+                    "summary": "患者存在胸痛与呼吸困难，建议尽快人工复核，并继续补充近期用药和体重变化。",
+                    "keyFindings": ["存在胸痛和呼吸困难", "首轮资料补齐已启动"],
+                    "riskLevel": "HIGH",
+                    "recommendedActions": ["尽快安排人工复核", "继续补充近期用药和体重变化"],
+                    "needsAttention": true,
+                    "uncertainties": ["尚缺完整生命体征和近期药物依从性"]
+                  }
+                }
+                """);
+        doAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            java.util.function.Consumer<String> sink = invocation.getArgument(2);
+            sink.accept(first.getContent());
+            return first;
+        }).doAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            java.util.function.Consumer<String> sink = invocation.getArgument(2);
+            sink.accept(second.getContent());
+            return second;
+        }).doAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            java.util.function.Consumer<String> sink = invocation.getArgument(2);
+            sink.accept(third.getContent());
+            return third;
+        }).when(deepSeekClient).chatStream(anyString(), anyList(), any());
+        when(actionExecutor.execute(any(), anyString(), anyString(), anyString(), any()))
+                .thenReturn(ActionResult.success(Map.of("ok", true)));
+
+        AgentExecutionCommand command = AgentExecutionCommand.builder()
+                .customerId("C001")
+                .doctorId("D001")
+                .goal("请完成本轮风险分层并补充关键随访信息")
+                .patientMessage("这两天胸痛并伴随呼吸困难")
+                .taskType(TaskType.RISK_STRATIFICATION_AND_ESCALATION)
+                .source(AgentTaskSource.PATIENT_DIALOG_AI_CHAT)
+                .conversationId("conv-risk-1")
+                .correlationId("corr-risk-1")
+                .sessionContext(Map.of("selectorRollout", Map.of("parallelRiskReview", true)))
+                .build();
+
+        List<AgentStreamEvent> events = new ArrayList<>();
+        AgentResult result = engine.executeStream(command, events::add);
+
+        assertEquals("SUCCESS", result.getStatus().name());
+        AgentContext finalContext = finalContextRef.get();
+        assertNotNull(finalContext);
+        @SuppressWarnings("unchecked")
+        List<String> executedPlan = (List<String>) finalContext.getSlots()
+                .get("sub_agent_executed_plan")
+                .getValue();
+        @SuppressWarnings("unchecked")
+        List<String> pendingPlan = (List<String>) finalContext.getSlots()
+                .get("sub_agent_pending_plan")
+                .getValue();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> selectionDecision = (Map<String, Object>) finalContext.getSlots()
+                .get("sub_agent_selection_decision")
+                .getValue();
+        assertEquals("PARALLEL", selectionDecision.get("mode"));
+        assertTrue(executedPlan.contains("doctor.RiskTriageAgent"));
+        assertTrue(executedPlan.contains("doctor.DataCollectionAgent"));
+        assertTrue(pendingPlan == null || pendingPlan.isEmpty());
+        List<String> startedNames = events.stream()
+                .filter(event -> event.getType() == AgentStreamEventType.SUBAGENT_STARTED)
+                .map(event -> {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> data = (Map<String, Object>) event.getData();
+                    return String.valueOf(data.get("name"));
+                })
+                .toList();
+        assertFalse(startedNames.isEmpty());
+    }
+
+    @Test
     void shouldPreloadContextFromAgentExecutionCommand() {
         AgentSession session = AgentSession.builder().id("1").build();
         when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
-        when(toolRegistry.getAllTools()).thenReturn(List.of(
+        when(toolRegistry.listToolDescriptors()).thenReturn(descriptorsOf(List.of(
                 Tool.builder()
                         .name("detect_weight_plateau")
                         .description("识别是否进入减重停滞期")
                         .riskLevel(ToolRiskLevel.LOW)
                         .inputSchema(Map.of("weightRecords", Map.of("type", "array")))
-                        .build()));
+                        .build())));
 
         DeepSeekClient.DeepSeekResponse first = new DeepSeekClient.DeepSeekResponse();
         first.setContent("""
@@ -305,7 +515,7 @@ class ReActAgentEngineStreamTest {
             sink.accept(response.getContent());
             return response;
         }).when(deepSeekClient).chatStream(anyString(), anyList(), any());
-        when(actionExecutor.execute(any(), anyString(), anyString(), anyString())).thenReturn(
+        when(actionExecutor.execute(any(), anyString(), anyString(), anyString(), any())).thenReturn(
                 ActionResult.success(Map.of("isPlateau", true)));
 
         AtomicReference<AgentContext> capturedContext = new AtomicReference<>();
@@ -346,6 +556,8 @@ class ReActAgentEngineStreamTest {
         assertTrue(context.getSlots().containsKey("chat_history"));
         assertTrue(context.getSlots().containsKey("recent_follow_up_signals"));
         assertTrue(context.getSlots().containsKey("trigger_decision"));
+        assertEquals(PlatformContextVisibility.AUDIT_ONLY,
+                context.getSlots().get("trigger_decision").getVisibility());
         assertTrue(context.getSlots().containsKey("patient_message"));
         assertTrue(context.getEvidenceRecords().stream()
                 .anyMatch(record -> "PATIENT_MESSAGE".equals(record.getSource())
@@ -356,15 +568,16 @@ class ReActAgentEngineStreamTest {
     void shouldBuildPatientTaskSpecificFirstTurnPromptFromCommand() {
         AgentSession session = AgentSession.builder().id("1").build();
         when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
-        when(toolRegistry.getAllTools()).thenReturn(List.of(
+        when(toolRegistry.listToolDescriptors()).thenReturn(descriptorsOf(List.of(
                 Tool.builder()
                         .name("detect_weight_plateau")
                         .description("识别是否进入减重停滞期")
                         .riskLevel(ToolRiskLevel.LOW)
                         .inputSchema(Map.of("weightRecords", Map.of("type", "array")))
-                        .build()));
+                        .build())));
 
         AtomicReference<List<Message>> capturedMessages = new AtomicReference<>();
+        AtomicReference<String> capturedSystemPrompt = new AtomicReference<>();
         DeepSeekClient.DeepSeekResponse response = new DeepSeekClient.DeepSeekResponse();
         response.setContent("""
                 {
@@ -385,6 +598,7 @@ class ReActAgentEngineStreamTest {
                 }
                 """);
         doAnswer(invocation -> {
+            capturedSystemPrompt.set(invocation.getArgument(0));
             @SuppressWarnings("unchecked")
             List<Message> messages = invocation.getArgument(1);
             capturedMessages.set(new ArrayList<>(messages));
@@ -402,17 +616,19 @@ class ReActAgentEngineStreamTest {
                 .correlationId("corr_20260616_001")
                 .source(AgentTaskSource.PATIENT_DIALOG_AI_CHAT)
                 .taskType(TaskType.PATIENT_FOLLOW_UP_ANALYSIS)
-                .patientMessage("医生，我这周晚上基本没吃主食，但体重还是没怎么掉，是不是进入平台期了？")
+                .patientMessage("医生，我这周晚上基本没吃主食，但体重还是没怎么掉，可以回电13812345678吗？")
                 .sessionContext(Map.of(
                         "conversationPhase", "follow_up",
                         "currentTopic", "weight_plateau"))
                 .profileSnapshot(Map.of(
+                        "name", "张三",
                         "gender", "female",
                         "age", 32,
+                        "phone", "13812345678",
                         "currentWeightKg", 68.5))
                 .memorySnapshot(MemorySnapshot.builder()
                         .shortTermMemories(List.of(
-                                "近7天体重在68.4kg到68.7kg之间波动",
+                                "近7天体重在68.4kg到68.7kg之间波动，可联系13812345678回访",
                                 "患者自述晚餐减少主食摄入"))
                         .longTermMemories(List.of(
                                 "3个月前开始减重管理",
@@ -431,17 +647,26 @@ class ReActAgentEngineStreamTest {
         assertNotNull(firstTurnMessages);
         assertEquals(1, firstTurnMessages.size());
         String firstPrompt = firstTurnMessages.get(0).getContent();
+        String systemPrompt = capturedSystemPrompt.get();
         assertTrue(firstPrompt.contains("Task Type: PATIENT_FOLLOW_UP_ANALYSIS"));
         assertTrue(firstPrompt.contains("Current Patient Message"));
-        assertTrue(firstPrompt.contains("Trigger Decision Summary"));
         assertTrue(firstPrompt.contains("Profile Snapshot Summary"));
+        assertTrue(firstPrompt.contains("Session Context Summary"));
         assertTrue(firstPrompt.contains("Short-term Memory Snapshot"));
         assertTrue(firstPrompt.contains("Long-term Memory Snapshot"));
         assertTrue(firstPrompt.contains("Task-specific Analysis Focus"));
         assertTrue(firstPrompt.contains("平台期风险"));
         assertTrue(firstPrompt.contains("近7天体重在68.4kg到68.7kg之间波动"));
         assertTrue(firstPrompt.contains("female"));
-        assertTrue(firstPrompt.contains("命中随访趋势分析信号"));
+        assertTrue(firstPrompt.contains("张*"));
+        assertTrue(firstPrompt.contains("138****5678"));
+        assertFalse(firstPrompt.contains("张三"));
+        assertFalse(firstPrompt.contains("13812345678"));
+        assertFalse(firstPrompt.contains("Trigger Decision Summary"));
+        assertFalse(firstPrompt.contains("Trigger Decision Reasons"));
+        assertNotNull(systemPrompt);
+        assertFalse(systemPrompt.contains("命中随访趋势分析信号"));
+        assertFalse(systemPrompt.contains("EXPLICIT_ANALYSIS_REQUEST"));
     }
 
     @Test
@@ -458,8 +683,6 @@ class ReActAgentEngineStreamTest {
                 .contextJson(JSON.toJSONString(persistedContext))
                 .currentStep(1)
                 .build();
-        when(sessionService.getById("1")).thenReturn(session);
-
         ActionDecision approvedAction = ActionDecision.builder()
                 .toolName("get_weight_history")
                 .input(Map.of("customerId", "C001", "days", 14))
@@ -468,10 +691,20 @@ class ReActAgentEngineStreamTest {
         PendingTask approvedTask = PendingTask.builder()
                 .id(101L)
                 .agentSessionId("1")
+                .customerId("C001")
+                .doctorId("D001")
                 .status(TaskStatus.APPROVED.name())
                 .inputJson(JSON.toJSONString(approvedAction))
                 .build();
-        when(sessionService.getPendingTask(101L)).thenReturn(approvedTask);
+        when(workflowService.loadApprovedResumeState("1", 101L)).thenReturn(AgentApprovalResumeState.builder()
+                .session(session)
+                .pendingTask(approvedTask)
+                .history(new ArrayList<>(List.of(Step.thought("等待审批"))))
+                .messages(new ArrayList<>(List.of(Message.user("请继续分析"))))
+                .context(persistedContext)
+                .currentStep(1)
+                .approvedAction(approvedAction)
+                .build());
 
         when(actionExecutor.executeApprovedAction(any())).thenReturn(ActionResult.success(
                 ToolExecutionOutput.builder()
@@ -481,13 +714,13 @@ class ReActAgentEngineStreamTest {
                         )))
                         .build()));
 
-        when(toolRegistry.getAllTools()).thenReturn(List.of(
+        when(toolRegistry.listToolDescriptors()).thenReturn(descriptorsOf(List.of(
                 Tool.builder()
                         .name("get_weight_history")
                         .description("查询体重历史")
                         .riskLevel(ToolRiskLevel.LOW)
                         .inputSchema(Map.of("customerId", Map.of("type", "string")))
-                        .build()));
+                        .build())));
 
         DeepSeekClient.DeepSeekResponse finalResponse = new DeepSeekClient.DeepSeekResponse();
         finalResponse.setContent("""
@@ -546,13 +779,13 @@ class ReActAgentEngineStreamTest {
     void shouldSuppressDuplicateToolCallWhenSameActionRepeatsWithoutNewInformation() {
         AgentSession session = AgentSession.builder().id("1").build();
         when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
-        when(toolRegistry.getAllTools()).thenReturn(List.of(
+        when(toolRegistry.listToolDescriptors()).thenReturn(descriptorsOf(List.of(
                 Tool.builder()
                         .name("detect_weight_plateau")
                         .description("识别是否进入减重停滞期")
                         .riskLevel(ToolRiskLevel.LOW)
                         .inputSchema(Map.of("weightRecords", Map.of("type", "array")))
-                        .build()));
+                        .build())));
 
         DeepSeekClient.DeepSeekResponse first = new DeepSeekClient.DeepSeekResponse();
         first.setContent("""
@@ -618,7 +851,7 @@ class ReActAgentEngineStreamTest {
             sink.accept(response.getContent());
             return response;
         }).when(deepSeekClient).chatStream(anyString(), anyList(), any());
-        when(actionExecutor.execute(any(), anyString(), anyString(), anyString())).thenReturn(
+        when(actionExecutor.execute(any(), anyString(), anyString(), anyString(), any())).thenReturn(
                 ActionResult.success(Map.of("isPlateau", true)));
 
         List<AgentStreamEvent> events = new ArrayList<>();
@@ -635,6 +868,6 @@ class ReActAgentEngineStreamTest {
                 .map(event -> String.valueOf(event.getData()))
                 .anyMatch(data -> data.contains("重复")));
         org.mockito.Mockito.verify(actionExecutor, org.mockito.Mockito.times(1))
-                .execute(any(), anyString(), anyString(), anyString());
+                .execute(any(), anyString(), anyString(), anyString(), any());
     }
 }

@@ -408,17 +408,26 @@ doctor-assistant-agent/
 
 位于 `src/main/resources/application.yml`
 
-- `agent.max-steps`
+- `doctor.agent.runtime.max-steps`
+- `doctor.agent.runtime.protocol-repair-attempts`
+- `doctor.agent.runtime.use-mock`
 - `agent.tool-timeout-millis`
-- `agent.protocol-repair-attempts`
 - `agent.deepseek.*`
+
+### 平台治理配置
+
+- `doctor.agent.platform.workflow-id`
+- `doctor.agent.platform.platform-agent-id`
+- `doctor.agent.platform.tool-version`
+- `doctor.agent.platform.fallback-to-template-on-agent-error`
+- `doctor.agent.platform.allowed-tools`
 
 ### 停滞期识别配置
 
-- `agent.weight-plateau.window-days`
-- `agent.weight-plateau.max-weight-change-kg`
-- `agent.weight-plateau.recent-trend-days`
-- `agent.weight-plateau.recent-downward-threshold-kg`
+- `doctor.agent.safety.weight-plateau.window-days`
+- `doctor.agent.safety.weight-plateau.max-weight-change-kg`
+- `doctor.agent.safety.weight-plateau.recent-trend-days`
+- `doctor.agent.safety.weight-plateau.recent-downward-threshold-kg`
 
 ### 依从性分析配置
 

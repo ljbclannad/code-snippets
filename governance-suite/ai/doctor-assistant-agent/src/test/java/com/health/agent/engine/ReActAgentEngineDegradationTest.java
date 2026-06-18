@@ -10,6 +10,8 @@ import com.health.agent.model.AgentSession;
 import com.health.agent.model.ThoughtResult;
 import com.health.agent.safety.MedicalSafetyService;
 import com.health.agent.service.AgentAuditService;
+import com.health.agent.service.AgentContextMutationService;
+import com.health.agent.service.AgentSessionWorkflowService;
 import com.health.agent.service.AgentSessionService;
 import com.health.agent.tool.ToolRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -52,6 +54,9 @@ class ReActAgentEngineDegradationTest {
     private AgentSessionService sessionService;
 
     @Mock
+    private AgentSessionWorkflowService workflowService;
+
+    @Mock
     private AgentAuditService agentAuditService;
 
     private ReActAgentEngine engine;
@@ -65,6 +70,8 @@ class ReActAgentEngineDegradationTest {
         ReflectionTestUtils.setField(engine, "actionExecutor", actionExecutor);
         ReflectionTestUtils.setField(engine, "toolRegistry", toolRegistry);
         ReflectionTestUtils.setField(engine, "sessionService", sessionService);
+        ReflectionTestUtils.setField(engine, "workflowService", workflowService);
+        ReflectionTestUtils.setField(engine, "contextMutationService", new AgentContextMutationService());
         ReflectionTestUtils.setField(engine, "agentMetrics", new AgentMetrics(new SimpleMeterRegistry()));
         ReflectionTestUtils.setField(engine, "medicalSafetyService", new MedicalSafetyService());
         ReflectionTestUtils.setField(engine, "agentAuditService", agentAuditService);
@@ -77,8 +84,9 @@ class ReActAgentEngineDegradationTest {
         ReflectionTestUtils.setField(engine, "maxSteps", 3);
         AgentSession session = AgentSession.builder().id("1").build();
         when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
-        when(toolRegistry.getAllTools()).thenReturn(List.of());
+        when(toolRegistry.listToolDescriptors()).thenReturn(List.of());
         when(promptBuilder.buildUserPrompt(anyString(), anyString())).thenReturn("user");
+        when(promptBuilder.buildSubAgentSystemPromptFromCatalog(any(), any())).thenReturn("system");
         when(deepSeekClient.chat(anyString(), anyList())).thenThrow(new RuntimeException("DeepSeek API 调用超时: PT5S"));
 
         AgentResult result = engine.execute("分析患者减重进展", "C001", "D001");
@@ -94,8 +102,9 @@ class ReActAgentEngineDegradationTest {
         ReflectionTestUtils.setField(engine, "maxSteps", 3);
         AgentSession session = AgentSession.builder().id("1").build();
         when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
-        when(toolRegistry.getAllTools()).thenReturn(List.of());
+        when(toolRegistry.listToolDescriptors()).thenReturn(List.of());
         when(promptBuilder.buildUserPrompt(anyString(), anyString())).thenReturn("user");
+        when(promptBuilder.buildSubAgentSystemPromptFromCatalog(any(), any())).thenReturn("system");
         when(promptBuilder.buildProtocolRepairPrompt(anyString())).thenReturn("repair");
 
         DeepSeekClient.DeepSeekResponse invalid = new DeepSeekClient.DeepSeekResponse();
@@ -118,8 +127,9 @@ class ReActAgentEngineDegradationTest {
         ReflectionTestUtils.setField(engine, "maxSteps", 1);
         AgentSession session = AgentSession.builder().id("1").build();
         when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
-        when(toolRegistry.getAllTools()).thenReturn(List.of());
+        when(toolRegistry.listToolDescriptors()).thenReturn(List.of());
         when(promptBuilder.buildUserPrompt(anyString(), anyString())).thenReturn("user");
+        when(promptBuilder.buildSubAgentSystemPromptFromCatalog(any(), any())).thenReturn("system");
 
         DeepSeekClient.DeepSeekResponse step1 = new DeepSeekClient.DeepSeekResponse();
         step1.setContent("step1");
@@ -143,11 +153,8 @@ class ReActAgentEngineDegradationTest {
 
     @Test
     void shouldReturnStructuredHighRiskDegradedResultWhenResumeFails() {
-        AgentSession session = AgentSession.builder()
-            .id("1")
-            .status("RUNNING")
-            .build();
-        when(sessionService.getById("1")).thenReturn(session);
+        when(workflowService.loadApprovedResumeState("1", 101L))
+            .thenThrow(new AgentException("会话状态不正确，当前状态: RUNNING"));
 
         AgentResult result = engine.resume("1", 101L);
 

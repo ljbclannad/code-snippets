@@ -2,25 +2,36 @@ package com.health.agent.engine.subagent;
 
 import com.health.agent.dto.patient.TaskType;
 import com.health.agent.model.AgentContext;
+import com.lx.governance.agentplatform.model.AgentDefinition;
+import com.lx.governance.agentplatform.model.AgentSelectionDecision;
+import com.lx.governance.agentplatform.model.AgentSelectionMode;
+import com.lx.governance.agentplatform.model.AgentStatus;
+import com.lx.governance.agentplatform.model.AgentType;
+import com.lx.governance.agentplatform.registry.InMemoryAgentRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class SubAgentCoordinatorTest {
 
     private SubAgentCoordinator coordinator;
+    private InMemoryAgentRegistry agentRegistry;
 
     @BeforeEach
     void setUp() {
-        coordinator = new SubAgentCoordinator();
-        ReflectionTestUtils.setField(coordinator, "dataCollectionSubAgent", new DataCollectionSubAgent());
-        ReflectionTestUtils.setField(coordinator, "weightAnalysisSubAgent", new WeightAnalysisSubAgent());
-        ReflectionTestUtils.setField(coordinator, "carePlanningSubAgent", new CarePlanningSubAgent());
-        ReflectionTestUtils.setField(coordinator, "riskTriageSubAgent", new RiskTriageSubAgent());
+        agentRegistry = new InMemoryAgentRegistry();
+        List<AgentSubAgent> subAgents = List.of(
+                new DataCollectionSubAgent(),
+                new WeightAnalysisSubAgent(),
+                new CarePlanningSubAgent(),
+                new RiskTriageSubAgent());
+        subAgents.forEach(this::register);
+        coordinator = new SubAgentCoordinator(agentRegistry, subAgents);
     }
 
     @Test
@@ -81,5 +92,72 @@ class SubAgentCoordinatorTest {
         context.putSlot("patient_message", Map.of("content", "这两天有胸痛和呼吸困难"), "test");
 
         assertEquals("RiskTriageAgent", coordinator.select("患者反馈胸痛并伴随呼吸困难，需要判断风险", context).name());
+    }
+
+    @Test
+    void shouldReturnParallelSelectionDecisionWhenRolloutRequiresParallelRiskReview() {
+        AgentContext context = AgentContext.initialize("C001", "D001", "患者反馈胸痛并伴随呼吸困难，需要判断风险");
+        context.putSlot("patient_task_request",
+                Map.of("taskType", TaskType.RISK_STRATIFICATION_AND_ESCALATION.name()), "test");
+        context.putSlot("session_context",
+                Map.of("selectorRollout", Map.of("parallelRiskReview", true)), "test");
+        context.putSlot("patient_message", Map.of("content", "这两天有胸痛和呼吸困难"), "test");
+
+        AgentSelectionDecision decision = coordinator.selectDecision("患者反馈胸痛并伴随呼吸困难，需要判断风险", context);
+
+        assertEquals(AgentSelectionMode.PARALLEL, decision.getMode());
+        assertEquals(List.of("doctor.RiskTriageAgent", "doctor.DataCollectionAgent"), decision.getSelectedAgentIds());
+    }
+
+    @Test
+    void shouldRejectInvisibleAgentWhenGroupDoesNotMatch() {
+        agentRegistry.register(AgentDefinition.builder()
+                .agentId("doctor.RiskTriageAgent")
+                .displayName("RiskTriageAgent")
+                .agentType(AgentType.SUB_AGENT)
+                .capabilities(List.of(SubAgentCoordinator.CAPABILITY_RISK_TRIAGE))
+                .supportedTaskType(TaskType.RISK_STRATIFICATION_AND_ESCALATION.name())
+                .riskLevel("HIGH")
+                .owner("test")
+                .version("v2")
+                .visibleGroupId("G-VISIBLE")
+                .status(AgentStatus.ENABLED)
+                .build());
+
+        AgentContext context = AgentContext.initialize("C001", "D001", "患者反馈胸痛并伴随呼吸困难，需要判断风险");
+        context.putSlot("patient_task_request",
+                Map.of("taskType", TaskType.RISK_STRATIFICATION_AND_ESCALATION.name()), "test");
+        context.putSlot("session_context", Map.of("groupId", "G-OTHER"), "test");
+        context.putSlot("patient_message", Map.of("content", "这两天有胸痛和呼吸困难"), "test");
+
+        assertThrows(IllegalStateException.class,
+                () -> coordinator.select("患者反馈胸痛并伴随呼吸困难，需要判断风险", context));
+    }
+
+    private void register(AgentSubAgent subAgent) {
+        agentRegistry.register(AgentDefinition.builder()
+                .agentId(subAgent.agentId())
+                .displayName(subAgent.name())
+                .agentType(AgentType.SUB_AGENT)
+                .capabilities(capabilitiesOf(subAgent))
+                .supportedTaskType(TaskType.PATIENT_FOLLOW_UP_ANALYSIS.name())
+                .supportedTaskType(TaskType.RISK_STRATIFICATION_AND_ESCALATION.name())
+                .supportedTaskType(TaskType.NEXT_FOLLOW_UP_ACTION_RECOMMENDATION.name())
+                .allowedTools(subAgent.preferredToolNames())
+                .riskLevel("MEDIUM")
+                .owner("test")
+                .version("v1")
+                .status(AgentStatus.ENABLED)
+                .build());
+    }
+
+    private List<String> capabilitiesOf(AgentSubAgent subAgent) {
+        return switch (subAgent.name()) {
+            case "DataCollectionAgent" -> List.of(SubAgentCoordinator.CAPABILITY_DATA_COLLECTION);
+            case "WeightAnalysisAgent" -> List.of(SubAgentCoordinator.CAPABILITY_WEIGHT_ANALYSIS);
+            case "CarePlanningAgent" -> List.of(SubAgentCoordinator.CAPABILITY_CARE_PLANNING);
+            case "RiskTriageAgent" -> List.of(SubAgentCoordinator.CAPABILITY_RISK_TRIAGE);
+            default -> List.of();
+        };
     }
 }

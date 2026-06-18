@@ -31,9 +31,19 @@ public class SessionContext {
     private String customerId;
 
     /**
+     * 上游显式用户ID，缺省可与 customerId 相同。
+     */
+    private String userId;
+
+    /**
      * 群组ID
      */
     private String groupId;
+
+    /**
+     * 租户ID
+     */
+    private String tenantId;
 
     /**
      * 当前话题

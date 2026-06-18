@@ -3,6 +3,8 @@ package com.health.agent.dto.patient;
 import java.util.Map;
 
 import com.health.agent.dto.agent.AgentExecutionCommand;
+import com.lx.governance.agentplatform.model.PlatformContext;
+import com.lx.governance.agentplatform.model.PlatformTraceContext;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -67,6 +69,16 @@ public class DoctorAssistantTaskRequest {
     private String correlationId;
 
     /**
+     * 平台统一 trace 上下文。
+     */
+    private PlatformTraceContext traceContext;
+
+    /**
+     * 平台统一上下文总线载荷。
+     */
+    private PlatformContext platformContext;
+
+    /**
      * ai-chat-service 侧当前会话上下文快照，例如话题、阶段、意图等。
      */
     private Map<String, Object> sessionContext;
@@ -98,6 +110,8 @@ public class DoctorAssistantTaskRequest {
                 .doctorId(doctorId)
                 .conversationId(conversationId)
                 .correlationId(correlationId)
+                .traceContext(traceContext)
+                .platformContext(platformContext)
                 .source(source)
                 .taskType(taskType)
                 .patientMessage(patientMessage)

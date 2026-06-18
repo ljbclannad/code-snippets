@@ -7,6 +7,7 @@ import com.health.agent.model.AgentResult;
 import com.health.agent.model.AgentSession;
 import com.health.agent.model.PendingTask;
 import com.health.agent.service.AgentSessionService;
+import com.health.agent.service.DoctorRunResumeService;
 import com.health.agent.service.PendingTaskService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -59,6 +60,9 @@ public class AgentController {
 
     @Autowired
     private PendingTaskService taskService;
+
+    @Autowired
+    private DoctorRunResumeService doctorRunResumeService;
 
     @Autowired
     private AgentMetrics agentMetrics;
@@ -189,17 +193,16 @@ public class AgentController {
         log.info("恢复Agent执行: sessionId={}, taskId={}",
             request.getSessionId(), request.getApprovedTaskId());
 
-        AgentSession session = sessionService.getById(request.getSessionId());
-        if (session == null) {
-            throw new com.health.agent.exception.AgentException("会话不存在: " + request.getSessionId());
-        }
+        com.lx.governance.agentplatform.model.ResumeRunRequest resumeRequest =
+            doctorRunResumeService.prepareResume(request.getSessionId(), request.getApprovedTaskId());
+        AgentSession session = sessionService.getById(resumeRequest.getRunId());
 
         AgentAccessGuard.AccessPermit permit = accessGuard.acquire(session.getDoctorId(), true);
         AtomicReference<CompletableFuture<?>> streamFuture = new AtomicReference<>();
         SseEmitter emitter = createGuardedEmitter(permit, streamFuture);
         streamFuture.set(CompletableFuture.runAsync(() -> streamToEmitter(emitter, () -> agentEngine.resumeStream(
-            request.getSessionId(),
-            request.getApprovedTaskId(),
+            resumeRequest.getRunId(),
+            Long.valueOf(resumeRequest.getApprovalTaskId()),
             event -> sendEvent(emitter, event.getType().name().toLowerCase(), event)
         )), streamExecutor));
         return emitter;
@@ -432,7 +435,7 @@ public class AgentController {
     ) {
         log.info("批准任务: taskId={}, comment={}", taskId, request.getReviewComment());
 
-        taskService.approve(taskId, request.getReviewComment());
+        doctorRunResumeService.approveTask(taskId, request.getReviewComment());
         agentMetrics.recordApprovalDecision("approved", "pending_task");
 
         return ResponseEntity.ok(TaskApprovalResponse.builder()
@@ -480,7 +483,7 @@ public class AgentController {
     ) {
         log.info("拒绝任务: taskId={}, comment={}", taskId, request.getReviewComment());
 
-        taskService.reject(taskId, request.getReviewComment());
+        doctorRunResumeService.rejectTask(taskId, request.getReviewComment());
         agentMetrics.recordApprovalDecision("rejected", "pending_task");
 
         return ResponseEntity.ok(TaskApprovalResponse.builder()

@@ -34,6 +34,14 @@ ai/
    - `doctorWorkbenchPayload`
 5. 如果 Agent 不可用、灰度未放行或响应异常，则自动回退普通对话
 
+当前这条链路已经开始平台化收敛：
+
+1. `TaskTriggerRouter` 不只输出 doctor 场景判断，也会输出平台统一 `PlatformTaskRoutingDecision`
+2. `AgentDispatchPolicy` 已退化为平台 `PlatformDispatchPolicyEngine` 的入口适配层
+3. `doctor-assistant-agent` 内部 `SubAgentCoordinator` 已升级为 registry 驱动 selector，并支持 `SERIAL / PARALLEL`
+4. `ReActAgentEngine` 会消费 selector 产出的执行 plan，当前已支持“并行计划、分步串行消费”的多 Agent 协作
+5. 审批、恢复、run 快照、replay、tool 治理已经开始沉到 `agent-platform-common`
+
 整合后详细时序图见：
 
 - [AI Chat x Doctor Assistant Agent 整合时序图](AI_CHAT_AGENT_INTEGRATION_SEQUENCE.md)

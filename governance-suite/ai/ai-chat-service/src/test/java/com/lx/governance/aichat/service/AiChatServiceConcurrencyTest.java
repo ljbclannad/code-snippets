@@ -104,6 +104,10 @@ class AiChatServiceConcurrencyTest {
 
         AiChatMetrics metrics = new AiChatMetrics(new SimpleMeterRegistry());
         ConversationExecutionGuard conversationExecutionGuard = new ConversationExecutionGuard(0L);
+        AgentConversationRouteRuntime routeRuntime = new AgentConversationRouteRuntime(
+                agentDispatchPolicy,
+                true,
+                10 * 60 * 1000L);
 
         aiChatService = new AiChatService(
                 userProfileClient,
@@ -126,10 +130,11 @@ class AiChatServiceConcurrencyTest {
                 taskTriggerRouter,
                 doctorAssistantTaskRequestFactory,
                 doctorAssistantAgentGateway,
-                agentDispatchPolicy);
+                routeRuntime);
 
         ReflectionTestUtils.setField(aiChatService, "autoRecommendEnabled", false);
         ReflectionTestUtils.setField(aiChatService, "recommendCount", 3);
+        ReflectionTestUtils.setField(aiChatService, "chatExecutor", executorService);
 
         when(userProfileClient.requestUserProfile(anyString()))
                 .thenReturn(CompletableFuture.completedFuture(new UserProfileDTO()));
@@ -147,7 +152,7 @@ class AiChatServiceConcurrencyTest {
                         .rewriteSource("BYPASS")
                         .rewriteReason("test_default")
                         .build());
-        when(taskTriggerRouter.route(any())).thenReturn(TaskTriggerDecision.builder()
+        when(taskTriggerRouter.route(org.mockito.ArgumentMatchers.any(com.lx.governance.aichat.dto.TaskTriggerContext.class))).thenReturn(TaskTriggerDecision.builder()
                 .route(TaskTriggerRoute.DIRECT_CHAT)
                 .taskType(TaskType.NONE)
                 .summary("test_default")
@@ -170,7 +175,10 @@ class AiChatServiceConcurrencyTest {
                         .patientSafeReply("建议继续观察并补充近一周血糖记录。")
                         .needsHumanReview(Boolean.FALSE)
                         .build());
-        when(agentDispatchPolicy.evaluate(any(), any()))
+        when(agentDispatchPolicy.evaluate(
+                org.mockito.ArgumentMatchers.any(com.lx.governance.aichat.dto.ChatRequest.class),
+                org.mockito.ArgumentMatchers.any(com.lx.governance.aichat.dto.SessionContext.class),
+                org.mockito.ArgumentMatchers.any(com.lx.governance.aichat.dto.TaskTriggerDecision.class)))
                 .thenReturn(new AgentDispatchPolicy.Decision(true, "gray_enabled"));
         doNothing().when(sessionContextService).recordTaskTriggerDecision(anyString(), any());
         doNothing().when(sessionContextService).updateContext(anyString(), anyString(), anyString());
@@ -319,7 +327,7 @@ class AiChatServiceConcurrencyTest {
 
         when(sessionContextService.getOrCreateContext(anyString(), anyString(), anyString(), anyString()))
                 .thenReturn(context);
-        when(taskTriggerRouter.route(any())).thenReturn(TaskTriggerDecision.builder()
+        when(taskTriggerRouter.route(org.mockito.ArgumentMatchers.any(com.lx.governance.aichat.dto.TaskTriggerContext.class))).thenReturn(TaskTriggerDecision.builder()
                 .route(TaskTriggerRoute.DOCTOR_ASSISTANT_AGENT)
                 .taskType(TaskType.PATIENT_FOLLOW_UP_ANALYSIS)
                 .reasons(List.of(TaskTriggerReason.EXPLICIT_ANALYSIS_REQUEST))
@@ -343,7 +351,7 @@ class AiChatServiceConcurrencyTest {
         ChatResponse response = aiChatService.handleChatRequest(request).get(1, TimeUnit.SECONDS);
 
         assertTrue(response.getSuccess());
-        verify(taskTriggerRouter, atLeastOnce()).route(any());
+        verify(taskTriggerRouter, atLeastOnce()).route(org.mockito.ArgumentMatchers.any(com.lx.governance.aichat.dto.TaskTriggerContext.class));
         verify(sessionContextService).recordTaskTriggerDecision(eq("conv-4"), any(TaskTriggerDecision.class));
         verify(doctorAssistantTaskRequestFactory).buildPatientDialogRequest(eq(request), eq(context), any(UserProfileDTO.class), any(), any(TaskTriggerDecision.class), anyString());
         verify(doctorAssistantAgentGateway).analyzePatientTask(any());
@@ -362,7 +370,7 @@ class AiChatServiceConcurrencyTest {
 
         when(sessionContextService.getOrCreateContext(anyString(), anyString(), anyString(), anyString()))
                 .thenReturn(context);
-        when(taskTriggerRouter.route(any())).thenReturn(TaskTriggerDecision.builder()
+        when(taskTriggerRouter.route(org.mockito.ArgumentMatchers.any(com.lx.governance.aichat.dto.TaskTriggerContext.class))).thenReturn(TaskTriggerDecision.builder()
                 .route(TaskTriggerRoute.DOCTOR_ASSISTANT_AGENT)
                 .taskType(TaskType.PATIENT_FOLLOW_UP_ANALYSIS)
                 .reasons(List.of(TaskTriggerReason.EXPLICIT_ANALYSIS_REQUEST))

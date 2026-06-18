@@ -1,6 +1,8 @@
 package com.health.agent.tool;
 
 import com.alibaba.fastjson2.JSON;
+import com.health.agent.engine.AgentToolCatalog;
+import com.health.agent.scene.doctor.tool.DoctorToolDefinitionRegistry;
 import com.health.agent.service.PatientService;
 import com.health.agent.service.FollowUpTaskService;
 import com.health.agent.service.HealthKnowledgeService;
@@ -14,6 +16,7 @@ import com.health.agent.model.FollowUpTask;
 import com.health.agent.model.HealthKnowledge;
 import com.health.agent.model.ToolEvidence;
 import com.health.agent.model.ToolExecutionOutput;
+import com.lx.governance.agentplatform.model.ToolDefinition;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -29,9 +32,14 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 @Component
-public class ToolRegistry {
+public class ToolRegistry implements AgentToolCatalog {
 
     private final Map<String, Tool> tools = new HashMap<>();
+    private final DoctorToolDefinitionRegistry doctorToolDefinitionRegistry;
+
+    public ToolRegistry(DoctorToolDefinitionRegistry doctorToolDefinitionRegistry) {
+        this.doctorToolDefinitionRegistry = doctorToolDefinitionRegistry;
+    }
 
     @Autowired
     private PatientService patientService;
@@ -51,265 +59,20 @@ public class ToolRegistry {
     @PostConstruct
     public void registerTools() {
         log.info("开始注册工具...");
-
-        // 低风险工具：查询类
-        register(Tool.builder()
-            .name("get_patient_profile")
-            .description("查询患者基本信息（年龄、性别、目标、慢性病等）")
-            .riskLevel(ToolRiskLevel.LOW)
-            .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true, "maxLength", 64)
-            ))
-            .executor(this::getPatientProfile)
-            .build());
-
-        register(Tool.builder()
-            .name("get_weight_history")
-            .description("查询患者体重历史记录")
-            .riskLevel(ToolRiskLevel.LOW)
-            .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
-                "days", Map.of("type", "integer", "default", 30, "min", 1, "max", 90)
-            ))
-            .executor(this::getWeightHistory)
-            .build());
-
-        register(Tool.builder()
-            .name("get_chat_history")
-            .description("查询患者最近的聊天记录")
-            .riskLevel(ToolRiskLevel.LOW)
-            .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
-                "limit", Map.of("type", "integer", "default", 20, "min", 1, "max", 50)
-            ))
-            .executor(this::getChatHistory)
-            .build());
-
-        register(Tool.builder()
-            .name("get_prescription_history")
-            .description("查询患者的处方历史")
-            .riskLevel(ToolRiskLevel.LOW)
-            .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
-                "limit", Map.of("type", "integer", "default", 10, "min", 1, "max", 30)
-            ))
-            .executor(this::getPrescriptionHistory)
-            .build());
-
-        register(Tool.builder()
-            .name("calculate_bmi")
-            .description("计算BMI指数")
-            .riskLevel(ToolRiskLevel.LOW)
-            .inputSchema(Map.of(
-                "weight", Map.of("type", "number", "required", true, "min", 1, "max", 500),
-                "height", Map.of("type", "number", "required", true, "min", 50, "max", 250)
-            ))
-            .executor(this::calculateBmi)
-            .build());
-
-        register(Tool.builder()
-            .name("analyze_weight_trend")
-            .description("分析体重变化趋势")
-            .riskLevel(ToolRiskLevel.LOW)
-            .inputSchema(Map.of(
-                "weightRecords", Map.of("type", "array", "required", true, "minItems", 1, "maxItems", 180)
-            ))
-            .executor(this::analyzeWeightTrend)
-            .build());
-
-        register(Tool.builder()
-            .name("detect_weight_plateau")
-            .description("识别是否进入减重停滞期")
-            .riskLevel(ToolRiskLevel.LOW)
-            .inputSchema(Map.of(
-                "weightRecords", Map.of("type", "array", "required", true, "minItems", 2, "maxItems", 180)
-            ))
-            .executor(this::detectWeightPlateau)
-            .build());
-
-        register(Tool.builder()
-            .name("analyze_adherence_signals")
-            .description("分析饮食和运动依从性信号")
-            .riskLevel(ToolRiskLevel.LOW)
-            .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
-                "recentDays", Map.of("type", "integer", "default", 14, "min", 7, "max", 30),
-                "taskLimit", Map.of("type", "integer", "default", 10, "min", 1, "max", 30)
-            ))
-            .executor(this::analyzeAdherenceSignals)
-            .build());
-
-        register(Tool.builder()
-            .name("get_health_knowledge")
-            .description("查询减重管理相关健康知识")
-            .riskLevel(ToolRiskLevel.LOW)
-            .inputSchema(Map.of(
-                "topic", Map.of("type", "string", "required", true, "maxLength", 100)
-            ))
-            .executor(this::getHealthKnowledge)
-            .build());
-
-        register(Tool.builder()
-            .name("triage_red_flags")
-            .description("基于近期聊天内容识别红旗症状并给出分诊级别")
-            .riskLevel(ToolRiskLevel.LOW)
-            .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
-                "limit", Map.of("type", "integer", "default", 20, "min", 1, "max", 50)
-            ))
-            .executor(this::triageRedFlags)
-            .build());
-
-        register(Tool.builder()
-            .name("analyze_medication_adherence")
-            .description("分析近期聊天和处方历史中的漏服、停药、自行调药风险")
-            .riskLevel(ToolRiskLevel.LOW)
-            .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
-                "chatLimit", Map.of("type", "integer", "default", 20, "min", 1, "max", 50),
-                "prescriptionLimit", Map.of("type", "integer", "default", 10, "min", 1, "max", 30)
-            ))
-            .executor(this::analyzeMedicationAdherence)
-            .build());
-
-        register(Tool.builder()
-            .name("summarize_symptom_timeline")
-            .description("从近期聊天内容中抽取症状出现时间、持续时长、变化趋势和伴随症状")
-            .riskLevel(ToolRiskLevel.LOW)
-            .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
-                "limit", Map.of("type", "integer", "default", 20, "min", 1, "max", 50)
-            ))
-            .executor(this::summarizeSymptomTimeline)
-            .build());
-
-        register(Tool.builder()
-            .name("assess_follow_up_urgency")
-            .description("结合近期聊天风险信号评估随访紧急度和推荐时窗")
-            .riskLevel(ToolRiskLevel.LOW)
-            .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
-                "limit", Map.of("type", "integer", "default", 20, "min", 1, "max", 50)
-            ))
-            .executor(this::assessFollowUpUrgency)
-            .build());
-
-        register(Tool.builder()
-            .name("generate_patient_education_points")
-            .description("生成患者教育要点，强调生活方式、监测提醒和何时寻求帮助")
-            .riskLevel(ToolRiskLevel.LOW)
-            .inputSchema(Map.of(
-                "topic", Map.of("type", "string", "required", true, "maxLength", 100),
-                "riskLevel", Map.of("type", "string", "required", false, "maxLength", 16)
-            ))
-            .executor(this::generatePatientEducationPoints)
-            .build());
-
-        register(Tool.builder()
-            .name("check_self_monitoring_completeness")
-            .description("检查近期自我监测数据是否缺关键项目，如体重、症状或聊天随访反馈")
-            .riskLevel(ToolRiskLevel.LOW)
-            .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
-                "recentDays", Map.of("type", "integer", "default", 14, "min", 3, "max", 30)
-            ))
-            .executor(this::checkSelfMonitoringCompleteness)
-            .build());
-
-        register(Tool.builder()
-            .name("extract_structured_symptoms")
-            .description("从近期聊天中结构化抽取症状、程度、频率、诱因和缓解因素")
-            .riskLevel(ToolRiskLevel.LOW)
-            .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
-                "limit", Map.of("type", "integer", "default", 20, "min", 1, "max", 50)
-            ))
-            .executor(this::extractStructuredSymptoms)
-            .build());
-
-        register(Tool.builder()
-            .name("screen_mental_health_risk")
-            .description("筛查近期聊天中的焦虑、抑郁、失眠和轻生等心理风险")
-            .riskLevel(ToolRiskLevel.LOW)
-            .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
-                "limit", Map.of("type", "integer", "default", 20, "min", 1, "max", 50)
-            ))
-            .executor(this::screenMentalHealthRisk)
-            .build());
-
-        register(Tool.builder()
-            .name("recommend_follow_up_data_requests")
-            .description("根据当前数据缺口给出下一轮随访需补充的关键数据字段")
-            .riskLevel(ToolRiskLevel.LOW)
-            .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
-                "taskType", Map.of("type", "string", "required", false, "maxLength", 64)
-            ))
-            .executor(this::recommendFollowUpDataRequests)
-            .build());
-
-        // 中风险工具：通知类
-        register(Tool.builder()
-            .name("send_reminder")
-            .description("给患者发送减重管理提醒消息")
-            .riskLevel(ToolRiskLevel.MEDIUM)
-            .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
-                "message", Map.of("type", "string", "required", true, "maxLength", 500)
-            ))
-            .executor(this::sendReminder)
-            .build());
-
-        register(Tool.builder()
-            .name("create_follow_up_task")
-            .description("创建减重随访任务")
-            .riskLevel(ToolRiskLevel.MEDIUM)
-            .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
-                "taskDescription", Map.of("type", "string", "required", true, "maxLength", 500),
-                "dueDate", Map.of("type", "string", "required", true, "maxLength", 32)
-            ))
-            .executor(this::createFollowUpTask)
-            .build());
-
-        register(Tool.builder()
-            .name("send_health_report")
-            .description("发送减重阶段报告给患者")
-            .riskLevel(ToolRiskLevel.MEDIUM)
-            .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
-                "reportContent", Map.of("type", "string", "required", true, "maxLength", 4000)
-            ))
-            .executor(this::sendHealthReport)
-            .build());
-
-        // 高风险工具：医疗决策类
-        register(Tool.builder()
-            .name("draft_weight_management_plan")
-            .description("起草减重管理方案建议（需要医生审核确认）")
-            .riskLevel(ToolRiskLevel.HIGH)
-            .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
-                "recommendations", Map.of("type", "array", "required", true, "itemType", "string", "minItems", 1, "maxItems", 20),
-                "reason", Map.of("type", "string", "required", true, "maxLength", 500)
-            ))
-            .executor(this::draftWeightManagementPlan)
-            .build());
-
-        register(Tool.builder()
-            .name("recommend_medical_review")
-            .description("建议转人工医学复核（需要医生审核确认）")
-            .riskLevel(ToolRiskLevel.HIGH)
-            .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
-                "reviewReason", Map.of("type", "string", "required", true, "maxLength", 500),
-                "evidence", Map.of("type", "array", "required", true, "itemType", "string", "minItems", 1, "maxItems", 20)
-            ))
-            .executor(this::recommendMedicalReview)
-            .build());
+        tools.clear();
+        doctorToolDefinitionRegistry.listDefinitions().forEach(this::registerDefinition);
 
         log.info("工具注册完成，共注册 {} 个工具", tools.size());
+    }
+
+    private void registerDefinition(ToolDefinition definition) {
+        register(Tool.builder()
+                .name(definition.getToolName())
+                .description(definition.getDescription())
+                .riskLevel(resolveRiskLevel(definition.getRiskLevel()))
+                .inputSchema(definition.getSchema())
+                .executor(resolveExecutor(definition.getToolName()))
+                .build());
     }
 
     private void register(Tool tool) {
@@ -321,8 +84,57 @@ public class ToolRegistry {
         return tools.get(name);
     }
 
+    public ToolDefinition getDefinition(String name) {
+        return doctorToolDefinitionRegistry.findDefinition(name).orElse(null);
+    }
+
     public List<Tool> getAllTools() {
         return new ArrayList<>(tools.values());
+    }
+
+    @Override
+    public List<com.lx.governance.agentplatform.model.ToolDescriptor> listToolDescriptors() {
+        return doctorToolDefinitionRegistry.listToolDescriptors();
+    }
+
+    private ToolRiskLevel resolveRiskLevel(String riskLevel) {
+        if (riskLevel == null || riskLevel.isBlank()) {
+            return ToolRiskLevel.LOW;
+        }
+        try {
+            return ToolRiskLevel.valueOf(riskLevel);
+        } catch (IllegalArgumentException ignore) {
+            return ToolRiskLevel.LOW;
+        }
+    }
+
+    private ToolExecutor resolveExecutor(String toolName) {
+        return switch (toolName) {
+            case "get_patient_profile" -> this::getPatientProfile;
+            case "get_weight_history" -> this::getWeightHistory;
+            case "get_chat_history" -> this::getChatHistory;
+            case "get_prescription_history" -> this::getPrescriptionHistory;
+            case "calculate_bmi" -> this::calculateBmi;
+            case "analyze_weight_trend" -> this::analyzeWeightTrend;
+            case "detect_weight_plateau" -> this::detectWeightPlateau;
+            case "analyze_adherence_signals" -> this::analyzeAdherenceSignals;
+            case "get_health_knowledge" -> this::getHealthKnowledge;
+            case "triage_red_flags" -> this::triageRedFlags;
+            case "analyze_medication_adherence" -> this::analyzeMedicationAdherence;
+            case "summarize_symptom_timeline" -> this::summarizeSymptomTimeline;
+            case "assess_follow_up_urgency" -> this::assessFollowUpUrgency;
+            case "generate_patient_education_points" -> this::generatePatientEducationPoints;
+            case "check_self_monitoring_completeness" -> this::checkSelfMonitoringCompleteness;
+            case "extract_structured_symptoms" -> this::extractStructuredSymptoms;
+            case "screen_mental_health_risk" -> this::screenMentalHealthRisk;
+            case "recommend_follow_up_data_requests" -> this::recommendFollowUpDataRequests;
+            case "send_reminder" -> this::sendReminder;
+            case "create_follow_up_task" -> this::createFollowUpTask;
+            case "send_health_report" -> this::sendHealthReport;
+            case "draft_weight_management_plan" -> this::draftWeightManagementPlan;
+            case "recommend_medical_review" -> this::recommendMedicalReview;
+            default -> throw new IllegalStateException("未配置工具执行器: " + toolName);
+        };
     }
 
     // ========== 工具执行器实现 ==========

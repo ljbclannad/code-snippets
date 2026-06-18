@@ -194,6 +194,7 @@ ai-chat:
     base-url: ${DOCTOR_ASSISTANT_AGENT_BASE_URL:http://localhost:8088}
     timeout-ms: 15000
     auto-fallback-to-direct-chat: true
+    pending-review-short-circuit-window-ms: 600000
     doctor-pilot-mode: true
     patient-conservative-readonly-mode: true
     enabled-task-types:
@@ -202,6 +203,13 @@ ai-chat:
       - NEXT_FOLLOW_UP_ACTION_RECOMMENDATION
     enabled-group-ids: []
     circuit-breaker-open: false
+    task:
+      patient-visible-response-only: true
+      require-human-review-for-high-risk: true
+      require-evidence: true
+      require-audit-trail: true
+      fallback-to-direct-chat-on-failure: true
+      timeout-millis: 8000
   concurrency:
     conversation-lock-timeout-ms: 0
 

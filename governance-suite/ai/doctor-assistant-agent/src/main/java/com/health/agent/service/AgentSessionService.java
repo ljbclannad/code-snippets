@@ -30,6 +30,9 @@ public class AgentSessionService {
     @Autowired
     private PendingTaskMapper taskMapper;
 
+    @Autowired(required = false)
+    private ContextEvidenceRetentionService contextEvidenceRetentionService;
+
     /**
      * 创建会话
      */
@@ -77,7 +80,7 @@ public class AgentSessionService {
         session.setHistoryJson(JSON.toJSONString(history));
         session.setMessagesJson(JSON.toJSONString(messages));
         if (context != null) {
-            session.setContextJson(JSON.toJSONString(context));
+            session.setContextJson(JSON.toJSONString(retainedContext(context)));
         }
         session.setCurrentStep(currentStep);
         session.setUpdatedAt(LocalDateTime.now());
@@ -104,7 +107,7 @@ public class AgentSessionService {
         session.setHistoryJson(JSON.toJSONString(history));
         session.setMessagesJson(JSON.toJSONString(messages));
         if (context != null) {
-            session.setContextJson(JSON.toJSONString(context));
+            session.setContextJson(JSON.toJSONString(retainedContext(context)));
         }
         session.setUpdatedAt(LocalDateTime.now());
 
@@ -146,7 +149,7 @@ public class AgentSessionService {
         session.setStatus(SessionStatus.COMPLETED.name());
         session.setHistoryJson(JSON.toJSONString(history));
         if (context != null) {
-            session.setContextJson(JSON.toJSONString(context));
+            session.setContextJson(JSON.toJSONString(retainedContext(context)));
         }
         session.setCompletedAt(LocalDateTime.now());
         session.setUpdatedAt(LocalDateTime.now());
@@ -215,5 +218,12 @@ public class AgentSessionService {
             .last("LIMIT " + limit);
 
         return sessionMapper.selectList(wrapper);
+    }
+
+    private AgentContext retainedContext(AgentContext context) {
+        if (contextEvidenceRetentionService == null) {
+            return context;
+        }
+        return contextEvidenceRetentionService.retainForPersistence(context);
     }
 }

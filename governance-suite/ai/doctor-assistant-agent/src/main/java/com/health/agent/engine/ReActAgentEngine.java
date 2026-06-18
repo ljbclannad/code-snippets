@@ -7,11 +7,11 @@ import java.util.Map;
 import java.util.function.Consumer;
 
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import com.alibaba.fastjson2.JSON;
 import com.health.agent.client.DeepSeekClient;
+import com.health.agent.config.DoctorAgentRuntimeProperties;
 import com.health.agent.dto.agent.AgentExecutionCommand;
 import com.health.agent.engine.subagent.AgentSubAgent;
 import com.health.agent.engine.subagent.SubAgentCoordinator;
@@ -25,6 +25,7 @@ import com.health.agent.model.AgentSession;
 import com.health.agent.model.AgentStreamEvent;
 import com.health.agent.model.AgentStreamEventType;
 import com.health.agent.model.ContextEntry;
+import com.health.agent.model.EvidenceRecord;
 import com.health.agent.model.Message;
 import com.health.agent.model.PendingTask;
 import com.health.agent.model.SessionStatus;
@@ -37,8 +38,27 @@ import com.health.agent.model.ToolExecutionOutput;
 import com.health.agent.safety.MedicalSafetyService;
 import com.health.agent.safety.SafetyAssessment;
 import com.health.agent.service.AgentAuditService;
+import com.health.agent.service.AgentApprovalResumeState;
+import com.health.agent.service.AgentContextMutationService;
 import com.health.agent.service.AgentSessionService;
-import com.health.agent.tool.ToolRegistry;
+import com.health.agent.service.AgentSessionWorkflowService;
+import com.health.agent.service.ContextPrivacySanitizer;
+import com.lx.governance.agentplatform.model.AgentSelectionDecision;
+import com.lx.governance.agentplatform.model.AgentSelectionMode;
+import com.lx.governance.agentplatform.model.LoopContext;
+import com.lx.governance.agentplatform.model.LoopOutcome;
+import com.lx.governance.agentplatform.model.LoopTerminationReason;
+import com.lx.governance.agentplatform.model.AgentAccessContext;
+import com.lx.governance.agentplatform.model.PlatformAgentHandoff;
+import com.lx.governance.agentplatform.model.PlatformAgentHandoffItem;
+import com.lx.governance.agentplatform.model.PlatformContext;
+import com.lx.governance.agentplatform.model.PlatformContextField;
+import com.lx.governance.agentplatform.model.RunStatus;
+import com.lx.governance.agentplatform.model.PlatformContextVisibility;
+import com.lx.governance.agentplatform.model.PlatformHandoffItemType;
+import com.lx.governance.agentplatform.runtime.AbstractPlatformLoopExecutor;
+import com.lx.governance.agentplatform.runtime.LoopStepDecision;
+import com.lx.governance.agentplatform.runtime.PlatformLoopExecutor;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -49,11 +69,17 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 public class ReActAgentEngine {
 
+    private static final String SLOT_SUB_AGENT_SELECTION_DECISION = "sub_agent_selection_decision";
+    private static final String SLOT_SUB_AGENT_PENDING_PLAN = "sub_agent_pending_plan";
+    private static final String SLOT_SUB_AGENT_EXECUTED_PLAN = "sub_agent_executed_plan";
+
+    private final PlatformLoopExecutor<ReActLoopState, AgentResult> loopExecutor = new ReActPlatformLoopExecutor();
+
     @Autowired
     private DeepSeekClient deepSeekClient;
 
     @Autowired
-    private ReActPromptBuilder promptBuilder;
+    private AgentPromptProvider promptBuilder;
 
     @Autowired
     private ReActResponseParser responseParser;
@@ -62,10 +88,16 @@ public class ReActAgentEngine {
     private ActionExecutor actionExecutor;
 
     @Autowired
-    private ToolRegistry toolRegistry;
+    private AgentToolCatalog toolRegistry;
 
     @Autowired
     private AgentSessionService sessionService;
+
+    @Autowired
+    private AgentSessionWorkflowService workflowService;
+
+    @Autowired
+    private AgentContextMutationService contextMutationService;
 
     @Autowired
     private AgentMetrics agentMetrics;
@@ -79,14 +111,17 @@ public class ReActAgentEngine {
     @Autowired
     private SubAgentCoordinator subAgentCoordinator;
 
-    @Value("${agent.max-steps:15}")
-    private int maxSteps;
+    @Autowired(required = false)
+    private ContextPrivacySanitizer contextPrivacySanitizer;
 
-    @Value("${agent.use-mock:false}")
-    private boolean useMock;
+    @Autowired(required = false)
+    private DoctorAgentRuntimeProperties runtimeProperties;
 
-    @Value("${agent.protocol-repair-attempts:1}")
-    private int protocolRepairAttempts;
+    private int maxSteps = 15;
+
+    private boolean useMock = false;
+
+    private int protocolRepairAttempts = 1;
 
     /**
      * 执行 Agent 任务
@@ -123,7 +158,7 @@ public class ReActAgentEngine {
         }
 
         messages.add(Message.user(promptBuilder.buildUserPrompt(goal, customerId)));
-        return runLoop(new LoopExecution(
+        return executeLoop(newLoopContext(
                 sessionId,
                 goal,
                 customerId,
@@ -133,7 +168,7 @@ public class ReActAgentEngine {
                 0,
                 startTime,
                 null,
-                context));
+                context)).getResult();
     }
 
     public AgentResult executeStream(
@@ -185,8 +220,11 @@ public class ReActAgentEngine {
             return result;
         }
 
-        messages.add(Message.user(promptBuilder.buildUserPrompt(command)));
-        return runLoop(new LoopExecution(
+        AgentSubAgent initialSubAgent = selectSubAgent(goal, context);
+        AgentContext initialVisibleContext = projectContextForSubAgent(context, initialSubAgent);
+        messages.add(Message.user(promptBuilder.buildUserPrompt(
+                commandForPrompt(command, initialVisibleContext))));
+        return executeLoop(newLoopContext(
                 sessionId,
                 goal,
                 customerId,
@@ -196,7 +234,7 @@ public class ReActAgentEngine {
                 0,
                 startTime,
                 eventSink,
-                context));
+                context)).getResult();
     }
 
     private AgentContext createInitialContext(AgentExecutionCommand command) {
@@ -208,9 +246,23 @@ public class ReActAgentEngine {
         return context;
     }
 
+    @Autowired(required = false)
+    void applyRuntimeProperties(DoctorAgentRuntimeProperties runtimeProperties) {
+        if (runtimeProperties == null) {
+            return;
+        }
+        this.runtimeProperties = runtimeProperties;
+        this.maxSteps = runtimeProperties.getMaxSteps();
+        this.useMock = runtimeProperties.isUseMock();
+        this.protocolRepairAttempts = runtimeProperties.getProtocolRepairAttempts();
+    }
+
     private void preloadContext(AgentContext context, AgentExecutionCommand command) {
         if (context == null || command == null) {
             return;
+        }
+        if (command.getPlatformContext() != null) {
+            preloadPlatformContext(context, command.getPlatformContext());
         }
 
         Map<String, Object> patientTaskRequest = new java.util.LinkedHashMap<>();
@@ -221,42 +273,53 @@ public class ReActAgentEngine {
         putIfNotNull(patientTaskRequest, "conversationId", command.getConversationId());
         putIfNotNull(patientTaskRequest, "correlationId", command.getCorrelationId());
         if (!patientTaskRequest.isEmpty()) {
-            context.putSlot("patient_task_request", patientTaskRequest, "REQUEST_PRELOAD");
+            context.putSlot("patient_task_request", patientTaskRequest, "REQUEST_PRELOAD",
+                    PlatformContextVisibility.AGENT_INTERNAL);
         }
 
         if (command.getSessionContext() != null && !command.getSessionContext().isEmpty()) {
-            context.putSlot("session_context", command.getSessionContext(), "REQUEST_PRELOAD");
+            context.putSlot("session_context", command.getSessionContext(), "REQUEST_PRELOAD",
+                    PlatformContextVisibility.AGENT_INTERNAL);
             context.addEvidence("session_context", "AI_CHAT_SESSION_CONTEXT",
-                    JSON.toJSONString(command.getSessionContext()), command.getSessionContext());
+                    JSON.toJSONString(command.getSessionContext()), command.getSessionContext(),
+                    PlatformContextVisibility.AGENT_INTERNAL);
         }
         if (command.getProfileSnapshot() != null && !command.getProfileSnapshot().isEmpty()) {
-            context.putSlot("profile_snapshot", command.getProfileSnapshot(), "REQUEST_PRELOAD");
-            context.putSlot("patient_profile", command.getProfileSnapshot(), "REQUEST_PRELOAD_NORMALIZED");
+            context.putSlot("profile_snapshot", command.getProfileSnapshot(), "REQUEST_PRELOAD",
+                    PlatformContextVisibility.AGENT_INTERNAL);
+            context.putSlot("patient_profile", command.getProfileSnapshot(), "REQUEST_PRELOAD_NORMALIZED",
+                    PlatformContextVisibility.AGENT_INTERNAL);
             context.addEvidence("profile_snapshot", "PROFILE_SNAPSHOT",
-                    JSON.toJSONString(command.getProfileSnapshot()), command.getProfileSnapshot());
+                    JSON.toJSONString(command.getProfileSnapshot()), command.getProfileSnapshot(),
+                    PlatformContextVisibility.AGENT_INTERNAL);
         }
         if (command.getMemorySnapshot() != null) {
-            context.putSlot("memory_snapshot", command.getMemorySnapshot(), "REQUEST_PRELOAD");
+            context.putSlot("memory_snapshot", command.getMemorySnapshot(), "REQUEST_PRELOAD",
+                    PlatformContextVisibility.AGENT_INTERNAL);
             context.addEvidence("memory_snapshot", "AI_CHAT_MEMORY",
-                    JSON.toJSONString(command.getMemorySnapshot()), command.getMemorySnapshot());
+                    JSON.toJSONString(command.getMemorySnapshot()), command.getMemorySnapshot(),
+                    PlatformContextVisibility.AGENT_INTERNAL);
             if (command.getMemorySnapshot().getShortTermMemories() != null
                     && !command.getMemorySnapshot().getShortTermMemories().isEmpty()) {
                 context.putSlot("chat_history", command.getMemorySnapshot().getShortTermMemories(),
-                        "REQUEST_PRELOAD_NORMALIZED");
+                        "REQUEST_PRELOAD_NORMALIZED", PlatformContextVisibility.AGENT_INTERNAL);
                 context.putSlot("recent_follow_up_signals", command.getMemorySnapshot().getShortTermMemories(),
-                        "REQUEST_PRELOAD_NORMALIZED");
+                        "REQUEST_PRELOAD_NORMALIZED", PlatformContextVisibility.AGENT_INTERNAL);
             }
         }
         if (command.getTriggerDecision() != null && !command.getTriggerDecision().isEmpty()) {
-            context.putSlot("trigger_decision", command.getTriggerDecision(), "REQUEST_PRELOAD");
+            context.putSlot("trigger_decision", command.getTriggerDecision(), "REQUEST_PRELOAD",
+                    PlatformContextVisibility.AUDIT_ONLY);
             context.addEvidence("trigger_decision", "TRIGGER_DECISION",
-                    JSON.toJSONString(command.getTriggerDecision()), command.getTriggerDecision());
+                    JSON.toJSONString(command.getTriggerDecision()), command.getTriggerDecision(),
+                    PlatformContextVisibility.AUDIT_ONLY);
         }
         if (command.getPatientMessage() != null && !command.getPatientMessage().isBlank()) {
             context.putSlot("patient_message", Map.of(
                     "content", command.getPatientMessage(),
                     "conversationId", defaultString(command.getConversationId()),
-                    "correlationId", defaultString(command.getCorrelationId())), "REQUEST_PRELOAD");
+                    "correlationId", defaultString(command.getCorrelationId())), "REQUEST_PRELOAD",
+                    PlatformContextVisibility.AGENT_INTERNAL);
             context.addEvidence(
                     "patient_message",
                     "PATIENT_MESSAGE",
@@ -264,13 +327,55 @@ public class ReActAgentEngine {
                     Map.of(
                             "conversationId", defaultString(command.getConversationId()),
                             "correlationId", defaultString(command.getCorrelationId()),
-                            "taskType", command.getTaskType() != null ? command.getTaskType().name() : "UNKNOWN"));
+                            "taskType", command.getTaskType() != null ? command.getTaskType().name() : "UNKNOWN"),
+                    PlatformContextVisibility.AGENT_INTERNAL);
         }
         if (command.getPatientMessage() != null && !command.getPatientMessage().isBlank()
                 && !context.getSlots().containsKey("recent_follow_up_signals")) {
             context.putSlot("recent_follow_up_signals", List.of(command.getPatientMessage()),
-                    "REQUEST_PRELOAD_NORMALIZED");
+                    "REQUEST_PRELOAD_NORMALIZED", PlatformContextVisibility.AGENT_INTERNAL);
         }
+    }
+
+    private void preloadPlatformContext(AgentContext context, PlatformContext platformContext) {
+        if (context == null || platformContext == null || platformContext.getFields() == null) {
+            return;
+        }
+        for (PlatformContextField field : platformContext.getFields()) {
+            if (field == null || field.getFieldKey() == null || field.getValue() == null) {
+                continue;
+            }
+            Object normalized = normalizePlatformContextValue(field);
+            PlatformContextVisibility visibility = field.getVisibility() != null
+                    ? field.getVisibility()
+                    : PlatformContextVisibility.AGENT_INTERNAL;
+            context.putSlot(field.getFieldKey(), normalized, defaultString(field.getSource()), visibility);
+            context.addEvidence(
+                    field.getFieldKey(),
+                    defaultString(field.getSource()),
+                    "PlatformContext preload: " + field.getFieldKey(),
+                    normalized,
+                    visibility);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Object normalizePlatformContextValue(PlatformContextField field) {
+        if (field == null || field.getValue() == null) {
+            return null;
+        }
+        Object value = field.getValue();
+        return switch (field.getFieldKey()) {
+            case "session_context", "profile_snapshot", "trigger_decision" ->
+                    value instanceof Map<?, ?> map ? (Map<String, Object>) map : JSON.parseObject(JSON.toJSONString(value));
+            case "memory_snapshot" -> value instanceof com.health.agent.dto.patient.MemorySnapshot
+                    ? value
+                    : JSON.parseObject(JSON.toJSONString(value), com.health.agent.dto.patient.MemorySnapshot.class);
+            case "patient_message" -> value instanceof String string
+                    ? Map.of("content", string)
+                    : value;
+            default -> value;
+        };
     }
 
     private void putIfNotNull(Map<String, Object> target, String key, Object value) {
@@ -292,43 +397,18 @@ public class ReActAgentEngine {
         log.info("Agent恢复执行: sessionId={}, taskId={}", sessionId, approvedTaskId);
 
         try {
-            // 1. 从数据库恢复会话状态
-            AgentSession session = sessionService.getById(sessionId);
-            if (session == null) {
-                throw new AgentException("会话不存在: " + sessionId);
-            }
-
-            // 2. 验证会话状态
-            if (!SessionStatus.PAUSED.name().equals(session.getStatus())) {
-                throw new AgentException("会话状态不正确，当前状态: " + session.getStatus());
-            }
-
-            // 3. 获取并验证已批准的任务
-            PendingTask task = sessionService.getPendingTask(approvedTaskId);
-            if (task == null) {
-                throw new AgentException("任务不存在: " + approvedTaskId);
-            }
-
-            if (!sessionId.equals(task.getAgentSessionId())) {
-                throw new AgentException("任务不属于该会话");
-            }
-
-            if (!TaskStatus.APPROVED.name().equals(task.getStatus())) {
-                throw new AgentException("任务未批准，当前状态: " + task.getStatus());
-            }
-
-            // 4. 恢复执行历史和消息
-            List<Step> history = JSON.parseArray(session.getHistoryJson(), Step.class);
-            List<Message> messages = JSON.parseArray(session.getMessagesJson(), Message.class);
-            AgentContext context = parseContext(session.getContextJson(), session.getCustomerId(),
-                    session.getDoctorId(), session.getGoal());
-            int currentStep = session.getCurrentStep() != null ? session.getCurrentStep() : 0;
+            AgentApprovalResumeState resumeState = loadResumeState(sessionId, approvedTaskId);
+            AgentSession session = resumeState.getSession();
+            List<Step> history = resumeState.getHistory();
+            List<Message> messages = resumeState.getMessages();
+            AgentContext context = resumeState.getContext();
+            int currentStep = resumeState.getCurrentStep();
 
             log.info("恢复会话状态: sessionId={}, currentStep={}, historySize={}",
                     sessionId, currentStep, history.size());
 
             // 5. 执行已批准的行动
-            ActionDecision action = JSON.parseObject(task.getInputJson(), ActionDecision.class);
+            ActionDecision action = resumeState.getApprovedAction();
             log.info("执行已批准的行动: tool={}, input={}",
                     action.getToolName(), JSON.toJSONString(action.getInput()));
 
@@ -336,10 +416,10 @@ public class ReActAgentEngine {
             ActionResult actionResult = actionExecutor.executeApprovedAction(action);
 
             // 6. 记录 Observation
-            String observation = formatObservation(actionResult);
+            String observation = contextMutationService.formatObservation(actionResult);
             history.add(Step.observation(observation));
             messages.add(Message.user("Observation: " + observation));
-            updateContextAfterAction(context, action, actionResult, observation);
+            contextMutationService.applyActionResult(context, action, actionResult, observation);
             recordResumeContextUpdate(session, context, action, beforeSlotSnapshot);
 
             log.info("行动执行完成: {}", observation);
@@ -376,42 +456,21 @@ public class ReActAgentEngine {
         log.info("Agent流式恢复执行: sessionId={}, taskId={}", sessionId, approvedTaskId);
 
         try {
-            AgentSession session = sessionService.getById(sessionId);
-            if (session == null) {
-                throw new AgentException("会话不存在: " + sessionId);
-            }
-
-            if (!SessionStatus.PAUSED.name().equals(session.getStatus())) {
-                throw new AgentException("会话状态不正确，当前状态: " + session.getStatus());
-            }
-
-            PendingTask task = sessionService.getPendingTask(approvedTaskId);
-            if (task == null) {
-                throw new AgentException("任务不存在: " + approvedTaskId);
-            }
-
-            if (!sessionId.equals(task.getAgentSessionId())) {
-                throw new AgentException("任务不属于该会话");
-            }
-
-            if (!TaskStatus.APPROVED.name().equals(task.getStatus())) {
-                throw new AgentException("任务未批准，当前状态: " + task.getStatus());
-            }
-
-            List<Step> history = JSON.parseArray(session.getHistoryJson(), Step.class);
-            List<Message> messages = JSON.parseArray(session.getMessagesJson(), Message.class);
-            AgentContext context = parseContext(session.getContextJson(), session.getCustomerId(), session.getDoctorId(), session.getGoal());
-            int currentStep = session.getCurrentStep() != null ? session.getCurrentStep() : 0;
-
-            ActionDecision action = JSON.parseObject(task.getInputJson(), ActionDecision.class);
+            AgentApprovalResumeState resumeState = loadResumeState(sessionId, approvedTaskId);
+            AgentSession session = resumeState.getSession();
+            List<Step> history = resumeState.getHistory();
+            List<Message> messages = resumeState.getMessages();
+            AgentContext context = resumeState.getContext();
+            int currentStep = resumeState.getCurrentStep();
+            ActionDecision action = resumeState.getApprovedAction();
             Map<String, Object> beforeSlotSnapshot = snapshotContextSlots(context);
             ActionResult actionResult = actionExecutor.executeApprovedAction(action);
 
-            String observation = formatObservation(actionResult);
+            String observation = contextMutationService.formatObservation(actionResult);
             history.add(Step.observation(observation));
             messages.add(Message.user("Observation: " + observation));
             emitEvent(eventSink, sessionId, currentStep + 1, AgentStreamEventType.OBSERVATION, observation);
-            updateContextAfterAction(context, action, actionResult, observation);
+            contextMutationService.applyActionResult(context, action, actionResult, observation);
             emitContextUpdated(sessionId, currentStep + 1, context, action.getToolName(), eventSink);
             recordResumeContextUpdate(session, context, action, beforeSlotSnapshot);
 
@@ -445,6 +504,10 @@ public class ReActAgentEngine {
         }
     }
 
+    private AgentApprovalResumeState loadResumeState(String sessionId, Long approvedTaskId) {
+        return workflowService.loadApprovedResumeState(sessionId, approvedTaskId);
+    }
+
     /**
      * 继续 ReAct 循环
      */
@@ -458,7 +521,7 @@ public class ReActAgentEngine {
             int startStep,
             AgentContext context) {
         log.info("继续ReAct循环: sessionId={}, startStep={}", sessionId, startStep);
-        return runLoop(new LoopExecution(
+        return executeLoop(newLoopContext(
                 sessionId,
                 goal,
                 customerId,
@@ -468,7 +531,7 @@ public class ReActAgentEngine {
                 startStep,
                 System.currentTimeMillis(),
                 null,
-                context));
+                context)).getResult();
     }
 
     private AgentResult continueReActLoopStream(
@@ -483,7 +546,7 @@ public class ReActAgentEngine {
             Consumer<AgentStreamEvent> eventSink,
             AgentContext context) {
         log.info("继续流式ReAct循环: sessionId={}, startStep={}", sessionId, startStep);
-        return runLoop(new LoopExecution(
+        return executeLoop(newLoopContext(
                 sessionId,
                 goal,
                 customerId,
@@ -493,150 +556,125 @@ public class ReActAgentEngine {
                 startStep,
                 startTime,
                 eventSink,
-                context));
+                context)).getResult();
     }
 
-    private AgentResult runLoop(LoopExecution execution) {
-        for (int step = execution.startStep(); step < maxSteps; step++) {
-            int stepNumber = step + 1;
-            log.info("Agent执行第{}步", stepNumber);
-            try {
-                AgentSubAgent subAgent = selectSubAgent(execution.goal(), execution.context());
-                switchSubAgent(execution.sessionId(), stepNumber, execution.context(), subAgent, execution.eventSink());
-                String systemPrompt = promptBuilder.buildSubAgentSystemPrompt(subAgent, toolRegistry.getAllTools());
-                ParsedThought parsedThought = requestThought(execution, systemPrompt, step, stepNumber);
-                log.info("Agent响应: {}", parsedThought.responseText());
+    private LoopContext<ReActLoopState> newLoopContext(
+            String sessionId,
+            String goal,
+            String customerId,
+            String doctorId,
+            List<Step> history,
+            List<Message> messages,
+            int startStep,
+            long startTime,
+            Consumer<AgentStreamEvent> eventSink,
+            AgentContext context) {
+        return LoopContext.<ReActLoopState>builder()
+                .runId(sessionId)
+                .workflowId("doctor-react-loop")
+                .goal(goal)
+                .startStep(startStep)
+                .maxSteps(maxSteps)
+                .startedAt(startTime)
+                .state(ReActLoopState.builder()
+                        .customerId(customerId)
+                        .doctorId(doctorId)
+                        .history(history)
+                        .messages(messages)
+                        .eventSink(eventSink)
+                        .context(context)
+                        .build())
+                .build();
+    }
 
-                ThoughtResult thought = parsedThought.thoughtResult();
-                execution.history().add(Step.thought(thought.getThinking()));
-                execution.messages().add(Message.assistant(parsedThought.responseText()));
-                emitEvent(execution.eventSink(), execution.sessionId(), stepNumber, AgentStreamEventType.THOUGHT,
-                        thought.getThinking());
-
-                if (thought.isFinished()) {
-                    return finalizeSuccess(execution, stepNumber, thought.getStructuredFinalAnswer());
-                }
-
-                ActionDecision action = thought.getAction();
-                execution.history().add(Step.action(action));
-                emitEvent(execution.eventSink(), execution.sessionId(), stepNumber, AgentStreamEventType.ACTION,
-                        actionToEventData(action));
-                log.info("Agent执行行动: tool={}, input={}", action.getToolName(), JSON.toJSONString(action.getInput()));
-
-                SafetyAssessment actionAssessment = medicalSafetyService.assessAction(action, execution.history());
-                if (actionAssessment.isBlocked()) {
-                    applySyntheticObservation(execution, stepNumber, action, actionAssessment.message(), "SAFETY_RULE");
-                    recordSafetyBlock(execution.sessionId(), execution.customerId(), execution.doctorId(),
-                            execution.goal(), actionAssessment, action);
-                    sessionService.updateSession(execution.sessionId(), execution.history(), execution.messages(),
-                            execution.context(), stepNumber);
-                    continue;
-                }
-
-                if (isRepeatedAction(execution.context(), execution.history(), action)) {
-                    applySyntheticObservation(execution, stepNumber, action, buildDuplicateActionObservation(action),
-                            "DUPLICATE_ACTION_GUARD");
-                    agentMetrics.recordDuplicateToolSuppression(action.getToolName());
-                    sessionService.updateSession(execution.sessionId(), execution.history(), execution.messages(),
-                            execution.context(), stepNumber);
-                    continue;
-                }
-
-                ActionResult actionResult = actionExecutor.execute(
-                        action,
-                        execution.customerId(),
-                        execution.doctorId(),
-                        execution.sessionId());
-
-                if (actionResult.isNeedsApproval()) {
-                    return finalizePendingApproval(execution, stepNumber, action, actionResult);
-                }
-
-                String observation = formatObservation(actionResult);
-                execution.history().add(Step.observation(observation));
-                execution.messages().add(Message.user("Observation: " + observation));
-                updateContextAfterAction(execution.context(), action, actionResult, observation);
-                emitContextUpdated(execution.sessionId(), stepNumber, execution.context(), action.getToolName(),
-                        execution.eventSink());
-                emitEvent(execution.eventSink(), execution.sessionId(), stepNumber, AgentStreamEventType.OBSERVATION,
-                        observation);
-                log.info("Agent观察结果: {}", observation);
-                sessionService.updateSession(execution.sessionId(), execution.history(), execution.messages(),
-                        execution.context(), stepNumber);
-            } catch (Exception e) {
-                return finalizeError(execution, stepNumber, e);
-            }
-        }
-
-        return finalizeMaxSteps(execution);
+    private LoopOutcome<ReActLoopState, AgentResult> executeLoop(LoopContext<ReActLoopState> execution) {
+        return loopExecutor.executeLoop(execution);
     }
 
     private ParsedThought requestThought(
-            LoopExecution execution,
+            LoopContext<ReActLoopState> execution,
             String systemPrompt,
             int step,
-            int stepNumber) {
-        if (execution.eventSink() == null) {
-            return requestThoughtResult(systemPrompt, execution.messages(), step, execution.customerId(),
-                    execution.context());
+            int stepNumber,
+            AgentContext promptContext) {
+        if (loopState(execution).getEventSink() == null) {
+            return requestThoughtResult(systemPrompt, loopState(execution).getMessages(), step,
+                    loopState(execution).getCustomerId(), promptContext);
         }
-        return requestThoughtResultStream(systemPrompt, execution.messages(), step, execution.customerId(),
-                execution.sessionId(), execution.eventSink(), stepNumber, execution.context());
+        return requestThoughtResultStream(systemPrompt, loopState(execution).getMessages(), step,
+                loopState(execution).getCustomerId(), execution.getRunId(), loopState(execution).getEventSink(),
+                stepNumber, promptContext);
     }
 
-    private AgentResult finalizeSuccess(LoopExecution execution, int stepNumber, StructuredFinalAnswer finalAnswer) {
-        SafetyAssessment finalAnswerAssessment = medicalSafetyService.assessFinalAnswer(finalAnswer, execution.history());
-        sessionService.completeSession(execution.sessionId(), execution.history(), execution.context());
-        long duration = System.currentTimeMillis() - execution.startTimeMs();
+    private LoopOutcome<ReActLoopState, AgentResult> finalizeSuccess(
+            LoopContext<ReActLoopState> execution,
+            int stepNumber,
+            StructuredFinalAnswer finalAnswer) {
+        SafetyAssessment finalAnswerAssessment = medicalSafetyService.assessFinalAnswer(finalAnswer,
+                loopState(execution).getHistory());
+        sessionService.completeSession(execution.getRunId(), loopState(execution).getHistory(),
+                loopState(execution).getContext());
+        long duration = System.currentTimeMillis() - execution.getStartedAt();
         agentMetrics.recordExecutionSuccess(stepNumber, duration);
 
         AgentResult result = AgentResult.success(
-                execution.sessionId(),
+                execution.getRunId(),
                 finalAnswerAssessment.isBlocked()
                         ? medicalSafetyService.buildSafetyStructuredAnswer(finalAnswerAssessment.message())
                         : finalAnswer,
-                execution.history(),
+                loopState(execution).getHistory(),
                 stepNumber);
         if (finalAnswerAssessment.isBlocked()) {
-            recordSafetyBlock(execution.sessionId(), execution.customerId(), execution.doctorId(), execution.goal(),
-                    finalAnswerAssessment, finalAnswer);
+            recordSafetyBlock(execution.getRunId(), loopState(execution).getCustomerId(),
+                    loopState(execution).getDoctorId(), execution.getGoal(), finalAnswerAssessment, finalAnswer);
         }
-        emitEvent(execution.eventSink(), execution.sessionId(), stepNumber, AgentStreamEventType.FINAL_ANSWER,
+        emitEvent(loopState(execution).getEventSink(), execution.getRunId(), stepNumber,
+                AgentStreamEventType.FINAL_ANSWER,
                 result.getStructuredFinalAnswer());
-        emitSubAgentFinished(execution.sessionId(), stepNumber, execution.context(), execution.eventSink());
-        emitDone(execution.eventSink(), execution.sessionId(), stepNumber, result.getStatus().name());
-        agentAuditService.recordSessionResult(execution.sessionId(), execution.customerId(), execution.doctorId(),
-                execution.goal(), result, stepNumber, duration);
-        return result;
+        emitSubAgentFinished(execution.getRunId(), stepNumber, loopState(execution).getContext(),
+                loopState(execution).getEventSink());
+        emitDone(loopState(execution).getEventSink(), execution.getRunId(), stepNumber, result.getStatus().name());
+        agentAuditService.recordSessionResult(execution.getRunId(), loopState(execution).getCustomerId(),
+                loopState(execution).getDoctorId(), execution.getGoal(), result, stepNumber, duration);
+        return buildLoopOutcome(execution, LoopTerminationReason.FINISHED, RunStatus.COMPLETED, stepNumber, result,
+                null);
     }
 
-    private AgentResult finalizePendingApproval(
-            LoopExecution execution,
+    private LoopOutcome<ReActLoopState, AgentResult> finalizePendingApproval(
+            LoopContext<ReActLoopState> execution,
             int stepNumber,
             ActionDecision action,
             ActionResult actionResult) {
         log.info("行动需要医生确认，Agent暂停");
-        sessionService.pauseSession(execution.sessionId(), execution.history(), execution.messages(), execution.context());
+        sessionService.pauseSession(execution.getRunId(), loopState(execution).getHistory(),
+                loopState(execution).getMessages(), loopState(execution).getContext());
         agentMetrics.recordPendingApproval(action.getToolName());
 
         AgentResult result = AgentResult.pendingApproval(
-                execution.sessionId(),
+                execution.getRunId(),
                 actionResult.getTask(),
-                execution.history(),
+                loopState(execution).getHistory(),
                 stepNumber);
-        emitEvent(execution.eventSink(), execution.sessionId(), stepNumber, AgentStreamEventType.PENDING_APPROVAL,
-                actionResult.getTask());
-        emitSubAgentFinished(execution.sessionId(), stepNumber, execution.context(), execution.eventSink());
-        emitDone(execution.eventSink(), execution.sessionId(), stepNumber, result.getStatus().name());
-        agentAuditService.recordSessionResult(execution.sessionId(), execution.customerId(), execution.doctorId(),
-                execution.goal(), result, stepNumber, System.currentTimeMillis() - execution.startTimeMs());
-        return result;
+        emitEvent(loopState(execution).getEventSink(), execution.getRunId(), stepNumber,
+                AgentStreamEventType.PENDING_APPROVAL, actionResult.getTask());
+        emitSubAgentFinished(execution.getRunId(), stepNumber, loopState(execution).getContext(),
+                loopState(execution).getEventSink());
+        emitDone(loopState(execution).getEventSink(), execution.getRunId(), stepNumber, result.getStatus().name());
+        agentAuditService.recordSessionResult(execution.getRunId(), loopState(execution).getCustomerId(),
+                loopState(execution).getDoctorId(), execution.getGoal(), result, stepNumber,
+                System.currentTimeMillis() - execution.getStartedAt());
+        return buildLoopOutcome(execution, LoopTerminationReason.WAITING_APPROVAL, RunStatus.WAITING_APPROVAL,
+                stepNumber, result, null);
     }
 
-    private AgentResult finalizeError(LoopExecution execution, int stepNumber, Exception e) {
+    private LoopOutcome<ReActLoopState, AgentResult> finalizeError(
+            LoopContext<ReActLoopState> execution,
+            int stepNumber,
+            Exception e) {
         log.error("Agent执行异常", e);
-        sessionService.failSession(execution.sessionId(), e.getMessage());
-        long duration = System.currentTimeMillis() - execution.startTimeMs();
+        sessionService.failSession(execution.getRunId(), e.getMessage());
+        long duration = System.currentTimeMillis() - execution.getStartedAt();
         agentMetrics.recordExecutionFailure(e.getClass().getSimpleName(), stepNumber, duration);
 
         StructuredFinalAnswer degraded = medicalSafetyService.buildDegradedStructuredAnswer(
@@ -645,21 +683,24 @@ public class ReActAgentEngine {
                 buildExecutionRuntimeEvidence(e),
                 List.of("请人工接管当前会话", "补充近期关键数据后再尝试重新分析"),
                 List.of("当前未获得可用的自动分析结果"));
-        AgentResult result = AgentResult.error(execution.sessionId(), e.getMessage(), degraded, execution.history(),
+        AgentResult result = AgentResult.error(execution.getRunId(), e.getMessage(), degraded,
+                loopState(execution).getHistory(),
                 stepNumber);
-        emitEvent(execution.eventSink(), execution.sessionId(), stepNumber, AgentStreamEventType.ERROR,
+        emitEvent(loopState(execution).getEventSink(), execution.getRunId(), stepNumber, AgentStreamEventType.ERROR,
                 errorEventData(e, degraded));
-        emitSubAgentFinished(execution.sessionId(), stepNumber, execution.context(), execution.eventSink());
-        emitDone(execution.eventSink(), execution.sessionId(), stepNumber, result.getStatus().name());
-        agentAuditService.recordSessionResult(execution.sessionId(), execution.customerId(), execution.doctorId(),
-                execution.goal(), result, stepNumber, duration);
-        return result;
+        emitSubAgentFinished(execution.getRunId(), stepNumber, loopState(execution).getContext(),
+                loopState(execution).getEventSink());
+        emitDone(loopState(execution).getEventSink(), execution.getRunId(), stepNumber, result.getStatus().name());
+        agentAuditService.recordSessionResult(execution.getRunId(), loopState(execution).getCustomerId(),
+                loopState(execution).getDoctorId(), execution.getGoal(), result, stepNumber, duration);
+        return buildLoopOutcome(execution, LoopTerminationReason.FAILED, RunStatus.FAILED, stepNumber, result,
+                e.getMessage());
     }
 
-    private AgentResult finalizeMaxSteps(LoopExecution execution) {
+    private LoopOutcome<ReActLoopState, AgentResult> finalizeMaxSteps(LoopContext<ReActLoopState> execution) {
         log.warn("Agent达到最大步数限制");
-        sessionService.failSession(execution.sessionId(), "达到最大步数限制");
-        long duration = System.currentTimeMillis() - execution.startTimeMs();
+        sessionService.failSession(execution.getRunId(), "达到最大步数限制");
+        long duration = System.currentTimeMillis() - execution.getStartedAt();
         agentMetrics.recordMaxStepsReached(maxSteps, duration);
 
         StructuredFinalAnswer degraded = medicalSafetyService.buildDegradedStructuredAnswer(
@@ -668,28 +709,34 @@ public class ReActAgentEngine {
                 "达到最大步数限制",
                 List.of("请人工查看已有 Observation", "必要时缩小问题范围后重新发起分析"),
                 List.of("当前分析链路未完成"));
-        AgentResult result = AgentResult.maxStepsReached(execution.sessionId(), degraded, execution.history(), maxSteps);
-        emitEvent(execution.eventSink(), execution.sessionId(), maxSteps, AgentStreamEventType.FINAL_ANSWER, degraded);
-        emitSubAgentFinished(execution.sessionId(), maxSteps, execution.context(), execution.eventSink());
-        emitDone(execution.eventSink(), execution.sessionId(), maxSteps, result.getStatus().name());
-        agentAuditService.recordSessionResult(execution.sessionId(), execution.customerId(), execution.doctorId(),
-                execution.goal(), result, maxSteps, duration);
-        return result;
+        AgentResult result = AgentResult.maxStepsReached(execution.getRunId(), degraded,
+                loopState(execution).getHistory(), execution.getMaxSteps());
+        emitEvent(loopState(execution).getEventSink(), execution.getRunId(), execution.getMaxSteps(),
+                AgentStreamEventType.FINAL_ANSWER, degraded);
+        emitSubAgentFinished(execution.getRunId(), execution.getMaxSteps(), loopState(execution).getContext(),
+                loopState(execution).getEventSink());
+        emitDone(loopState(execution).getEventSink(), execution.getRunId(), execution.getMaxSteps(),
+                result.getStatus().name());
+        agentAuditService.recordSessionResult(execution.getRunId(), loopState(execution).getCustomerId(),
+                loopState(execution).getDoctorId(), execution.getGoal(), result, execution.getMaxSteps(), duration);
+        return buildLoopOutcome(execution, LoopTerminationReason.MAX_STEPS, RunStatus.DEGRADED,
+                execution.getMaxSteps(), result, "达到最大步数限制");
     }
 
     private void applySyntheticObservation(
-            LoopExecution execution,
+            LoopContext<ReActLoopState> execution,
             int stepNumber,
             ActionDecision action,
             String observation,
             String evidenceSource) {
-        execution.history().add(Step.observation(observation));
-        execution.messages().add(Message.user("Observation: " + observation));
-        execution.context().addEvidence(action.getToolName(), evidenceSource, observation, action.getInput());
-        updateLastToolResult(execution.context(), action, observation);
-        emitContextUpdated(execution.sessionId(), stepNumber, execution.context(), action.getToolName(),
-                execution.eventSink());
-        emitEvent(execution.eventSink(), execution.sessionId(), stepNumber, AgentStreamEventType.OBSERVATION,
+        loopState(execution).getHistory().add(Step.observation(observation));
+        loopState(execution).getMessages().add(Message.user("Observation: " + observation));
+        loopState(execution).getContext().addEvidence(action.getToolName(), evidenceSource, observation, action.getInput());
+        updateLastToolResult(loopState(execution).getContext(), action, observation);
+        emitContextUpdated(execution.getRunId(), stepNumber, loopState(execution).getContext(), action.getToolName(),
+                loopState(execution).getEventSink());
+        emitEvent(loopState(execution).getEventSink(), execution.getRunId(), stepNumber,
+                AgentStreamEventType.OBSERVATION,
                 observation);
     }
 
@@ -723,28 +770,127 @@ public class ReActAgentEngine {
         return "检测到重复工具调用：该工具刚刚已用相同输入执行且未引入新信息，请改用其他工具补充证据，或基于现有证据直接收敛。";
     }
 
-    private record LoopExecution(
-            String sessionId,
-            String goal,
-            String customerId,
-            String doctorId,
-            List<Step> history,
-            List<Message> messages,
-            int startStep,
-            long startTimeMs,
-            Consumer<AgentStreamEvent> eventSink,
-            AgentContext context) {
+    private class ReActPlatformLoopExecutor extends AbstractPlatformLoopExecutor<ReActLoopState, AgentResult> {
+
+        @Override
+        protected void beforeStep(LoopContext<ReActLoopState> loopContext, int step, int stepNumber) {
+            log.info("Agent执行第{}步", stepNumber);
+        }
+
+        @Override
+        protected LoopStepDecision<ReActLoopState, AgentResult> executeStep(
+                LoopContext<ReActLoopState> execution,
+                int step,
+                int stepNumber) {
+            AgentSubAgent subAgent = selectSubAgent(execution.getGoal(), loopState(execution).getContext());
+            switchSubAgent(execution.getRunId(), stepNumber, loopState(execution).getContext(), subAgent,
+                    loopState(execution).getEventSink());
+            AgentContext visibleContext = projectContextForSubAgent(loopState(execution).getContext(), subAgent);
+            String systemPrompt = promptBuilder.buildSubAgentSystemPromptFromCatalog(
+                    subAgent,
+                    toolRegistry.listToolDescriptors());
+            ParsedThought parsedThought = requestThought(execution, systemPrompt, step, stepNumber, visibleContext);
+            log.info("Agent响应: {}", parsedThought.responseText());
+
+            ThoughtResult thought = parsedThought.thoughtResult();
+            loopState(execution).getHistory().add(Step.thought(thought.getThinking()));
+            loopState(execution).getMessages().add(Message.assistant(parsedThought.responseText()));
+            emitEvent(loopState(execution).getEventSink(), execution.getRunId(), stepNumber,
+                    AgentStreamEventType.THOUGHT,
+                    thought.getThinking());
+
+            if (thought.isFinished()) {
+                return LoopStepDecision.terminate(finalizeSuccess(execution, stepNumber, thought.getStructuredFinalAnswer()));
+            }
+
+            ActionDecision action = thought.getAction();
+            loopState(execution).getHistory().add(Step.action(action));
+            emitEvent(loopState(execution).getEventSink(), execution.getRunId(), stepNumber,
+                    AgentStreamEventType.ACTION,
+                    actionToEventData(action));
+            log.info("Agent执行行动: tool={}, input={}", action.getToolName(), JSON.toJSONString(action.getInput()));
+
+            SafetyAssessment actionAssessment = medicalSafetyService.assessAction(action,
+                    loopState(execution).getHistory());
+            if (actionAssessment.isBlocked()) {
+                applySyntheticObservation(execution, stepNumber, action, actionAssessment.message(), "SAFETY_RULE");
+                recordSafetyBlock(execution.getRunId(), loopState(execution).getCustomerId(),
+                        loopState(execution).getDoctorId(), execution.getGoal(), actionAssessment, action);
+                sessionService.updateSession(execution.getRunId(), loopState(execution).getHistory(),
+                        loopState(execution).getMessages(), loopState(execution).getContext(), stepNumber);
+                return LoopStepDecision.continueLoop();
+            }
+
+            if (isRepeatedAction(loopState(execution).getContext(), loopState(execution).getHistory(), action)) {
+                applySyntheticObservation(execution, stepNumber, action, buildDuplicateActionObservation(action),
+                        "DUPLICATE_ACTION_GUARD");
+                agentMetrics.recordDuplicateToolSuppression(action.getToolName());
+                sessionService.updateSession(execution.getRunId(), loopState(execution).getHistory(),
+                        loopState(execution).getMessages(), loopState(execution).getContext(), stepNumber);
+                return LoopStepDecision.continueLoop();
+            }
+
+            ActionResult actionResult = actionExecutor.execute(
+                    action,
+                    loopState(execution).getCustomerId(),
+                    loopState(execution).getDoctorId(),
+                    execution.getRunId(),
+                    buildToolAccessContext(loopState(execution).getContext()));
+
+            if (actionResult.isNeedsApproval()) {
+                return LoopStepDecision.terminate(finalizePendingApproval(execution, stepNumber, action, actionResult));
+            }
+
+            String observation = contextMutationService.formatObservation(actionResult);
+            loopState(execution).getHistory().add(Step.observation(observation));
+            loopState(execution).getMessages().add(Message.user("Observation: " + observation));
+            contextMutationService.applyActionResult(loopState(execution).getContext(), action, actionResult, observation);
+            emitContextUpdated(execution.getRunId(), stepNumber, loopState(execution).getContext(),
+                    action.getToolName(), loopState(execution).getEventSink());
+            emitEvent(loopState(execution).getEventSink(), execution.getRunId(), stepNumber,
+                    AgentStreamEventType.OBSERVATION, observation);
+            log.info("Agent观察结果: {}", observation);
+            sessionService.updateSession(execution.getRunId(), loopState(execution).getHistory(),
+                    loopState(execution).getMessages(), loopState(execution).getContext(), stepNumber);
+            return LoopStepDecision.continueLoop();
+        }
+
+        @Override
+        protected LoopOutcome<ReActLoopState, AgentResult> onStepException(
+                LoopContext<ReActLoopState> loopContext,
+                int step,
+                int stepNumber,
+                Exception e) {
+            return finalizeError(loopContext, stepNumber, e);
+        }
+
+        @Override
+        protected LoopOutcome<ReActLoopState, AgentResult> onMaxSteps(LoopContext<ReActLoopState> loopContext) {
+            return finalizeMaxSteps(loopContext);
+        }
     }
 
-    /**
-     * 格式化观察结果
-     */
-    private String formatObservation(ActionResult result) {
-        if (result.isSuccess()) {
-            return JSON.toJSONString(result.getOutput());
-        } else {
-            return "Error: " + result.getErrorMessage();
-        }
+    private ReActLoopState loopState(LoopContext<ReActLoopState> execution) {
+        return execution.getState();
+    }
+
+    private LoopOutcome<ReActLoopState, AgentResult> buildLoopOutcome(
+            LoopContext<ReActLoopState> execution,
+            LoopTerminationReason terminationReason,
+            RunStatus runStatus,
+            int completedSteps,
+            AgentResult result,
+            String errorMessage) {
+        return LoopOutcome.<ReActLoopState, AgentResult>builder()
+                .runId(execution.getRunId())
+                .terminationReason(terminationReason)
+                .runStatus(runStatus)
+                .completedSteps(completedSteps)
+                .result(result)
+                .state(loopState(execution))
+                .errorMessage(errorMessage)
+                .endedAt(System.currentTimeMillis())
+                .build();
     }
 
     private ParsedThought requestThoughtResult(
@@ -858,7 +1004,87 @@ public class ReActAgentEngine {
                 }
             };
         }
-        return subAgentCoordinator.select(goal, context);
+        AgentSubAgent plannedSubAgent = consumePlannedSubAgent(context);
+        if (plannedSubAgent != null) {
+            return plannedSubAgent;
+        }
+
+        AgentSelectionDecision decision = subAgentCoordinator.selectDecision(goal, context);
+        return applySelectionDecision(context, decision);
+    }
+
+    private AgentSubAgent applySelectionDecision(AgentContext context, AgentSelectionDecision decision) {
+        if (decision == null || decision.getSelectedAgentIds() == null || decision.getSelectedAgentIds().isEmpty()) {
+            throw new IllegalStateException("Selector returned empty agent decision");
+        }
+
+        List<String> selectedAgentIds = new ArrayList<>(decision.getSelectedAgentIds());
+        recordSelectionDecision(context, decision, selectedAgentIds);
+        String primaryAgentId = selectedAgentIds.get(0);
+        List<String> pendingAgentIds = selectedAgentIds.size() > 1
+                ? new ArrayList<>(selectedAgentIds.subList(1, selectedAgentIds.size()))
+                : List.of();
+        context.putSlot(SLOT_SUB_AGENT_PENDING_PLAN, pendingAgentIds, "SELECTOR_DECISION",
+                PlatformContextVisibility.AGENT_INTERNAL);
+        recordExecutedPlan(context, primaryAgentId, "SELECTOR_PRIMARY");
+        return subAgentCoordinator.requiredSubAgent(primaryAgentId);
+    }
+
+    private AgentSubAgent consumePlannedSubAgent(AgentContext context) {
+        List<String> pendingAgentIds = slotValueAsStringList(context, SLOT_SUB_AGENT_PENDING_PLAN);
+        if (pendingAgentIds.isEmpty()) {
+            return null;
+        }
+        String nextAgentId = pendingAgentIds.get(0);
+        List<String> remainingAgentIds = pendingAgentIds.size() > 1
+                ? new ArrayList<>(pendingAgentIds.subList(1, pendingAgentIds.size()))
+                : List.of();
+        context.putSlot(SLOT_SUB_AGENT_PENDING_PLAN, remainingAgentIds, "SELECTOR_PLAN_CONSUME",
+                PlatformContextVisibility.AGENT_INTERNAL);
+        recordExecutedPlan(context, nextAgentId, "SELECTOR_PLAN_CONSUME");
+        return subAgentCoordinator.requiredSubAgent(nextAgentId);
+    }
+
+    private void recordSelectionDecision(
+            AgentContext context,
+            AgentSelectionDecision decision,
+            List<String> selectedAgentIds) {
+        if (context == null || decision == null) {
+            return;
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("mode", decision.getMode() != null ? decision.getMode().name() : AgentSelectionMode.SERIAL.name());
+        payload.put("selectedAgentIds", selectedAgentIds);
+        payload.put("reasons", decision.getReasons() != null ? new ArrayList<>(decision.getReasons()) : List.of());
+        context.putSlot(SLOT_SUB_AGENT_SELECTION_DECISION, payload, "SELECTOR_DECISION",
+                PlatformContextVisibility.AGENT_INTERNAL);
+    }
+
+    private void recordExecutedPlan(AgentContext context, String agentId, String source) {
+        if (context == null || agentId == null || agentId.isBlank()) {
+            return;
+        }
+        List<String> executedAgentIds = new ArrayList<>(slotValueAsStringList(context, SLOT_SUB_AGENT_EXECUTED_PLAN));
+        executedAgentIds.add(agentId);
+        context.putSlot(SLOT_SUB_AGENT_EXECUTED_PLAN, executedAgentIds, source,
+                PlatformContextVisibility.AGENT_INTERNAL);
+    }
+
+    private List<String> slotValueAsStringList(AgentContext context, String slotName) {
+        if (context == null || context.getSlots() == null || slotName == null || slotName.isBlank()) {
+            return List.of();
+        }
+        ContextEntry entry = context.getSlots().get(slotName);
+        if (entry == null || !(entry.getValue() instanceof List<?> values)) {
+            return List.of();
+        }
+        List<String> result = new ArrayList<>();
+        for (Object value : values) {
+            if (value != null) {
+                result.add(String.valueOf(value));
+            }
+        }
+        return result;
     }
 
     private void switchSubAgent(
@@ -873,9 +1099,16 @@ public class ReActAgentEngine {
             emitEvent(eventSink, sessionId, step, AgentStreamEventType.SUBAGENT_FINISHED, Map.of("name", previous));
         }
         if (!next.equals(previous)) {
+            PlatformAgentHandoff handoff = buildSubAgentHandoff(
+                    sessionId,
+                    previous,
+                    nextSubAgent,
+                    projectContextForSubAgent(context, nextSubAgent));
+            context.putSlot("sub_agent_handoff", handoff, "coordinator");
             emitEvent(eventSink, sessionId, step, AgentStreamEventType.SUBAGENT_STARTED, Map.of(
                     "name", next,
-                    "responsibility", nextSubAgent.responsibility()
+                    "responsibility", nextSubAgent.responsibility(),
+                    "handoff", handoff
             ));
         }
         context.putSlot("current_sub_agent", next, "coordinator");
@@ -917,6 +1150,282 @@ public class ReActAgentEngine {
         return String.valueOf(entry.getValue());
     }
 
+    private AgentContext projectContextForSubAgent(AgentContext context, AgentSubAgent subAgent) {
+        if (context == null || subAgent == null) {
+            return context;
+        }
+        AgentContext projected = AgentContext.initialize(
+                context.getCustomerId(),
+                context.getDoctorId(),
+                sanitizeSummary("goal", context.getGoal()));
+        if (context.getSlots() != null) {
+            for (Map.Entry<String, ContextEntry> entry : context.getSlots().entrySet()) {
+                if (!isSlotVisibleToSubAgent(entry.getKey(), entry.getValue(), subAgent)) {
+                    continue;
+                }
+                ContextEntry slot = entry.getValue();
+                projected.putSlot(
+                        entry.getKey(),
+                        sanitizeValue(entry.getKey(), slot.getValue()),
+                        slot.getSource(),
+                        slot.getVisibility());
+            }
+        }
+        if (context.getEvidenceRecords() != null) {
+            for (EvidenceRecord record : context.getEvidenceRecords()) {
+                if (!isEvidenceVisibleToSubAgent(record, subAgent)) {
+                    continue;
+                }
+                projected.addEvidence(
+                        record.getToolName(),
+                        record.getSource(),
+                        sanitizeSummary(record.getToolName(), record.getSummary()),
+                        sanitizeValue(record.getToolName(), record.getPayload()),
+                        record.getVisibility());
+            }
+        }
+        return projected;
+    }
+
+    private boolean isSlotVisibleToSubAgent(String slotKey, ContextEntry entry, AgentSubAgent subAgent) {
+        if (slotKey == null || entry == null || subAgent == null) {
+            return false;
+        }
+        PlatformContextVisibility visibility = entry.getVisibility() != null
+                ? entry.getVisibility()
+                : PlatformContextVisibility.AGENT_INTERNAL;
+        if (!subAgent.visibleVisibilities().contains(visibility)) {
+            return false;
+        }
+        return subAgent.visibleSlotKeys().isEmpty() || subAgent.visibleSlotKeys().contains(slotKey);
+    }
+
+    private boolean isEvidenceVisibleToSubAgent(EvidenceRecord record, AgentSubAgent subAgent) {
+        if (record == null || subAgent == null) {
+            return false;
+        }
+        PlatformContextVisibility visibility = record.getVisibility() != null
+                ? record.getVisibility()
+                : PlatformContextVisibility.AGENT_INTERNAL;
+        if (!subAgent.visibleVisibilities().contains(visibility)) {
+            return false;
+        }
+        String evidenceKey = record.getToolName();
+        return evidenceKey == null
+                || subAgent.visibleSlotKeys().isEmpty()
+                || subAgent.visibleSlotKeys().contains(evidenceKey);
+    }
+
+    @SuppressWarnings("unchecked")
+    private AgentExecutionCommand commandForPrompt(AgentExecutionCommand command, AgentContext visibleContext) {
+        if (command == null || visibleContext == null) {
+            return command;
+        }
+        return AgentExecutionCommand.builder()
+                .goal(command.getGoal())
+                .customerId(command.getCustomerId())
+                .doctorId(command.getDoctorId())
+                .conversationId(command.getConversationId())
+                .correlationId(command.getCorrelationId())
+                .traceContext(command.getTraceContext())
+                .platformContext(command.getPlatformContext())
+                .source(command.getSource())
+                .taskType(command.getTaskType())
+                .sessionContext(slotMapValue(visibleContext, "session_context"))
+                .profileSnapshot(slotMapValue(visibleContext, "profile_snapshot"))
+                .memorySnapshot(slotMemorySnapshot(visibleContext, "memory_snapshot"))
+                .triggerDecision(slotMapValue(visibleContext, "trigger_decision"))
+                .patientMessage(slotPatientMessage(visibleContext, "patient_message"))
+                .constraints(command.getConstraints())
+                .build();
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> slotMapValue(AgentContext context, String slotKey) {
+        if (context == null || context.getSlots() == null) {
+            return null;
+        }
+        ContextEntry entry = context.getSlots().get(slotKey);
+        if (entry == null || !(entry.getValue() instanceof Map<?, ?> value)) {
+            return null;
+        }
+        return (Map<String, Object>) value;
+    }
+
+    private com.health.agent.dto.patient.MemorySnapshot slotMemorySnapshot(AgentContext context, String slotKey) {
+        if (context == null || context.getSlots() == null) {
+            return null;
+        }
+        ContextEntry entry = context.getSlots().get(slotKey);
+        if (entry == null || entry.getValue() == null) {
+            return null;
+        }
+        if (entry.getValue() instanceof com.health.agent.dto.patient.MemorySnapshot snapshot) {
+            return snapshot;
+        }
+        return JSON.parseObject(JSON.toJSONString(entry.getValue()), com.health.agent.dto.patient.MemorySnapshot.class);
+    }
+
+    private String slotPatientMessage(AgentContext context, String slotKey) {
+        Map<String, Object> patientMessage = slotMapValue(context, slotKey);
+        if (patientMessage == null) {
+            return null;
+        }
+        Object content = patientMessage.get("content");
+        return content != null ? String.valueOf(content) : null;
+    }
+
+    private AgentAccessContext buildToolAccessContext(AgentContext context) {
+        Map<String, Object> sessionContext = slotMapValue(context, "session_context");
+        Map<String, Object> patientTaskRequest = slotMapValue(context, "patient_task_request");
+        return AgentAccessContext.builder()
+                .groupId(stringValue(
+                        sessionContext != null ? sessionContext.get("groupId") : null,
+                        patientTaskRequest != null ? patientTaskRequest.get("groupId") : null))
+                .userId(stringValue(
+                        sessionContext != null ? sessionContext.get("userId") : null,
+                        patientTaskRequest != null ? patientTaskRequest.get("userId") : null,
+                        context != null ? context.getDoctorId() : null))
+                .tenantId(stringValue(
+                        sessionContext != null ? sessionContext.get("tenantId") : null,
+                        patientTaskRequest != null ? patientTaskRequest.get("tenantId") : null))
+                .build();
+    }
+
+    private String stringValue(Object... candidates) {
+        if (candidates == null) {
+            return null;
+        }
+        for (Object candidate : candidates) {
+            if (candidate == null) {
+                continue;
+            }
+            String text = String.valueOf(candidate).trim();
+            if (!text.isEmpty() && !"null".equalsIgnoreCase(text)) {
+                return text;
+            }
+        }
+        return null;
+    }
+
+    private Object sanitizeValue(String key, Object value) {
+        if (contextPrivacySanitizer == null) {
+            return value;
+        }
+        return contextPrivacySanitizer.sanitizeForExposure(key, value);
+    }
+
+    private String sanitizeSummary(String key, String summary) {
+        if (contextPrivacySanitizer == null) {
+            return summary;
+        }
+        return contextPrivacySanitizer.sanitizeSummary(key, summary);
+    }
+
+    private PlatformAgentHandoff buildSubAgentHandoff(
+            String sessionId,
+            String previousSubAgentName,
+            AgentSubAgent nextSubAgent,
+            AgentContext context) {
+        List<PlatformAgentHandoffItem> items = new ArrayList<>();
+        if (context != null && context.getSlots() != null) {
+            for (Map.Entry<String, ContextEntry> entry : context.getSlots().entrySet()) {
+                if (items.size() >= 8) {
+                    break;
+                }
+                if ("current_sub_agent".equals(entry.getKey()) || "sub_agent_handoff".equals(entry.getKey())) {
+                    continue;
+                }
+                ContextEntry slot = entry.getValue();
+                if (slot == null || slot.getValue() == null) {
+                    continue;
+                }
+                items.add(PlatformAgentHandoffItem.builder()
+                        .key(entry.getKey())
+                        .type(PlatformHandoffItemType.CONTEXT_SLOT)
+                        .summary(abbreviateForHandoff(slot.getValue(), 180))
+                        .payload(slot.getValue())
+                        .visibility(PlatformContextVisibility.AGENT_INTERNAL)
+                        .sourceAgentId(slot.getSource())
+                        .metadata(handoffMetadata(
+                                "updatedAt", slot.getUpdatedAt(),
+                                "source", slot.getSource()))
+                        .build());
+            }
+        }
+        if (context != null && context.getEvidenceRecords() != null) {
+            context.getEvidenceRecords().stream()
+                    .filter(record -> record != null && (record.getSummary() != null || record.getPayload() != null))
+                    .limit(3)
+                    .forEach(record -> items.add(PlatformAgentHandoffItem.builder()
+                            .key(record.getToolName() != null ? record.getToolName() : "evidence")
+                            .type(PlatformHandoffItemType.EVIDENCE)
+                            .summary(abbreviateForHandoff(
+                                    record.getSummary() != null ? record.getSummary() : record.getPayload(), 180))
+                            .payload(record.getPayload())
+                            .visibility(PlatformContextVisibility.AGENT_INTERNAL)
+                            .sourceAgentId(record.getSource())
+                            .sourceToolName(record.getToolName())
+                            .metadata(handoffMetadata("recordedAt", record.getRecordedAt()))
+                            .build()));
+        }
+        return PlatformAgentHandoff.builder()
+                .schemaVersion("agent-handoff/v1")
+                .handoffId(sessionId + "-" + nextSubAgent.agentId() + "-" + System.currentTimeMillis())
+                .runId(sessionId)
+                .fromAgentId(previousSubAgentName)
+                .fromAgentName(previousSubAgentName)
+                .toAgentId(nextSubAgent.agentId())
+                .toAgentName(nextSubAgent.name())
+                .goal(context != null ? context.getGoal() : null)
+                .handoffSummary(summarizeContextForHandoff(context, nextSubAgent, items))
+                .createdAt(java.time.LocalDateTime.now())
+                .items(items)
+                .build();
+    }
+
+    private String summarizeContextForHandoff(
+            AgentContext context,
+            AgentSubAgent nextSubAgent,
+            List<PlatformAgentHandoffItem> items) {
+        String goal = context != null ? context.getGoal() : null;
+        String target = nextSubAgent != null ? nextSubAgent.name() : "next-agent";
+        return "向%s交接%d项上下文，目标=%s".formatted(
+                target,
+                items != null ? items.size() : 0,
+                abbreviateForHandoff(goal, 80));
+    }
+
+    private String abbreviateForHandoff(Object value, int maxChars) {
+        if (value == null) {
+            return "";
+        }
+        String text = value instanceof String stringValue ? stringValue : JSON.toJSONString(value);
+        if (text == null) {
+            return "";
+        }
+        if (text.length() <= maxChars) {
+            return text;
+        }
+        return text.substring(0, Math.max(1, maxChars)) + "...";
+    }
+
+    private Map<String, Object> handoffMetadata(Object... kvPairs) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        if (kvPairs == null) {
+            return metadata;
+        }
+        for (int i = 0; i + 1 < kvPairs.length; i += 2) {
+            Object key = kvPairs[i];
+            Object value = kvPairs[i + 1];
+            if (key == null || value == null) {
+                continue;
+            }
+            metadata.put(String.valueOf(key), value);
+        }
+        return metadata;
+    }
+
     private AgentContext parseContext(String contextJson, String customerId, String doctorId, String goal) {
         if (contextJson == null || contextJson.isBlank()) {
             return AgentContext.initialize(customerId, doctorId, goal);
@@ -946,55 +1455,6 @@ public class ReActAgentEngine {
             log.warn("解析AgentContext失败，回退为空上下文: {}", e.getMessage());
             return AgentContext.initialize(customerId, doctorId, goal);
         }
-    }
-
-    private void updateContextAfterAction(
-            AgentContext context,
-            ActionDecision action,
-            ActionResult actionResult,
-            String observation) {
-        if (context == null || action == null) {
-            return;
-        }
-
-        Object payload = actionResult != null ? actionResult.getOutput() : observation;
-        if (payload instanceof ToolExecutionOutput toolOutput) {
-            if (toolOutput.getStateUpdates() != null) {
-                toolOutput.getStateUpdates().forEach((key, value) ->
-                    context.putSlot(key, value, action.getToolName())
-                );
-            }
-            if (toolOutput.getEvidence() != null) {
-                for (ToolEvidence evidence : toolOutput.getEvidence()) {
-                    context.addEvidence(
-                        action.getToolName(),
-                        evidence.getSource(),
-                        evidence.getSummary(),
-                        evidence.getPayload()
-                    );
-                }
-            }
-        } else {
-            String slotKey = resolveContextSlot(action.getToolName());
-            context.putSlot(slotKey, payload, action.getToolName());
-            context.addEvidence(action.getToolName(), "TOOL_OUTPUT", observation, payload);
-        }
-        updateLastToolResult(context, action, observation);
-    }
-
-    private String resolveContextSlot(String toolName) {
-        return switch (toolName) {
-            case "get_patient_profile" -> "patient_profile";
-            case "get_weight_history" -> "weight_history";
-            case "get_chat_history" -> "chat_history";
-            case "get_prescription_history" -> "prescription_history";
-            case "get_follow_up_tasks", "create_follow_up_task" -> "follow_up_tasks";
-            case "analyze_weight_trend" -> "weight_trend_analysis";
-            case "detect_weight_plateau" -> "plateau_assessment";
-            case "analyze_adherence_signals" -> "adherence_analysis";
-            case "get_health_knowledge" -> "health_knowledge";
-            default -> toolName;
-        };
     }
 
     private Map<String, Object> snapshotContextSlots(AgentContext context) {

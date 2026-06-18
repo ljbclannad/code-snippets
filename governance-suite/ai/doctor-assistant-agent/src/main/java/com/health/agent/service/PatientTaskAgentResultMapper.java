@@ -2,8 +2,10 @@ package com.health.agent.service;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -21,6 +23,12 @@ import com.health.agent.model.AgentResult;
 import com.health.agent.model.PendingTask;
 import com.health.agent.model.ResultStatus;
 import com.health.agent.model.StructuredFinalAnswer;
+import com.lx.governance.agentplatform.model.WorkbenchAction;
+import com.lx.governance.agentplatform.model.WorkbenchActionType;
+import com.lx.governance.agentplatform.model.PlatformTraceContext;
+import com.lx.governance.agentplatform.model.WorkbenchPayload;
+import com.lx.governance.agentplatform.model.WorkbenchPendingTask;
+import com.lx.governance.agentplatform.model.WorkbenchViewType;
 
 @Component
 public class PatientTaskAgentResultMapper {
@@ -124,6 +132,45 @@ public class PatientTaskAgentResultMapper {
                 .build();
     }
 
+    public WorkbenchPayload toPlatformWorkbenchPayload(
+            DoctorAssistantTaskRequest request,
+            AgentExecutionCommand command,
+            String taskId,
+            String runId,
+            StructuredTaskResult structuredResult,
+            boolean needsHumanReview,
+            DoctorAssistantPendingTaskPayload pendingTaskPayload,
+            String executionPath,
+            String agentExecutionStatus,
+            String fallbackReason) {
+        return WorkbenchPayload.builder()
+                .runId(runId)
+                .taskId(taskId)
+                .conversationId(request.getConversationId())
+                .correlationId(request.getCorrelationId())
+                .source(command.getSource() == null ? AgentTaskSource.PATIENT_DIALOG_AI_CHAT.name() : command.getSource().name())
+                .taskType(command.getTaskType().name())
+                .viewType(resolveViewType(needsHumanReview, pendingTaskPayload))
+                .reviewStatus(needsHumanReview ? "PENDING_REVIEW" : "AUTO_COMPLETED")
+                .executionPath(executionPath)
+                .agentExecutionStatus(agentExecutionStatus)
+                .fallbackReason(fallbackReason)
+                .riskLevel(structuredResult.getRiskLevel())
+                .needsAttention(structuredResult.getNeedsAttention())
+                .needsHumanReview(needsHumanReview)
+                .title(command.getTaskType().name())
+                .summary(structuredResult.getSummary())
+                .evidenceSummary(String.join(" | ", structuredResult.getSupportingEvidence()))
+                .keyFindings(copyOrDefault(structuredResult.getKeyFindings(), List.of()))
+                .recommendedActions(copyOrDefault(structuredResult.getRecommendedActions(), List.of()))
+                .evidenceSources(copyOrDefault(structuredResult.getEvidenceSources(), List.of()))
+                .availableActions(buildWorkbenchActions(needsHumanReview, pendingTaskPayload))
+                .pendingTask(toWorkbenchPendingTask(pendingTaskPayload, runId))
+                .viewData(buildViewData(structuredResult))
+                .extensions(buildExtensions(structuredResult))
+                .build();
+    }
+
     public DoctorAssistantTaskStatus toTaskStatus(AgentResult agentResult, boolean needsHumanReview) {
         if (needsHumanReview) {
             return DoctorAssistantTaskStatus.PENDING_APPROVAL;
@@ -136,6 +183,24 @@ public class PatientTaskAgentResultMapper {
             case PENDING_APPROVAL -> DoctorAssistantTaskStatus.PENDING_APPROVAL;
             case ERROR, MAX_STEPS -> DoctorAssistantTaskStatus.ERROR;
         };
+    }
+
+    public PlatformTraceContext toTraceContext(
+            DoctorAssistantTaskRequest request,
+            AgentExecutionCommand command,
+            String runId,
+            String agentId,
+            String toolName) {
+        PlatformTraceContext upstream = request != null ? request.getTraceContext() : null;
+        return PlatformTraceContext.builder()
+                .traceId(upstream != null ? upstream.getTraceId() : null)
+                .conversationId(request != null ? request.getConversationId() : null)
+                .correlationId(request != null ? request.getCorrelationId() : null)
+                .runId(runId)
+                .stepId(null)
+                .agentId(agentId != null ? agentId : runId)
+                .toolName(toolName)
+                .build();
     }
 
     private List<String> copyOrDefault(List<String> primary, List<String> fallback) {
@@ -236,6 +301,82 @@ public class PatientTaskAgentResultMapper {
                     .toList());
         }
         return new ArrayList<>(merged);
+    }
+
+    private WorkbenchViewType resolveViewType(boolean needsHumanReview, DoctorAssistantPendingTaskPayload pendingTaskPayload) {
+        if (needsHumanReview && pendingTaskPayload != null) {
+            return WorkbenchViewType.APPROVAL;
+        }
+        if (needsHumanReview) {
+            return WorkbenchViewType.REVIEW;
+        }
+        return WorkbenchViewType.SUMMARY;
+    }
+
+    private List<WorkbenchAction> buildWorkbenchActions(
+            boolean needsHumanReview,
+            DoctorAssistantPendingTaskPayload pendingTaskPayload) {
+        List<WorkbenchAction> actions = new ArrayList<>();
+        if (needsHumanReview) {
+            actions.add(WorkbenchAction.builder()
+                    .actionType(WorkbenchActionType.APPROVE)
+                    .label("审批通过")
+                    .enabled(pendingTaskPayload != null)
+                    .requiresComment(false)
+                    .build());
+            actions.add(WorkbenchAction.builder()
+                    .actionType(WorkbenchActionType.REJECT)
+                    .label("驳回")
+                    .enabled(pendingTaskPayload != null)
+                    .requiresComment(true)
+                    .build());
+            actions.add(WorkbenchAction.builder()
+                    .actionType(WorkbenchActionType.REQUEST_INFO)
+                    .label("补充信息")
+                    .enabled(true)
+                    .requiresComment(true)
+                    .build());
+        }
+        actions.add(WorkbenchAction.builder()
+                .actionType(WorkbenchActionType.RETRY)
+                .label("重新执行")
+                .enabled(true)
+                .requiresComment(false)
+                .build());
+        return actions;
+    }
+
+    private WorkbenchPendingTask toWorkbenchPendingTask(
+            DoctorAssistantPendingTaskPayload pendingTaskPayload,
+            String runId) {
+        if (pendingTaskPayload == null) {
+            return null;
+        }
+        return WorkbenchPendingTask.builder()
+                .approvalTaskId(String.valueOf(pendingTaskPayload.getPendingTaskId()))
+                .runId(runId)
+                .status(pendingTaskPayload.getStatus())
+                .title(pendingTaskPayload.getToolDescription())
+                .reason(pendingTaskPayload.getReason())
+                .expireAt(pendingTaskPayload.getExpireAt())
+                .build();
+    }
+
+    private Map<String, Object> buildViewData(StructuredTaskResult structuredResult) {
+        Map<String, Object> viewData = new LinkedHashMap<>();
+        viewData.put("inferenceEvidence", copyOrDefault(structuredResult.getInferences(), List.of()));
+        viewData.put("uncertainties", copyOrDefault(structuredResult.getUncertainties(), List.of()));
+        viewData.put("supportingEvidence", copyOrDefault(structuredResult.getSupportingEvidence(), List.of()));
+        return viewData;
+    }
+
+    private Map<String, Object> buildExtensions(StructuredTaskResult structuredResult) {
+        Map<String, Object> extensions = new LinkedHashMap<>();
+        extensions.put("upstreamEvidenceSources",
+                filterEvidenceSources(structuredResult.getEvidenceSources(), true));
+        extensions.put("agentEvidenceSources",
+                filterEvidenceSources(structuredResult.getEvidenceSources(), false));
+        return extensions;
     }
 
     private List<String> filterEvidenceSources(List<String> evidenceSources, boolean upstream) {

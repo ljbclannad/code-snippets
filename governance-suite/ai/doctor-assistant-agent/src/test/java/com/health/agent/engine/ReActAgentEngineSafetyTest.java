@@ -10,6 +10,7 @@ import com.health.agent.model.Message;
 import com.health.agent.model.ThoughtResult;
 import com.health.agent.safety.MedicalSafetyService;
 import com.health.agent.service.AgentAuditService;
+import com.health.agent.service.AgentContextMutationService;
 import com.health.agent.service.AgentSessionService;
 import com.health.agent.tool.ToolRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -68,6 +69,7 @@ class ReActAgentEngineSafetyTest {
         ReflectionTestUtils.setField(engine, "actionExecutor", actionExecutor);
         ReflectionTestUtils.setField(engine, "toolRegistry", toolRegistry);
         ReflectionTestUtils.setField(engine, "sessionService", sessionService);
+        ReflectionTestUtils.setField(engine, "contextMutationService", new AgentContextMutationService());
         ReflectionTestUtils.setField(engine, "agentMetrics", new AgentMetrics(new SimpleMeterRegistry()));
         ReflectionTestUtils.setField(engine, "medicalSafetyService", new MedicalSafetyService());
         ReflectionTestUtils.setField(engine, "agentAuditService", agentAuditService);
@@ -108,8 +110,9 @@ class ReActAgentEngineSafetyTest {
     void shouldBlockHighRiskActionWithoutEvidenceBeforeToolExecution() {
         AgentSession session = AgentSession.builder().id("1").build();
         when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
-        when(toolRegistry.getAllTools()).thenReturn(List.of());
+        when(toolRegistry.listToolDescriptors()).thenReturn(List.of());
         when(promptBuilder.buildUserPrompt(anyString(), anyString())).thenReturn("user");
+        when(promptBuilder.buildSubAgentSystemPromptFromCatalog(any(), any())).thenReturn("system");
 
         DeepSeekClient.DeepSeekResponse firstResponse = new DeepSeekClient.DeepSeekResponse();
         firstResponse.setContent("r1");

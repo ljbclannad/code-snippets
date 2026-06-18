@@ -33,6 +33,8 @@ import com.lx.governance.aichat.exception.AiServiceException;
 import com.lx.governance.aichat.exception.ConversationException;
 import com.lx.governance.aichat.metrics.AiChatMetrics;
 import com.lx.governance.aichat.quota.QuotaService;
+import com.lx.governance.agentplatform.runtime.PlatformRouteDecision;
+import com.lx.governance.agentplatform.runtime.PlatformRouteTarget;
 
 import jakarta.annotation.Resource;
 import lombok.RequiredArgsConstructor;
@@ -63,7 +65,7 @@ public class AiChatService {
     private final TaskTriggerRouter taskTriggerRouter;
     private final DoctorAssistantTaskRequestFactory doctorAssistantTaskRequestFactory;
     private final DoctorAssistantAgentGateway doctorAssistantAgentGateway;
-    private final AgentDispatchPolicy agentDispatchPolicy;
+    private final AgentConversationRouteRuntime agentConversationRouteRuntime;
     @Resource(name = "chatExecutor")
     private Executor chatExecutor;
 
@@ -72,9 +74,6 @@ public class AiChatService {
 
     @Value("${ai-chat.chat-history.recommend-count:3}")
     private int recommendCount;
-
-    @Value("${ai-chat.agent.auto-fallback-to-direct-chat:true}")
-    private boolean autoFallbackToDirectChat;
 
     @Value("${ai-chat.agent.patient-conservative-readonly-mode:true}")
     private boolean patientConservativeReadonlyMode;
@@ -137,6 +136,14 @@ public class AiChatService {
                             request.getCustomerId(),
                             request.getGroupId(),
                             request.getMessage()));
+            if (sessionContext.getUserId() == null || sessionContext.getUserId().isBlank()) {
+                sessionContext.setUserId(request.getUserId() != null && !request.getUserId().isBlank()
+                        ? request.getUserId()
+                        : request.getCustomerId());
+            }
+            if (request.getTenantId() != null && !request.getTenantId().isBlank()) {
+                sessionContext.setTenantId(request.getTenantId());
+            }
 
             log.info("会话上下文已准备 - sessionId: {}, intent: {}, phase: {}, correlationId: {}",
                     sessionId,
@@ -148,7 +155,9 @@ public class AiChatService {
             // 不直接发起远程调用；它的输出会作为后续 direct chat / agent 分流依据。
             TaskTriggerDecision triggerDecision = taskTriggerRouter.route(TaskTriggerContext.builder()
                     .customerId(request.getCustomerId())
+                    .userId(request.getUserId())
                     .groupId(request.getGroupId())
+                    .tenantId(request.getTenantId())
                     .conversationId(sessionId)
                     .message(request.getMessage())
                     .sessionContext(sessionContext)
@@ -220,17 +229,18 @@ public class AiChatService {
                         if (triggerDecision != null && triggerDecision.shouldUpgradeToAgent()) {
                             // 命中 Agent 路由后，还要再经过灰度/熔断/策略放行判断，
                             // 避免医生助手链路在高风险时段被无限放大。
-                            AgentDispatchPolicy.Decision policyDecision = agentDispatchPolicy.evaluate(request,
-                                    triggerDecision);
-                            if (!policyDecision.invokeAgent()) {
+                            PlatformRouteDecision routeDecision =
+                                    agentConversationRouteRuntime.evaluateInvocation(request, sessionContext,
+                                            triggerDecision);
+                            if (!routeDecision.invokeAgent()) {
                                 log.info(
                                         "Agent 灰度/熔断策略未放行，回退普通对话 - conversationId: {}, taskType: {}, reason: {}, correlationId: {}",
                                         sessionId,
                                         triggerDecision.getTaskType(),
-                                        policyDecision.reason(),
+                                        routeDecision.reason(),
                                         correlationId);
                                 return fallbackToDirectChat(
-                                        policyDecision.reason(),
+                                        routeDecision.reason(),
                                         request,
                                         sessionContext,
                                         sessionId,
@@ -273,7 +283,9 @@ public class AiChatService {
             TaskTriggerDecision triggerDecision,
             UserProfileDTO profile,
             LayeredMemories memories) {
-        if (shouldShortCircuitPendingReview(sessionContext)) {
+        PlatformRouteDecision initialDecision =
+                agentConversationRouteRuntime.evaluateInvocation(request, sessionContext, triggerDecision);
+        if (initialDecision.target() == PlatformRouteTarget.PENDING_REVIEW_SHORT_CIRCUIT) {
             String patientReply = "这条情况已经同步给医生进一步评估，当前先按之前的安全建议观察；如果出现明显不适或症状加重，请及时线下就医。";
             log.info("检测到会话中已有待处理人工复核，短路跳过重复 Agent 调用 - conversationId: {}, correlationId: {}",
                     sessionId, correlationId);
@@ -315,13 +327,16 @@ public class AiChatService {
                     .analyzePatientTask(agentTaskRequest);
             long durationMs = System.currentTimeMillis() - agentStart;
             String taskType = triggerDecision.getTaskType() != null ? triggerDecision.getTaskType().name() : "UNKNOWN";
+            PlatformRouteDecision responseDecision =
+                    agentConversationRouteRuntime.evaluateAgentResponse(agentResponse);
 
             // SKIPPED 表示远端认为当前任务不适合继续走医生助手链路，
             // 这里统一回退普通对话，避免患者端收到空结果。
-            if (agentResponse.getStatus() == DoctorAssistantTaskStatus.SKIPPED) {
+            if (responseDecision.target() == PlatformRouteTarget.DIRECT_CHAT_FALLBACK
+                    && DoctorAssistantTaskStatus.SKIPPED == agentResponse.getStatus()) {
                 metrics.recordAgentInvocation(taskType, "skipped", durationMs);
                 return fallbackToDirectChat(
-                        "agent_skipped",
+                        responseDecision.reason(),
                         request,
                         sessionContext,
                         sessionId,
@@ -333,11 +348,10 @@ public class AiChatService {
 
             // ERROR 或患者可见回复为空时，也要强制回退 direct chat，
             // 否则患者侧无法得到稳定响应。
-            if (agentResponse.getStatus() == DoctorAssistantTaskStatus.ERROR
-                    || (agentResponse.getPatientSafeReply() == null || agentResponse.getPatientSafeReply().isBlank())) {
+            if (responseDecision.target() == PlatformRouteTarget.DIRECT_CHAT_FALLBACK) {
                 metrics.recordAgentInvocation(taskType, "failure", durationMs);
                 return fallbackToDirectChat(
-                        "agent_error",
+                        responseDecision.reason(),
                         request,
                         sessionContext,
                         sessionId,
@@ -373,7 +387,7 @@ public class AiChatService {
             log.error("Agent 调用失败，准备回退普通对话 - conversationId: {}, taskType: {}, correlationId: {}",
                     sessionId, taskType, correlationId, e);
             return fallbackToDirectChat(
-                    "agent_exception",
+                    agentConversationRouteRuntime.fallbackDecision("agent_exception").reason(),
                     request,
                     sessionContext,
                     sessionId,
@@ -393,7 +407,9 @@ public class AiChatService {
             long startTime,
             UserProfileDTO profile,
             LayeredMemories memories) {
-        if (!autoFallbackToDirectChat) {
+        PlatformRouteDecision fallbackDecision =
+                agentConversationRouteRuntime.fallbackDecision(reason);
+        if (fallbackDecision.target() == PlatformRouteTarget.TERMINAL_ERROR) {
             return CompletableFuture.completedFuture(ChatResponse.error("Agent 调用失败且未开启普通对话回退"));
         }
 
@@ -479,20 +495,6 @@ public class AiChatService {
         chatAsyncProcessingService.handleChatCompleted(request, agentConversationResult, correlationId);
 
         return ChatResponse.success(patientReply, sessionId);
-    }
-
-    private boolean shouldShortCircuitPendingReview(SessionContext sessionContext) {
-        if (sessionContext == null) {
-            return false;
-        }
-        if (!"PENDING_APPROVAL".equals(sessionContext.getLastAgentReviewStatus())) {
-            return false;
-        }
-        if (sessionContext.getLastAgentOutcomeAt() == null) {
-            return false;
-        }
-        long elapsedMs = System.currentTimeMillis() - sessionContext.getLastAgentOutcomeAt();
-        return elapsedMs >= 0 && elapsedMs <= 10 * 60 * 1000;
     }
 
     private CompletableFuture<ChatResponse> handleProfileCompletionIfNeeded(

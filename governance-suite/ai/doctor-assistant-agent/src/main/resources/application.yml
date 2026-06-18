@@ -91,6 +91,49 @@ agent:
     analysis-window-days: 14
     min-weight-records: 3
 
+# 平台化后的 doctor agent 配置分层
+doctor:
+  agent:
+    platform:
+      workflow-id: doctor-patient-task-v1
+      platform-agent-id: doctor-assistant-agent
+      tool-version: doctor-toolkit-v1
+      fallback-to-template-on-agent-error: true
+      allowed-tools: {}
+    runtime:
+      max-steps: 15
+      use-mock: false
+      protocol-repair-attempts: 1
+    safety:
+      weight-plateau:
+        window-days: 14
+        max-weight-change-kg: 0.5
+        recent-trend-days: 7
+        recent-downward-threshold-kg: 0.2
+      privacy:
+        enabled: true
+      evidence-retention:
+        enabled: true
+        max-records: 12
+        max-payload-records: 4
+        max-summary-chars: 200
+        keep-audit-only-payload: false
+      rules:
+        high-risk-min-supporting-evidence: 2
+        high-risk-min-evidence-sources: 1
+        emergency-keywords:
+          - 胸痛
+          - 呼吸困难
+          - 胸闷
+          - 心悸
+          - 晕厥
+          - 昏迷
+          - 抽搐
+          - 便血
+          - 呕血
+          - 自杀
+          - 轻生
+
 # Milvus 向量数据库配置
 milvus:
   enabled: false # 默认关闭，需要时启用

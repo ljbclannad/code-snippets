@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.List;
@@ -12,6 +13,7 @@ import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -26,6 +28,14 @@ import com.health.agent.engine.ReActAgentEngine;
 import com.health.agent.model.AgentResult;
 import com.health.agent.model.PendingTask;
 import com.health.agent.model.StructuredFinalAnswer;
+import com.health.agent.config.DoctorAgentPlatformProperties;
+import com.lx.governance.agentplatform.model.PlatformTraceContext;
+import com.lx.governance.agentplatform.model.PlatformContext;
+import com.lx.governance.agentplatform.model.PlatformContextDomain;
+import com.lx.governance.agentplatform.model.PlatformContextField;
+import com.lx.governance.agentplatform.model.PlatformContextVisibility;
+import com.lx.governance.agentplatform.model.WorkbenchActionType;
+import com.lx.governance.agentplatform.model.WorkbenchViewType;
 
 @ExtendWith(MockitoExtension.class)
 class PatientTaskAgentServiceTest {
@@ -44,7 +54,10 @@ class PatientTaskAgentServiceTest {
                 null,
                 agentEngine,
                 new PatientTaskAgentResultMapper(),
-                new PatientReplyComposer());
+                new PatientReplyComposer(),
+                null,
+                null,
+                new DoctorAgentPlatformProperties());
     }
 
     @Test
@@ -72,6 +85,38 @@ class PatientTaskAgentServiceTest {
         assertTrue(response.getPatientSafeReply().contains("补充近3天饮食和体重记录"));
         assertEquals("MEDIUM", response.getStructuredResult().getRiskLevel());
         assertEquals("AUTO_COMPLETED", response.getDoctorWorkbenchPayload().getReviewStatus());
+        assertNotNull(response.getPlatformWorkbenchPayload());
+        assertEquals(WorkbenchViewType.SUMMARY, response.getPlatformWorkbenchPayload().getViewType());
+        assertEquals(1, response.getPlatformWorkbenchPayload().getAvailableActions().size());
+        assertEquals(WorkbenchActionType.RETRY,
+                response.getPlatformWorkbenchPayload().getAvailableActions().get(0).getActionType());
+        assertEquals("trace-1", response.getTraceContext().getTraceId());
+        assertEquals("agent-session-1", response.getTraceContext().getRunId());
+    }
+
+    @Test
+    void shouldPassPlatformContextIntoExecutionCommand() {
+        when(agentEngine.executeStream(any(), any())).thenReturn(AgentResult.success(
+                "agent-session-ctx",
+                StructuredFinalAnswer.builder()
+                        .summary("上下文接入成功")
+                        .riskLevel("LOW")
+                        .needsAttention(false)
+                        .recommendedActions(List.of("继续观察"))
+                        .supportingEvidence(List.of("PATIENT_MESSAGE", "AI_CHAT_SESSION_CONTEXT"))
+                        .evidenceSources(List.of("PATIENT_MESSAGE"))
+                        .build(),
+                List.of(),
+                1));
+
+        service.analyze(baseRequest(TaskType.PATIENT_FOLLOW_UP_ANALYSIS));
+
+        ArgumentCaptor<com.health.agent.dto.agent.AgentExecutionCommand> captor =
+                ArgumentCaptor.forClass(com.health.agent.dto.agent.AgentExecutionCommand.class);
+        verify(agentEngine).executeStream(captor.capture(), any());
+        assertNotNull(captor.getValue().getPlatformContext());
+        assertTrue(captor.getValue().getPlatformContext().getFields().stream()
+                .anyMatch(field -> field.getDomain() == PlatformContextDomain.CONVERSATION_CONTEXT));
     }
 
     @Test
@@ -123,6 +168,9 @@ class PatientTaskAgentServiceTest {
         assertNotNull(response.getPendingTask());
         assertEquals(101L, response.getPendingTask().getPendingTaskId());
         assertEquals("PENDING_REVIEW", response.getDoctorWorkbenchPayload().getReviewStatus());
+        assertEquals(WorkbenchViewType.APPROVAL, response.getPlatformWorkbenchPayload().getViewType());
+        assertEquals(4, response.getPlatformWorkbenchPayload().getAvailableActions().size());
+        assertEquals("agent-session-3", response.getTraceContext().getRunId());
     }
 
     @Test
@@ -138,6 +186,31 @@ class PatientTaskAgentServiceTest {
         assertEquals("AUTO_COMPLETED", response.getDoctorWorkbenchPayload().getReviewStatus());
     }
 
+    @Test
+    void shouldReturnFailureWhenTemplateFallbackIsDisabled() {
+        DoctorAgentPlatformProperties properties = new DoctorAgentPlatformProperties();
+        properties.setFallbackToTemplateOnAgentError(false);
+        service = new PatientTaskAgentService(
+                new PatientTaskSafetyService(),
+                null,
+                null,
+                null,
+                agentEngine,
+                new PatientTaskAgentResultMapper(),
+                new PatientReplyComposer(),
+                null,
+                null,
+                properties);
+        when(agentEngine.executeStream(any(), any())).thenReturn(
+                AgentResult.error("agent-session-5", "engine failure", List.of(), 1));
+
+        DoctorAssistantTaskResponse response = service.analyze(baseRequest(TaskType.PATIENT_FOLLOW_UP_ANALYSIS));
+
+        assertEquals(DoctorAssistantTaskStatus.ERROR, response.getStatus());
+        assertEquals("AGENT_STATUS_ERROR", response.getFallbackReason());
+        assertTrue(response.getErrorMessage().contains("关闭模板兜底"));
+    }
+
     private DoctorAssistantTaskRequest baseRequest(TaskType taskType) {
         return DoctorAssistantTaskRequest.builder()
                 .taskType(taskType)
@@ -148,6 +221,31 @@ class PatientTaskAgentServiceTest {
                 .patientMessage("请帮我分析最近一周的情况")
                 .conversationId("conv-1")
                 .correlationId("corr-1")
+                .traceContext(PlatformTraceContext.builder()
+                        .traceId("trace-1")
+                        .conversationId("conv-1")
+                        .correlationId("corr-1")
+                        .build())
+                .platformContext(PlatformContext.builder()
+                        .contextId("ctx:conv-1")
+                        .conversationId("conv-1")
+                        .customerId("C001")
+                        .doctorId("D001")
+                        .field(PlatformContextField.builder()
+                                .fieldKey("session_context")
+                                .domain(PlatformContextDomain.CONVERSATION_CONTEXT)
+                                .visibility(PlatformContextVisibility.AGENT_INTERNAL)
+                                .source("AI_CHAT_SESSION_CONTEXT")
+                                .value(Map.of("conversationPhase", "follow_up", "currentTopic", "血糖复盘"))
+                                .build())
+                        .field(PlatformContextField.builder()
+                                .fieldKey("patient_message")
+                                .domain(PlatformContextDomain.CONVERSATION_CONTEXT)
+                                .visibility(PlatformContextVisibility.AGENT_INTERNAL)
+                                .source("PATIENT_MESSAGE")
+                                .value("请帮我分析最近一周的情况")
+                                .build())
+                        .build())
                 .sessionContext(Map.of(
                         "conversationPhase", "follow_up",
                         "currentTopic", "血糖复盘"))

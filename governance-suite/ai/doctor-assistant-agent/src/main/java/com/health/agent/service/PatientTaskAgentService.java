@@ -1,6 +1,7 @@
 package com.health.agent.service;
 
 import com.alibaba.fastjson2.JSON;
+import com.health.agent.config.DoctorAgentPlatformProperties;
 import com.health.agent.dto.agent.AgentExecutionCommand;
 import com.health.agent.dto.patient.DoctorAssistantPendingTaskPayload;
 import com.health.agent.dto.patient.DoctorAssistantTaskRequest;
@@ -21,6 +22,9 @@ import com.health.agent.model.Step;
 import com.health.agent.model.StructuredFinalAnswer;
 import com.health.agent.model.TaskStatus;
 import com.health.agent.safety.MedicalSafetyService;
+import com.lx.governance.agentplatform.model.PlatformOutcomeMode;
+import com.lx.governance.agentplatform.model.PlatformTraceContext;
+import com.lx.governance.agentplatform.model.WorkbenchPayload;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -42,9 +46,12 @@ public class PatientTaskAgentService {
     private final ReActAgentEngine agentEngine;
     private final PatientTaskAgentResultMapper resultMapper;
     private final PatientReplyComposer patientReplyComposer;
+    private final PendingTaskService pendingTaskService;
+    private final DoctorPlatformRunPersistenceService platformRunPersistenceService;
+    private final DoctorAgentPlatformProperties platformProperties;
 
     public PatientTaskAgentService(PatientTaskSafetyService safetyService) {
-        this(safetyService, null, null, null, null, null, null);
+        this(safetyService, null, null, null, null, null, null, null, null, null);
     }
 
     @Autowired
@@ -55,7 +62,10 @@ public class PatientTaskAgentService {
         MedicalSafetyService medicalSafetyService,
         ReActAgentEngine agentEngine,
         PatientTaskAgentResultMapper resultMapper,
-        PatientReplyComposer patientReplyComposer
+        PatientReplyComposer patientReplyComposer,
+        PendingTaskService pendingTaskService,
+        DoctorPlatformRunPersistenceService platformRunPersistenceService,
+        DoctorAgentPlatformProperties platformProperties
     ) {
         this.safetyService = safetyService;
         this.sessionService = sessionService;
@@ -64,6 +74,9 @@ public class PatientTaskAgentService {
         this.agentEngine = agentEngine;
         this.resultMapper = resultMapper;
         this.patientReplyComposer = patientReplyComposer;
+        this.pendingTaskService = pendingTaskService;
+        this.platformRunPersistenceService = platformRunPersistenceService;
+        this.platformProperties = platformProperties;
     }
 
     /**
@@ -88,6 +101,10 @@ public class PatientTaskAgentService {
         if (agentEngine == null) {
             log.warn("患者来源任务分析未接入真实 Agent，引擎为空，回退模板分析 - taskType: {}, conversationId: {}, correlationId: {}",
                     command.getTaskType(), command.getConversationId(), command.getCorrelationId());
+            if (!shouldFallbackToTemplate()) {
+                return buildAgentFailureResponse(request, command, "AGENT_NOT_AVAILABLE",
+                        "真实 Agent 未启用，且当前关闭模板兜底");
+            }
             return analyzeWithTemplateFallback(request, command, "AGENT_NOT_AVAILABLE");
         }
 
@@ -97,19 +114,64 @@ public class PatientTaskAgentService {
             if (agentResult == null) {
                 log.warn("真实 Agent 返回为空，回退模板分析 - taskType: {}, conversationId: {}, correlationId: {}",
                         command.getTaskType(), command.getConversationId(), command.getCorrelationId());
+                if (!shouldFallbackToTemplate()) {
+                    return buildAgentFailureResponse(request, command, "AGENT_RESULT_NULL",
+                            "真实 Agent 返回为空，且当前关闭模板兜底");
+                }
                 return analyzeWithTemplateFallback(request, command, "AGENT_RESULT_NULL");
             }
             if (agentResult.getStatus() == ResultStatus.ERROR || agentResult.getStatus() == ResultStatus.MAX_STEPS) {
                 log.warn("真实 Agent 未稳定收敛，回退模板分析 - status: {}, conversationId: {}, correlationId: {}",
                         agentResult.getStatus(), command.getConversationId(), command.getCorrelationId());
+                if (!shouldFallbackToTemplate()) {
+                    return buildAgentFailureResponse(
+                            request,
+                            command,
+                            "AGENT_STATUS_" + agentResult.getStatus().name(),
+                            "真实 Agent 未稳定收敛，且当前关闭模板兜底");
+                }
                 return analyzeWithTemplateFallback(request, command, "AGENT_STATUS_" + agentResult.getStatus().name());
             }
             return buildAgentBackedResponse(request, command, agentResult);
         } catch (Exception e) {
             log.error("患者来源任务调用真实 Agent 失败，回退模板分析 - conversationId: {}, correlationId: {}",
                     command.getConversationId(), command.getCorrelationId(), e);
+            if (!shouldFallbackToTemplate()) {
+                return buildAgentFailureResponse(request, command, "AGENT_EXCEPTION",
+                        "真实 Agent 执行异常，且当前关闭模板兜底");
+            }
             return analyzeWithTemplateFallback(request, command, "AGENT_EXCEPTION");
         }
+    }
+
+    private boolean shouldFallbackToTemplate() {
+        return platformProperties == null || platformProperties.isFallbackToTemplateOnAgentError();
+    }
+
+    private DoctorAssistantTaskResponse buildAgentFailureResponse(
+            DoctorAssistantTaskRequest request,
+            AgentExecutionCommand command,
+            String fallbackReason,
+            String errorMessage) {
+        String taskId = buildTaskId(request);
+        return DoctorAssistantTaskResponse.builder()
+                .taskId(taskId)
+                .conversationId(request != null ? request.getConversationId() : null)
+                .correlationId(request != null ? request.getCorrelationId() : null)
+                .taskType(command != null ? command.getTaskType() : null)
+                .status(DoctorAssistantTaskStatus.ERROR)
+                .executionPath("AGENT")
+                .agentExecutionStatus("FAILED")
+                .fallbackReason(fallbackReason)
+                .needsHumanReview(Boolean.FALSE)
+                .errorMessage(errorMessage)
+                .traceContext(resultMapper != null ? resultMapper.toTraceContext(
+                        request,
+                        command,
+                        null,
+                        null,
+                        null) : null)
+                .build();
     }
 
     private DoctorAssistantTaskResponse analyzeWithTemplateFallback(
@@ -208,6 +270,8 @@ public class PatientTaskAgentService {
                         history.size(),
                         0L
                 );
+                persistPlatformRun(session, List.of(pendingTask), request.getConversationId(),
+                        PlatformOutcomeMode.PENDING_APPROVAL, "PATIENT_TASK_TEMPLATE_FALLBACK", fallbackReason);
             }
 
             // 对外返回给医生工作台的是一个轻量 payload，而不是直接暴露内部 PendingTask 实体。
@@ -227,6 +291,9 @@ public class PatientTaskAgentService {
                     history.size(),
                     0L
             );
+            AgentSession completedSession = sessionService.getById(agentSessionId);
+            persistPlatformRun(completedSession, List.of(), request.getConversationId(),
+                    PlatformOutcomeMode.AGENT_RESULT, "PATIENT_TASK_TEMPLATE_FALLBACK", fallbackReason);
         }
 
         // 医生工作台载荷聚合的是“给医生看的运营/审计/复核信息”，
@@ -242,6 +309,23 @@ public class PatientTaskAgentService {
                 "TEMPLATE_FALLBACK",
                 "FALLBACK",
                 fallbackReason);
+        WorkbenchPayload platformWorkbenchPayload = resultMapper.toPlatformWorkbenchPayload(
+                request,
+                command,
+                taskId,
+                agentSessionId,
+                structuredResult,
+                needsHumanReview,
+                pendingTaskPayload,
+                "TEMPLATE_FALLBACK",
+                "FALLBACK",
+                fallbackReason);
+        PlatformTraceContext traceContext = resultMapper.toTraceContext(
+                request,
+                command,
+                agentSessionId,
+                agentSessionId,
+                pendingTaskPayload != null ? pendingTaskPayload.getToolName() : null);
 
         log.info("患者来源任务分析完成 - taskType: {}, taskId: {}, conversationId: {}, correlationId: {}, sessionId: {}",
                 command.getTaskType(), taskId, request.getConversationId(), request.getCorrelationId(), agentSessionId);
@@ -260,6 +344,8 @@ public class PatientTaskAgentService {
                 .patientSafeReply(patientReply)
                 .structuredResult(structuredResult)
                 .doctorWorkbenchPayload(workbenchPayload)
+                .platformWorkbenchPayload(platformWorkbenchPayload)
+                .traceContext(traceContext)
                 .executionPath("TEMPLATE_FALLBACK")
                 .agentExecutionStatus("FALLBACK")
                 .fallbackReason(fallbackReason)
@@ -298,6 +384,7 @@ public class PatientTaskAgentService {
         }
 
         String agentSessionId = defaultValue(agentResult.getSessionId(), "patient-agent-" + taskId);
+        persistAgentExecutionRun(agentSessionId, request.getConversationId(), agentResult);
         DoctorWorkbenchPayload workbenchPayload = resultMapper.toDoctorWorkbenchPayload(
                 request,
                 command,
@@ -309,6 +396,23 @@ public class PatientTaskAgentService {
                 "AGENT",
                 agentResult.getStatus() != null ? agentResult.getStatus().name() : "UNKNOWN",
                 null);
+        WorkbenchPayload platformWorkbenchPayload = resultMapper.toPlatformWorkbenchPayload(
+                request,
+                command,
+                taskId,
+                agentSessionId,
+                structuredResult,
+                needsHumanReview,
+                pendingTaskPayload,
+                "AGENT",
+                agentResult.getStatus() != null ? agentResult.getStatus().name() : "UNKNOWN",
+                null);
+        PlatformTraceContext traceContext = resultMapper.toTraceContext(
+                request,
+                command,
+                agentSessionId,
+                agentSessionId,
+                pendingTaskPayload != null ? pendingTaskPayload.getToolName() : null);
 
         log.info("患者来源任务真实 Agent 执行完成 - taskType: {}, taskId: {}, conversationId: {}, correlationId: {}, sessionId: {}, status: {}",
                 command.getTaskType(), taskId, request.getConversationId(), request.getCorrelationId(), agentSessionId,
@@ -324,12 +428,57 @@ public class PatientTaskAgentService {
                 .patientSafeReply(patientReply)
                 .structuredResult(structuredResult)
                 .doctorWorkbenchPayload(workbenchPayload)
+                .platformWorkbenchPayload(platformWorkbenchPayload)
+                .traceContext(traceContext)
                 .executionPath("AGENT")
                 .agentExecutionStatus(agentResult.getStatus() != null ? agentResult.getStatus().name() : "UNKNOWN")
                 .fallbackReason(null)
                 .needsHumanReview(needsHumanReview)
                 .pendingTask(pendingTaskPayload)
                 .build();
+    }
+
+    private void persistAgentExecutionRun(String agentSessionId, String conversationId, AgentResult agentResult) {
+        if (platformRunPersistenceService == null || sessionService == null || agentSessionId == null) {
+            return;
+        }
+        AgentSession session = sessionService.getById(agentSessionId);
+        if (session == null) {
+            return;
+        }
+        List<PendingTask> pendingTasks = pendingTaskService != null
+                ? pendingTaskService.listBySession(agentSessionId)
+                : List.of();
+        PlatformOutcomeMode outcomeMode = agentResult != null && agentResult.getStatus() == ResultStatus.PENDING_APPROVAL
+                ? PlatformOutcomeMode.PENDING_APPROVAL
+                : PlatformOutcomeMode.AGENT_RESULT;
+        platformRunPersistenceService.persistPatientTaskRun(
+                session,
+                pendingTasks,
+                conversationId,
+                outcomeMode,
+                "PATIENT_TASK_AGENT",
+                null);
+    }
+
+    private void persistPlatformRun(
+        AgentSession session,
+        List<PendingTask> pendingTasks,
+        String conversationId,
+        PlatformOutcomeMode outcomeMode,
+        String triggerSource,
+        String fallbackReason
+    ) {
+        if (platformRunPersistenceService == null || session == null) {
+            return;
+        }
+        platformRunPersistenceService.persistPatientTaskRun(
+                session,
+                pendingTasks,
+                conversationId,
+                outcomeMode,
+                triggerSource,
+                fallbackReason);
     }
 
     private String buildFinalPatientReply(

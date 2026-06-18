@@ -6,6 +6,8 @@ import com.health.agent.dto.patient.AgentTaskConstraints;
 import com.health.agent.dto.patient.AgentTaskSource;
 import com.health.agent.dto.patient.MemorySnapshot;
 import com.health.agent.dto.patient.TaskType;
+import com.lx.governance.agentplatform.model.PlatformContext;
+import com.lx.governance.agentplatform.model.PlatformTraceContext;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -48,6 +50,16 @@ public class AgentExecutionCommand {
      * 跨服务链路追踪 ID。
      */
     private String correlationId;
+
+    /**
+     * 平台统一 trace 上下文。
+     */
+    private PlatformTraceContext traceContext;
+
+    /**
+     * 平台统一上下文总线载荷。
+     */
+    private PlatformContext platformContext;
 
     /**
      * 请求来源。
