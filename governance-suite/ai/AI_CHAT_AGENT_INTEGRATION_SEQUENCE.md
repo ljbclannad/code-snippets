@@ -21,7 +21,7 @@
 - `LayeredMemoryOrchestrator` / `RetrievalQueryRewriteService` / `MemorySelfQueryPlanner` / `MemoryService`
 - `VectorMemoryClientFixed` / `VectorMemoryMessageListener`
 - `StructuredMemoryQueryCompiler` / `MemoryRetrievalService` / `MemoryRerankService`
-- `TaskTriggerRouter` / `AgentDispatchPolicy`
+- `TaskTriggerRouter` / `AgentConversationRouteRuntime` / `AgentDispatchPolicy`
 - `HttpDoctorAssistantAgentGateway`
 - `PatientTaskController` / `PatientTaskAgentService` / `PatientTaskSafetyService`
 - `DeepSeekClient`
@@ -54,7 +54,9 @@ sequenceDiagram
     participant VectorSvc as MemoryRetrievalService
     participant Rerank as MemoryRerankService
     participant Router as TaskTriggerRouter
+    participant RouteRuntime as AgentConversationRouteRuntime
     participant Policy as AgentDispatchPolicy
+    participant PlatformRoute as PlatformRouteRuntime
     participant ReqFactory as DoctorAssistantTaskRequestFactory
     participant AgentGW as HttpDoctorAssistantAgentGateway
     participant AgentCtrl as PatientTaskController
@@ -101,16 +103,25 @@ sequenceDiagram
     Chat->>Context: recordTaskTriggerDecision(conversationId, decision)
     Context->>Redis: SET lastTaskTrigger*
 
-    par 用户画像加载
-        Chat->>Profile: requestUserProfile(customerId)
-        Profile->>Profile: 创建 CompletableFuture + pendingRequests
-        Profile->>MQ: send user.profile.request(replyTo, correlationId)
-        MQ->>ProfileSvc: 投递画像请求
-        ProfileSvc-->>MQ: 画像响应
-        MQ-->>Profile: ai.chat.user.profile.reply
-        Profile->>Profile: future.complete(response)
-        Profile-->>Chat: UserProfileDTO
-    and 画像完成后装载记忆
+    Chat->>Profile: requestUserProfile(customerId)
+    Profile->>Profile: 创建 CompletableFuture + pendingRequests
+    Profile->>MQ: send user.profile.request(replyTo, correlationId)
+    MQ->>ProfileSvc: 投递画像请求
+    ProfileSvc-->>MQ: 画像响应
+    MQ-->>Profile: ai.chat.user.profile.reply
+    Profile->>Profile: future.complete(response)
+    Profile-->>Chat: UserProfileDTO
+
+    alt 画像补全追问优先触发
+        Chat->>Chat: handleProfileCompletionIfNeeded(...)
+        Chat->>Context: updateContext(conversationId, userMessage, "")
+        Context->>Redis: GET/SET context
+        Chat->>Async: handleChatCompleted(follow-up message)
+        Async->>DB: 插入对话历史
+        Async->>Memory: extractMemory(...)
+        Chat-->>Controller: ChatResponse.success(followUpMessage)
+        Controller-->>Patient: 追问消息
+    else 正常进入对话或 Agent 分流
         Chat->>MemoryOrch: loadMemories(groupId, customerId, message, sessionContext, profile, memoryEnabled, retrievalCount)
         MemoryOrch->>MemoryOrch: extractShortTermMemories(sessionContext)
         Note over MemoryOrch: 短期记忆来自 currentTopic、userIntent、pendingQuestions、recentSummaries
@@ -141,21 +152,10 @@ sequenceDiagram
             Memory-->>MemoryOrch: longTermMemories
             MemoryOrch-->>Chat: shortTermMemories + longTermMemories
         end
-    end
 
-    alt 画像补全追问优先触发
-        Chat->>Chat: handleProfileCompletionIfNeeded(...)
-        Chat->>Context: updateContext(conversationId, userMessage, "")
-        Context->>Redis: GET/SET context
-        Chat->>Async: handleChatCompleted(follow-up message)
-        Async->>DB: 插入对话历史
-        Async->>Memory: extractMemory(...)
-        Chat-->>Controller: ChatResponse.success(followUpMessage)
-        Controller-->>Patient: 追问消息
-    else 正常进入对话或 Agent 分流
         alt shouldUpgradeToAgent = false
             Chat->>LLM: chat(request, profile, sessionContext, layeredMemories)
-            LLM-->>Chat: DifyResponse(answer, usage)
+            LLM-->>Chat: ChatGenerationResult(answer, usage)
             Chat->>Context: updateContext(conversationId, userMessage, aiResponse)
             Context->>Redis: GET/SET context
             Chat->>Async: handleChatCompleted(request, response, correlationId)
@@ -165,17 +165,29 @@ sequenceDiagram
             Chat-->>Controller: ChatResponse.success(...)
             Controller-->>Patient: 普通对话回复
         else shouldUpgradeToAgent = true
-            Chat->>Policy: evaluate(request, triggerDecision)
-            alt 灰度未放行 or 熔断打开
-                Policy-->>Chat: invokeAgent=false
+            Chat->>RouteRuntime: evaluateInvocation(request, sessionContext, triggerDecision)
+            RouteRuntime->>Policy: evaluate(request, sessionContext, triggerDecision)
+            Policy-->>RouteRuntime: Decision(invokeAgent, reason)
+            RouteRuntime->>PlatformRoute: evaluateInvocation(pendingReviewSnapshot, invokeAgent, reason)
+            PlatformRoute-->>RouteRuntime: PlatformRouteDecision(target, invokeAgent, reason)
+            RouteRuntime-->>Chat: PlatformRouteDecision
+            alt 已有待处理人工复核，命中短路窗口
+                Chat->>Context: updateContext(conversationId, userMessage, patientReply)
+                Context->>Redis: GET/SET context
+                Chat->>Async: handleChatCompleted(request, patientReply, correlationId)
+                Async->>DB: 保存患者可见回复到对话历史
+                Async->>MQ: 同步聊天记录到索引队列
+                Async->>Memory: extractMemory(groupId, customerId, userMessage, patientReply)
+                Chat-->>Controller: ChatResponse.success(pending_review_short_circuit)
+                Controller-->>Patient: 保守提示并避免重复触发 Agent
+            else 灰度未放行 or 熔断打开
                 Chat->>LLM: chat(request, profile, sessionContext, layeredMemories)
-                LLM-->>Chat: DifyResponse
+                LLM-->>Chat: ChatGenerationResult
                 Chat->>Context: updateContext(...)
                 Chat->>Async: handleChatCompleted(...)
                 Chat-->>Controller: ChatResponse.success(direct_chat_fallback)
                 Controller-->>Patient: 普通对话回退回复
             else 放行 Agent
-                Policy-->>Chat: invokeAgent=true
                 Chat->>ReqFactory: buildPatientDialogRequest(...)
                 ReqFactory-->>Chat: DoctorAssistantTaskRequest
                 Note over ReqFactory: 附带 sessionContext、profileSnapshot、memorySnapshot、triggerDecision、constraints
@@ -199,16 +211,21 @@ sequenceDiagram
                 AgentCtrl-->>AgentGW: DoctorAssistantTaskResponse
                 AgentGW-->>Chat: DoctorAssistantTaskResponse
 
+                Chat->>RouteRuntime: evaluateAgentResponse(agentResponse)
+                RouteRuntime->>PlatformRoute: evaluateAgentResponse(PlatformAgentResponse)
+                PlatformRoute-->>RouteRuntime: PlatformRouteDecision(target, invokeAgent, reason)
+                RouteRuntime-->>Chat: PlatformRouteDecision
+
                 alt Agent 返回 SKIPPED
                     Chat->>LLM: chat(request, profile, sessionContext, layeredMemories)
-                    LLM-->>Chat: DifyResponse
+                    LLM-->>Chat: ChatGenerationResult
                     Chat->>Context: updateContext(...)
                     Chat->>Async: handleChatCompleted(...)
                     Chat-->>Controller: ChatResponse.success(agent_skipped_fallback)
                     Controller-->>Patient: 普通对话回退回复
                 else Agent 返回 ERROR 或 patientSafeReply 为空
                     Chat->>LLM: chat(request, profile, sessionContext, layeredMemories)
-                    LLM-->>Chat: DifyResponse
+                    LLM-->>Chat: ChatGenerationResult
                     Chat->>Context: updateContext(...)
                     Chat->>Async: handleChatCompleted(...)
                     Chat-->>Controller: ChatResponse.success(agent_error_fallback)
@@ -245,6 +262,7 @@ sequenceDiagram
 - `UserProfileClientFixed` 采用 RabbitMQ RPC 模式，而不是本地直连 HTTP。
 - `ai-chat-service` 发送请求时会登记 `correlationId -> CompletableFuture`。
 - `user-profile-service` 返回响应后，由固定 reply 队列监听器完成 future，主链路再继续。
+- 当前主链路是“先拿画像，再判定是否进入画像补全追问；只有追问未命中时才继续长期记忆检索”。
 
 ### 3. 记忆处理
 
@@ -253,8 +271,9 @@ sequenceDiagram
   - `RetrievalQueryRewriteService` 负责改写检索 query
   - `IntentMemoryFilterStrategy` 负责根据当前意图决定过滤策略
   - `MemorySelfQueryPlanner` 负责把 rewrite 结果和意图策略合并成 `StructuredMemoryQuery`
-  - `MemoryService` 负责向 `vector-memory-service` 发请求并做上游统一相似度过滤、去重和裁剪
+- `MemoryService` 负责向 `vector-memory-service` 发请求并做上游统一相似度过滤、去重和裁剪
 - 降级模式下可以完全跳过长期记忆检索。
+- 画像补全追问命中时，本轮不会执行长期记忆检索，也不会继续进入 Agent 分流。
 
 ### 3.1 Self-Query DSL
 
@@ -327,7 +346,11 @@ sequenceDiagram
 
 - `TaskTriggerRouter` 会优先拦截画像补全追问、闲聊、简单事实问答。
 - 只有命中分析、风险分层、下一步建议等信号，才会切到 `DOCTOR_ASSISTANT_AGENT` 路由。
-- 路由命中后仍不会立刻调用 Agent，还要经过 `AgentDispatchPolicy` 的灰度和熔断判断。
+- 路由命中后仍不会立刻调用 Agent，而是先进入 `AgentConversationRouteRuntime`。
+- `AgentConversationRouteRuntime` 会先调用 `AgentDispatchPolicy` 做灰度/熔断放行判断，再交给 `PlatformRouteRuntime` 统一处理：
+  - 是否命中待人工复核短路窗口
+  - 是否允许回退普通对话
+  - Agent 返回后是否可继续消费
 
 ### 5. Agent 响应的三层输出
 
@@ -351,6 +374,7 @@ sequenceDiagram
   - `SessionContextService.updateContext(...)`
   - `ChatAsyncProcessingService.handleChatCompleted(...)`
   - 进而触发历史落库、索引同步、记忆提取
+- 如果会话仍处于最近一次 `PENDING_APPROVAL` 的短路窗口内，`ai-chat-service` 会直接返回保守患者提示，不再重复调用 `doctor-assistant-agent`。
 - 区别在于 Agent 成功分支只把 `patientSafeReply` 并回患者主链路。
 - `structuredResult` 和 `doctorWorkbenchPayload` 仍然保留在医生侧/工作台侧语义中，不会进入患者上下文或记忆抽取。
 
