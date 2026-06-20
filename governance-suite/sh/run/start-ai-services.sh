@@ -239,6 +239,23 @@ os.execvp(sys.argv[1], sys.argv[1:])
 ' "$@" < /dev/null > "${log_file}" 2>&1 &
 }
 
+append_profile() {
+  local profiles="$1"
+  local profile_to_add="$2"
+
+  if [[ -z "${profiles}" ]]; then
+    echo "${profile_to_add}"
+    return 0
+  fi
+
+  if [[ ",${profiles}," == *",${profile_to_add},"* ]]; then
+    echo "${profiles}"
+    return 0
+  fi
+
+  echo "${profiles},${profile_to_add}"
+}
+
 start_service() {
   local service="$1"
   local port="$2"
@@ -246,6 +263,7 @@ start_service() {
   local pid_file="${LOG_DIR}/${service}.pid"
   local log_file="${LOG_DIR}/${service}.log"
   local run_args=()
+  local spring_profiles="${SPRING_PROFILES_ACTIVE:-}"
 
   if [[ "${RESTART_MODE}" -eq 1 ]]; then
     if [[ -f "${pid_file}" ]]; then
@@ -275,6 +293,14 @@ start_service() {
 
   if [[ "${service}" == "doctor-assistant-agent" ]]; then
     run_args+=("-Dspring-boot.run.fork=false")
+  fi
+
+  if [[ "${service}" == "ai-chat-service" && "${WITH_OBSERVABILITY}" -eq 1 ]]; then
+    spring_profiles=$(append_profile "${spring_profiles}" "observability")
+  fi
+
+  if [[ -n "${spring_profiles}" ]]; then
+    run_args+=("-Dspring-boot.run.profiles=${spring_profiles}")
   fi
 
   echo "启动 ${service} (${port})..."

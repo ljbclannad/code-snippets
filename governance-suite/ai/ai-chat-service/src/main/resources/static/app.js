@@ -2,6 +2,10 @@ const state = {
     abortController: null,
     activeAssistantMessage: null,
     activeConversationId: "",
+    connectionStatus: "idle",
+    isBusy: false,
+    traceCount: 0,
+    messageCount: 0,
     tokenUsage: null,
     conversations: []
 };
@@ -26,6 +30,14 @@ const elements = {
     tokenUsageText: document.getElementById("tokenUsageText"),
     activeAgentText: document.getElementById("activeAgentText"),
     activeStageText: document.getElementById("activeStageText"),
+    transportStatValue: document.getElementById("transportStatValue"),
+    healthStatValue: document.getElementById("healthStatValue"),
+    sessionStatValue: document.getElementById("sessionStatValue"),
+    liveConnectionBadge: document.getElementById("liveConnectionBadge"),
+    liveConnectionText: document.getElementById("liveConnectionText"),
+    liveBusyText: document.getElementById("liveBusyText"),
+    messageCountText: document.getElementById("messageCountText"),
+    traceCountText: document.getElementById("traceCountText"),
     healthBadge: document.getElementById("healthBadge"),
     historyStatus: document.getElementById("historyStatus"),
     conversationList: document.getElementById("conversationList")
@@ -37,6 +49,7 @@ function init() {
     updateConversationView();
     updateTokenUsage(null);
     updateAgentStatus("未触发", "空闲");
+    updateRuntimeStats();
     pingHealth();
     maybeLoadConversations();
     appendTrace("系统", "页面已加载，等待发送请求。");
@@ -48,6 +61,7 @@ function bindEvents() {
     elements.clearChatBtn.addEventListener("click", clearChat);
     elements.clearTraceBtn.addEventListener("click", () => {
         elements.traceLog.innerHTML = "";
+        syncTraceCount();
         appendTrace("系统", "调试日志已清空。");
     });
     elements.refreshHistoryBtn.addEventListener("click", maybeLoadConversations);
@@ -71,13 +85,17 @@ function bindEvents() {
 }
 
 function updateModeText() {
-    elements.modeText.textContent = elements.streamMode.checked ? "流式输出" : "普通响应";
+    const isStream = elements.streamMode.checked;
+    elements.modeText.textContent = isStream ? "流式输出" : "普通响应";
+    elements.transportStatValue.textContent = isStream ? "SSE Stream" : "JSON Sync";
+    updateLiveConnection();
 }
 
 function updateConversationView() {
     const value = elements.conversationId.value.trim();
     state.activeConversationId = value;
     elements.activeConversationText.textContent = value || "未创建";
+    elements.sessionStatValue.textContent = value ? abbreviateConversationId(value) : "Idle";
     highlightActiveConversation();
 }
 
@@ -99,9 +117,11 @@ async function pingHealth() {
         }
         elements.healthBadge.className = "badge success";
         elements.healthBadge.textContent = "服务正常";
+        elements.healthStatValue.textContent = "Healthy";
     } catch (error) {
         elements.healthBadge.className = "badge error";
         elements.healthBadge.textContent = "服务异常";
+        elements.healthStatValue.textContent = "Degraded";
         appendTrace("健康检查", `探测失败: ${error.message}`);
     }
 }
@@ -163,6 +183,7 @@ async function handleSend() {
     const messageText = payload.message;
     elements.messageInput.value = "";
     addMessage("user", "你", messageText);
+    state.connectionStatus = elements.streamMode.checked ? "streaming" : "sync";
     setBusy(true);
     updateTokenUsage(null);
     updateAgentStatus("处理中", "等待流式响应建立");
@@ -196,10 +217,12 @@ async function sendRegularMessage(payload) {
         addMessage("assistant", "AI", data.message || "");
         renderRecommendations(data.recommendations || []);
         updateAgentStatus("未触发", "普通响应完成");
+        updateLiveConnection("complete");
         await maybeLoadConversations();
         appendTrace("响应", `普通响应完成 · conversationId=${data.conversationId || "-"}`);
     } catch (error) {
         updateAgentStatus("异常", error.message);
+        updateLiveConnection("error");
         addMessage("error", "系统", error.message);
         appendTrace("错误", error.message);
     } finally {
@@ -249,11 +272,13 @@ async function sendStreamMessage(payload) {
             appendTrace("中断", "已手动停止当前流式输出。");
             markAssistantMeta("已手动停止");
             updateAgentStatus(elements.activeAgentText.textContent, "已手动停止");
+            updateLiveConnection("stopped");
         } else {
             addMessage("error", "系统", error.message);
             appendTrace("错误", error.message);
             markAssistantMeta("流式响应失败");
             updateAgentStatus("异常", error.message);
+            updateLiveConnection("error");
         }
     } finally {
         state.abortController = null;
@@ -308,6 +333,7 @@ function handleStreamEvent(event) {
         case "START":
             applyConversationId(event.conversationId);
             markAssistantMeta(`会话已建立 · ${formatTime(event.timestamp)}`);
+            updateLiveConnection("streaming");
             appendTrace("SSE", `START · conversationId=${event.conversationId || "-"}`);
             break;
         case "CONTENT":
@@ -323,11 +349,13 @@ function handleStreamEvent(event) {
             updateTokenUsage(event.tokenUsage || null);
             markAssistantMeta(`生成完成 · ${formatTime(event.timestamp)}`);
             updateAgentStatus(elements.activeAgentText.textContent, "已完成");
+            updateLiveConnection("complete");
             appendTrace("SSE", "DONE");
             break;
         case "ERROR":
             markAssistantMeta("生成失败");
             updateAgentStatus("异常", event.error || "未知错误");
+            updateLiveConnection("error");
             addMessage("error", "系统", event.error || "未知流式错误");
             appendTrace("SSE", `ERROR · ${event.error || "未知错误"}`);
             break;
@@ -430,6 +458,7 @@ function addMessage(kind, roleLabel, content, options = {}) {
 
     const item = document.createElement("article");
     item.className = `message ${kind}`;
+    item.dataset.kind = kind;
 
     const role = document.createElement("div");
     role.className = "message-role";
@@ -449,6 +478,7 @@ function addMessage(kind, roleLabel, content, options = {}) {
     body.append(meta, contentNode);
     item.append(role, body);
     elements.messageList.appendChild(item);
+    syncMessageCount();
     maybeScroll();
     return item;
 }
@@ -490,8 +520,11 @@ function clearChat() {
     elements.messageList.innerHTML = "";
     elements.messageList.hidden = true;
     elements.emptyState.hidden = false;
+    state.connectionStatus = "idle";
     updateTokenUsage(null);
     updateAgentStatus("未触发", "空闲");
+    syncMessageCount();
+    updateLiveConnection("idle");
     appendTrace("系统", "对话区域已清空。");
 }
 
@@ -557,6 +590,7 @@ function renderConversationMessages(messages) {
     if (!messages.length) {
         elements.messageList.hidden = true;
         elements.emptyState.hidden = false;
+        syncMessageCount();
         return;
     }
 
@@ -569,16 +603,20 @@ function renderConversationMessages(messages) {
             meta: formatDateTime(message.timestamp)
         });
     });
+    syncMessageCount();
     maybeScroll();
 }
 
 function setBusy(isBusy) {
+    state.isBusy = isBusy;
     elements.sendBtn.disabled = isBusy;
     elements.stopBtn.disabled = !isBusy || !elements.streamMode.checked;
     elements.customerId.disabled = isBusy;
     elements.groupId.disabled = isBusy;
     elements.conversationId.disabled = isBusy;
     elements.streamMode.disabled = isBusy;
+    updateRuntimeStats();
+    updateLiveConnection();
 }
 
 function stopStreaming() {
@@ -592,7 +630,48 @@ function appendTrace(tag, message) {
     line.className = "trace-entry";
     line.textContent = `[${formatTime(Date.now())}] ${tag}: ${message}`;
     elements.traceLog.appendChild(line);
+    syncTraceCount();
     elements.traceLog.scrollTop = elements.traceLog.scrollHeight;
+}
+
+function updateRuntimeStats() {
+    elements.liveBusyText.textContent = state.isBusy ? "Running" : "Idle";
+    elements.messageCountText.textContent = String(state.messageCount);
+    elements.traceCountText.textContent = String(state.traceCount);
+}
+
+function updateLiveConnection(status) {
+    const resolvedStatus = status || deriveConnectionStatus();
+    state.connectionStatus = resolvedStatus;
+    elements.liveConnectionBadge.dataset.state = resolvedStatus;
+
+    const labels = {
+        idle: "待机中",
+        sync: "同步请求",
+        streaming: "流式输出中",
+        complete: "已完成",
+        error: "异常",
+        stopped: "已停止"
+    };
+
+    elements.liveConnectionText.textContent = labels[resolvedStatus] || "待机中";
+}
+
+function deriveConnectionStatus() {
+    if (state.isBusy) {
+        return elements.streamMode.checked ? "streaming" : "sync";
+    }
+    return state.connectionStatus || "idle";
+}
+
+function syncMessageCount() {
+    state.messageCount = elements.messageList.querySelectorAll(".message").length;
+    updateRuntimeStats();
+}
+
+function syncTraceCount() {
+    state.traceCount = elements.traceLog.childElementCount;
+    updateRuntimeStats();
 }
 
 function maybeScroll() {
@@ -631,6 +710,13 @@ function formatScore(score) {
         return "-";
     }
     return score.toFixed(2);
+}
+
+function abbreviateConversationId(value) {
+    if (!value) {
+        return "Idle";
+    }
+    return value.length > 16 ? `${value.slice(0, 7)}...${value.slice(-6)}` : value;
 }
 
 function escapeHtml(text) {

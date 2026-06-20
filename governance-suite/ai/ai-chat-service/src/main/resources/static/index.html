@@ -12,9 +12,14 @@
     <div class="shell">
         <aside class="sidebar">
             <div class="brand">
+                <div class="brand-mark">
+                    <span class="brand-dot"></span>
+                    <span class="brand-dot"></span>
+                    <span class="brand-dot"></span>
+                </div>
                 <p class="eyebrow">AI Chat Service</p>
                 <h1>对话控制台</h1>
-                <p class="subtitle">直接联调 `/api/chat` 与 `/api/chat/stream`，适合本地验证画像、记忆和流式输出链路。</p>
+                <p class="subtitle">面向画像、记忆与流式对话链路的本地验证工作台，保留调试效率，也把界面质感拉起来。</p>
             </div>
 
             <section class="panel config-panel">
@@ -99,15 +104,54 @@
 
         <main class="workspace">
             <section class="hero panel">
-                <div>
-                    <p class="eyebrow">Web Playground</p>
+                <div class="hero-copy-group">
+                    <p class="eyebrow">Command Surface</p>
+                    <h2>流式对话调试台</h2>
+                    <p class="hero-copy">支持连续追问、同步 / 流式响应切换、推荐相似会话回填，以及关键状态的实时观测。</p>
                 </div>
-                <p class="hero-copy">页面会保留服务端返回的 `conversationId`，支持连续追问、切换同步/流式响应，并展示推荐相似会话。</p>
+                <div class="hero-status">
+                    <div class="hero-stat">
+                        <span class="hero-stat-label">Transport</span>
+                        <strong id="transportStatValue">Stream</strong>
+                    </div>
+                    <div class="hero-stat">
+                        <span class="hero-stat-label">Health</span>
+                        <strong id="healthStatValue">Checking</strong>
+                    </div>
+                    <div class="hero-stat">
+                        <span class="hero-stat-label">Session</span>
+                        <strong id="sessionStatValue">Idle</strong>
+                    </div>
+                </div>
             </section>
 
             <section id="chatViewport" class="chat-viewport panel">
+                <div class="viewport-head">
+                    <div id="liveConnectionBadge" class="live-badge">
+                        <span class="live-badge-dot"></span>
+                        <span id="liveConnectionText">待机中</span>
+                    </div>
+                    <div class="telemetry-grid">
+                        <div class="telemetry-card">
+                            <span class="telemetry-label">Run State</span>
+                            <strong id="liveBusyText">Idle</strong>
+                        </div>
+                        <div class="telemetry-card">
+                            <span class="telemetry-label">Messages</span>
+                            <strong id="messageCountText">0</strong>
+                        </div>
+                        <div class="telemetry-card">
+                            <span class="telemetry-label">Trace</span>
+                            <strong id="traceCountText">0</strong>
+                        </div>
+                    </div>
+                </div>
                 <div id="emptyState" class="empty-state">
-                    <div class="empty-illustration"></div>
+                    <div class="empty-illustration">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                    </div>
                     <h3>开始一轮对话</h3>
                     <p>输入问题后，右侧会实时展示用户消息、AI 响应、错误提示、推荐问题，以及已加载的会话历史。</p>
                 </div>
