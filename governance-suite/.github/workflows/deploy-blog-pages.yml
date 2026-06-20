@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - master
+      - codex/ai-multi-agent-platform
     paths:
       - "blog/**"
       - ".github/workflows/deploy-blog-pages.yml"
