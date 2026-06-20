@@ -7,7 +7,7 @@ on:
       - master
       - codex/ai-multi-agent-platform
     paths:
-      - "blog/**"
+      - "governance-suite/blog/**"
       - ".github/workflows/deploy-blog-pages.yml"
   workflow_dispatch:
 
@@ -36,7 +36,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./blog
+          path: ./governance-suite/blog
 
       - name: Deploy to GitHub Pages
         id: deployment
