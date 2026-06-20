@@ -18,4 +18,6 @@ public interface AiGroupMemoryConflictMapper {
                                 @Param("resolutionStatus") String resolutionStatus,
                                 @Param("resolutionReason") String resolutionReason,
                                 @Param("resolutionNote") String resolutionNote);
+
+    int countOpenConflicts();
 }

@@ -46,6 +46,18 @@ class CandidateMemoryServiceTest {
     private RedisMemoryIndexService redisMemoryIndexService;
     @Mock
     private AiGroupMemoryReviewAuditMapper reviewAuditMapper;
+    @Mock
+    private MemoryConflictResolver memoryConflictResolver;
+    @Mock
+    private MemoryMergeService memoryMergeService;
+    @Mock
+    private ConfirmedMemoryMaintenanceService confirmedMemoryMaintenanceService;
+    @Mock
+    private MemoryRetentionPolicy memoryRetentionPolicy;
+    @Mock
+    private MemoryLifecycleAuditService memoryLifecycleAuditService;
+    @Mock
+    private MemoryLifecycleMetricsService memoryLifecycleMetricsService;
 
     private CandidateMemoryService candidateMemoryService;
 
@@ -59,7 +71,13 @@ class CandidateMemoryServiceTest {
                 redisMemoryIndexService,
                 new SemanticMemoryConflictDetector(),
                 reviewAuditMapper,
-                memoryTypeNormalizer);
+                memoryTypeNormalizer,
+                memoryConflictResolver,
+                memoryMergeService,
+                confirmedMemoryMaintenanceService,
+                memoryRetentionPolicy,
+                memoryLifecycleAuditService,
+                memoryLifecycleMetricsService);
     }
 
     @Test
@@ -81,7 +99,7 @@ class CandidateMemoryServiceTest {
         candidateMemoryService.processCandidate("group-1", "customer-1", extracted, "source");
 
         verify(candidateMapper).insert(any(AiGroupMemoryCandidateEntity.class));
-        verify(candidateMapper, never()).incrementHitCount(any(), any(), any(), any());
+        verify(candidateMapper, never()).incrementHitCount(any(), any(), any(), any(), any(), any(), any());
         verify(conflictMapper, never()).insert(any());
     }
 
@@ -119,7 +137,7 @@ class CandidateMemoryServiceTest {
 
         candidateMemoryService.processCandidate("group-1", "customer-1", extracted, "source");
 
-        verify(candidateMapper).incrementHitCount(eq(1L), any(), any(), any());
+        verify(candidateMapper).incrementHitCount(eq(1L), any(), any(), any(), any(), any(), any());
         verify(confirmedMemoryMapper).insert(any(AiGroupMemoryEntity.class));
         verify(vectorStoreService).saveGroupMemory(any(AiGroupMemoryEntity.class));
         verify(confirmedMemoryMapper).updateEmbeddingId(100L, "embedding-1");
@@ -228,5 +246,59 @@ class CandidateMemoryServiceTest {
         verify(conflictMapper).updateResolutionStatus(7L, "RESOLVED", "manual_confirm", null);
         verify(candidateMapper).updateStatus(eq(9L), eq("CONFIRMED"), eq("doctor-a"), any(), eq(100L));
         verify(reviewAuditMapper).insert(any(AiGroupMemoryReviewAuditEntity.class));
+    }
+
+    @Test
+    void shouldUpdateExistingPreferenceWhenManualConfirmFindsLatestWinsConflict() {
+        AiGroupMemoryCandidateEntity candidate = new AiGroupMemoryCandidateEntity();
+        candidate.setId(10L);
+        candidate.setCustomerId("customer-1");
+        candidate.setGroupId("group-1");
+        candidate.setMemoryType("PREFERENCE");
+        candidate.setMemoryKey("用户喜欢重辣饮");
+        candidate.setMemoryContent("用户喜欢重辣饮食");
+        candidate.setConfidenceScore(BigDecimal.valueOf(0.91));
+        candidate.setStatus("CONFLICT");
+        candidate.setSourceCount(2);
+        candidate.setEvidenceCount(2);
+
+        AiGroupMemoryEntity confirmed = new AiGroupMemoryEntity();
+        confirmed.setId(12L);
+        confirmed.setCustomerId("customer-1");
+        confirmed.setGroupId("group-1");
+        confirmed.setMemoryType("PREFERENCE");
+        confirmed.setMemoryContent("用户喜欢清淡饮食");
+
+        SemanticMemoryConflictDetector detector = new SemanticMemoryConflictDetector();
+        SemanticMemoryFingerprint fingerprint = detector.fingerprint("PREFERENCE", candidate.getMemoryContent());
+        MemoryConflictResolution resolution = MemoryConflictResolution.builder()
+                .relationType(MemoryRelationType.CONFLICT)
+                .strategy(MemoryConflictResolution.ResolutionStrategy.UPDATE_EXISTING_PREFERENCE)
+                .reasonCode("preference_latest_wins")
+                .summary("latest preference should win")
+                .score(0.92d)
+                .build();
+
+        AiGroupMemoryEntity merged = new AiGroupMemoryEntity();
+        merged.setId(12L);
+        merged.setCustomerId("customer-1");
+        merged.setGroupId("group-1");
+        merged.setMemoryType("PREFERENCE");
+        merged.setMemoryContent("用户喜欢重辣饮食");
+
+        when(candidateMapper.selectById(10L)).thenReturn(candidate);
+        when(confirmedMemoryMapper.selectByGroupIdAndCustomerId("group-1", "customer-1"))
+                .thenReturn(List.of(confirmed));
+        when(memoryConflictResolver.resolve(eq("PREFERENCE"), any(), eq(candidate), eq(confirmed)))
+                .thenReturn(resolution);
+        when(memoryMergeService.mergeAsLatestPreference(eq(confirmed), eq(candidate), eq("preference_latest_wins")))
+                .thenReturn(merged);
+
+        candidateMemoryService.confirmCandidate(10L, "doctor-a");
+
+        verify(confirmedMemoryMaintenanceService).refreshConfirmedMemory(merged);
+        verify(candidateMapper).updateStatus(eq(10L), eq("CONFIRMED"), eq("doctor-a"), any(), eq(12L));
+        verify(reviewAuditMapper).insert(any(AiGroupMemoryReviewAuditEntity.class));
+        verify(confirmedMemoryMapper, never()).insert(any(AiGroupMemoryEntity.class));
     }
 }

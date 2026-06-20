@@ -66,6 +66,7 @@ public class AiChatService {
     private final DoctorAssistantTaskRequestFactory doctorAssistantTaskRequestFactory;
     private final DoctorAssistantAgentGateway doctorAssistantAgentGateway;
     private final AgentConversationRouteRuntime agentConversationRouteRuntime;
+    private final VisitorIdentityService visitorIdentityService;
     @Resource(name = "chatExecutor")
     private Executor chatExecutor;
 
@@ -83,6 +84,12 @@ public class AiChatService {
         metrics.recordChatRequest();
 
         String sessionId = ensureConversationId(request);
+        String customerId = visitorIdentityService.ensureCustomerId(request);
+        boolean visitorMode = visitorIdentityService.isVisitor(customerId);
+        if (visitorMode) {
+            log.info("请求未提供 customerId，已切换为 visitor 模式 - conversationId: {}, visitorId: {}",
+                    sessionId, customerId);
+        }
 
         // 如果系统已经进入熔断级降级，直接返回兜底响应，不再进入画像/记忆/模型主链路。
         if (degradationManager.getCurrentLevel() == DegradationLevel.CIRCUIT_BREAK) {
@@ -198,15 +205,21 @@ public class AiChatService {
             String correlationId,
             long startTime,
             TaskTriggerDecision triggerDecision) {
+        boolean visitorMode = isVisitorRequest(request);
 
         // 先异步拉取用户画像。画像是普通对话、画像补全和记忆重写的共同输入。
-        CompletableFuture<UserProfileDTO> profileFuture = userProfileClient
-                .requestUserProfile(request.getCustomerId())
-                .whenComplete((profile, ex) -> {
-                    if (ex == null) {
-                        metrics.recordProfileFetch(() -> profile);
-                    }
-                });
+        CompletableFuture<UserProfileDTO> profileFuture;
+        if (visitorMode) {
+            profileFuture = CompletableFuture.completedFuture(new UserProfileDTO());
+        } else {
+            profileFuture = userProfileClient
+                    .requestUserProfile(request.getCustomerId())
+                    .whenComplete((profile, ex) -> {
+                        if (ex == null) {
+                            metrics.recordProfileFetch(() -> profile);
+                        }
+                    });
+        }
 
         return profileFuture.thenComposeAsync(profile -> {
             // 如果画像诊断发现关键字段缺失，优先走追问补全链路，
@@ -226,7 +239,11 @@ public class AiChatService {
                                 memories.getShortTermMemories().size(),
                                 memories.getLongTermMemories().size(),
                                 correlationId);
-                        if (triggerDecision != null && triggerDecision.shouldUpgradeToAgent()) {
+                        if (visitorMode && triggerDecision != null && triggerDecision.shouldUpgradeToAgent()) {
+                            log.info("visitor 模式跳过 Agent 升级，回退普通对话 - conversationId: {}, correlationId: {}",
+                                    sessionId, correlationId);
+                        }
+                        if (!visitorMode && triggerDecision != null && triggerDecision.shouldUpgradeToAgent()) {
                             // 命中 Agent 路由后，还要再经过灰度/熔断/策略放行判断，
                             // 避免医生助手链路在高风险时段被无限放大。
                             PlatformRouteDecision routeDecision =
@@ -501,6 +518,9 @@ public class AiChatService {
             ChatRequest request,
             SessionContext sessionContext,
             UserProfileDTO profile) {
+        if (isVisitorRequest(request)) {
+            return null;
+        }
         if (!profileCompletionProperties.isEnabled()) {
             return null;
         }
@@ -568,6 +588,11 @@ public class AiChatService {
         // 长期记忆检索支持被降级策略整体关闭；
         // 关闭时仍然保留 short-term memories，但不会触发 vector-memory-service 召回。
         boolean memoryEnabled = degradationManager.isFeatureEnabled("memory");
+        if (isVisitorRequest(request)) {
+            memoryEnabled = false;
+            log.debug("visitor 模式跳过长期记忆检索 - customerId: {}, correlationId: {}",
+                    request.getCustomerId(), correlationId);
+        }
         if (!memoryEnabled) {
             log.info("降级模式：跳过长期记忆检索 - level: {}, correlationId: {}",
                     degradationManager.getCurrentLevel(), correlationId);
@@ -748,6 +773,10 @@ public class AiChatService {
             request.setConversationId(UUID.randomUUID().toString());
         }
         return request.getConversationId();
+    }
+
+    private boolean isVisitorRequest(ChatRequest request) {
+        return request != null && visitorIdentityService.isVisitor(request.getCustomerId());
     }
 
     private ChatResponse buildErrorResponse(

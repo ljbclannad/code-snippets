@@ -31,6 +31,7 @@ public class AiChatStreamService {
     private final AiChatMetrics metrics;
     private final QuotaService quotaService;
     private final LayeredMemoryOrchestrator layeredMemoryOrchestrator;
+    private final VisitorIdentityService visitorIdentityService;
 
     /**
      * 处理流式聊天请求
@@ -39,11 +40,12 @@ public class AiChatStreamService {
         metrics.recordChatRequest();
 
         String sessionId = ensureConversationId(request);
+        String customerId = visitorIdentityService.ensureCustomerId(request);
         String correlationId = UUID.randomUUID().toString();
         long startTime = System.currentTimeMillis();
 
         log.info("开始处理流式聊天请求 - customerId: {}, conversationId: {}, correlationId: {}",
-                request.getCustomerId(), sessionId, correlationId);
+                customerId, sessionId, correlationId);
 
         // 创建累积器
         StreamResponseAccumulator accumulator = new StreamResponseAccumulator();
@@ -199,6 +201,9 @@ public class AiChatStreamService {
     }
 
     private UserProfileDTO fetchUserProfile(String customerId) {
+        if (visitorIdentityService.isVisitor(customerId)) {
+            return new UserProfileDTO();
+        }
         try {
             return userProfileClient.requestUserProfile(customerId).join();
         } catch (Exception e) {
@@ -213,6 +218,11 @@ public class AiChatStreamService {
             UserProfileDTO userProfile,
             String correlationId) {
         try {
+            if (visitorIdentityService.isVisitor(request.getCustomerId())) {
+                log.debug("visitor 模式跳过流式长期记忆检索 - customerId: {}, correlationId: {}",
+                        request.getCustomerId(), correlationId);
+                return com.lx.governance.aichat.dto.LayeredMemories.builder().build();
+            }
             return layeredMemoryOrchestrator.loadMemories(
                     request.getGroupId(),
                     request.getCustomerId(),

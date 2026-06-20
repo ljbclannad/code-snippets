@@ -129,6 +129,27 @@ logging:
 
 # 记忆检索配置
 memory:
+  lifecycle:
+    retention:
+      symptom-ttl-days: 30
+      preference-inactivity-days: 180
+      fact-inactivity-days: 365
+      low-value-source-threshold: 1
+    decay:
+      penalty-factor: 0.25
+      default-decay-score: 0.35
+      scan-limit: 100
+    cleanup:
+      archive-after-decay-days: 30
+      delete-after-archive-days: 90
+    compaction:
+      min-evidence-count: 2
+      min-source-count: 2
+      long-cycle-event-days: 14
+      scan-limit: 100
+    task:
+      fixed-delay-ms: 300000
+      initial-delay-ms: 90000
   retrieval:
     hybrid:
       keyword-enabled: true

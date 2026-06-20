@@ -43,4 +43,10 @@
             update_time = NOW()
         WHERE id = #{id}
     </update>
+
+    <select id="countOpenConflicts" resultType="int">
+        SELECT COUNT(*)
+        FROM b_ai_group_memory_conflict
+        WHERE resolution_status = 'OPEN'
+    </select>
 </mapper>

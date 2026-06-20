@@ -119,6 +119,36 @@ public interface AiGroupMemoryMapper {
      */
     void deleteById(@Param("id") Long id);
 
+    List<AiGroupMemoryEntity> selectLifecycleScanCandidates(@Param("limit") int limit);
+
+    void updateLifecycleState(@Param("id") Long id,
+                              @Param("lifecycleStatus") String lifecycleStatus,
+                              @Param("decayScore") Double decayScore,
+                              @Param("retentionPolicy") String retentionPolicy,
+                              @Param("expiresAt") java.time.LocalDateTime expiresAt,
+                              @Param("decisionReasonCode") String decisionReasonCode,
+                              @Param("archivedAt") java.time.LocalDateTime archivedAt,
+                              @Param("archiveReason") String archiveReason,
+                              @Param("lastAccessedAt") java.time.LocalDateTime lastAccessedAt);
+
+    List<AiGroupMemoryEntity> selectCompactionCandidates(@Param("limit") int limit);
+
+    AiGroupMemoryEntity selectSummaryByGroupKey(@Param("groupId") String groupId,
+                                                @Param("customerId") String customerId,
+                                                @Param("summaryGroupKey") String summaryGroupKey);
+
+    void updateCompactionMetadata(@Param("id") Long id,
+                                  @Param("memoryRepresentation") String memoryRepresentation,
+                                  @Param("summaryGroupKey") String summaryGroupKey,
+                                  @Param("summaryOfMemoryId") Long summaryOfMemoryId,
+                                  @Param("decisionReasonCode") String decisionReasonCode);
+
+    int countActiveByMemoryType(@Param("memoryType") String memoryType);
+
+    List<AiGroupMemoryEntity> selectGovernanceList(@Param("groupId") String groupId,
+                                                   @Param("customerId") String customerId,
+                                                   @Param("lifecycleStatus") String lifecycleStatus);
+
     /**
      * 基于游标的分页查询待迁移的记忆（embedding_id 为 NULL）
      *

@@ -40,6 +40,7 @@ public class MemoryRetrievalService {
     private final StructuredMemoryFilterMatcher structuredMemoryFilterMatcher;
     private final MemoryRetrievalProperties properties;
     private final MemoryTypeNormalizer memoryTypeNormalizer;
+    private final com.lx.governance.vectormemory.config.MemoryLifecycleProperties lifecycleProperties;
 
     /**
      * 检索群组记忆（混合检索 + Rerank）
@@ -150,12 +151,14 @@ public class MemoryRetrievalService {
                                 return MemoryItemDTO.builder()
                                         .id(entity.getId())
                                         .content(entity.getMemoryContent())
-                                        .similarity(similarity)
+                                        .similarity(applyDecayPenalty(entity, similarity))
                                         .confidenceScore(entity.getConfidenceScore() != null ?
                                                 entity.getConfidenceScore().doubleValue() : null)
                                         .verified(entity.getConfidenceScore() != null &&
                                                 entity.getConfidenceScore().doubleValue() >= 0.8)
                                         .source(memoryTypeNormalizer.normalize(entity.getMemoryType()))
+                                        .memoryRepresentation(entity.getMemoryRepresentation())
+                                        .summaryGroupKey(entity.getSummaryGroupKey())
                                         .build();
                             })
                             .collect(Collectors.toList());
@@ -218,11 +221,16 @@ public class MemoryRetrievalService {
             finalResults = allCandidates.stream()
                     .sorted(Comparator.comparing(m -> m.getSimilarity() != null ? m.getSimilarity() : 0.0,
                             Comparator.reverseOrder()))
+                    .sorted(this::compareSummaryPriority)
                     .limit(topK)
                     .collect(Collectors.toList());
         }
 
         long elapsedTime = System.currentTimeMillis() - startTime;
+        finalResults = finalResults.stream()
+                .sorted(this::compareSummaryPriority)
+                .limit(topK)
+                .collect(Collectors.toList());
         log.info("Memory retrieval completed: candidates={}, final={}, duration={}ms",
                 allCandidates.size(), finalResults.size(), elapsedTime);
 
@@ -270,6 +278,7 @@ public class MemoryRetrievalService {
 
         return memoryEntities.stream()
                 .map(entity -> toRecentMemoryDto(entity, contentById.getOrDefault(entity.getId(), entity.getMemoryContent())))
+                .sorted(this::compareSummaryPriority)
                 .collect(Collectors.toList());
     }
 
@@ -278,10 +287,12 @@ public class MemoryRetrievalService {
         return MemoryItemDTO.builder()
                 .id(entity.getId())
                 .content(content)
-                .similarity(calculateRedisSimilarity(confidence))
+                .similarity(applyDecayPenalty(entity, calculateRedisSimilarity(confidence)))
                 .confidenceScore(entity.getConfidenceScore() != null ? confidence : null)
                 .verified(confidence >= 0.8)
                 .source(RetrievalSource.RECENT_CACHE.name())
+                .memoryRepresentation(entity.getMemoryRepresentation())
+                .summaryGroupKey(entity.getSummaryGroupKey())
                 .build();
     }
 
@@ -290,10 +301,12 @@ public class MemoryRetrievalService {
         return MemoryItemDTO.builder()
                 .id(entity.getId())
                 .content(entity.getMemoryContent())
-                .similarity(calculateKeywordSimilarity(entity, query, confidence))
+                .similarity(applyDecayPenalty(entity, calculateKeywordSimilarity(entity, query, confidence)))
                 .confidenceScore(entity.getConfidenceScore() != null ? confidence : null)
                 .verified(confidence >= 0.8)
                 .source(RetrievalSource.KEYWORD.name())
+                .memoryRepresentation(entity.getMemoryRepresentation())
+                .summaryGroupKey(entity.getSummaryGroupKey())
                 .build();
     }
 
@@ -327,6 +340,29 @@ public class MemoryRetrievalService {
 
     private double normalizeVectorSimilarity(double similarity) {
         return clamp01(similarity * properties.getHybrid().getWeights().getVectorScale());
+    }
+
+    private double applyDecayPenalty(AiGroupMemoryEntity entity, double baseScore) {
+        if (entity == null) {
+            return clamp01(baseScore);
+        }
+        if (!"DECAYING".equalsIgnoreCase(entity.getLifecycleStatus())) {
+            return clamp01(baseScore);
+        }
+        double decayScore = entity.getDecayScore() != null ? entity.getDecayScore().doubleValue()
+                : lifecycleProperties.getDecay().getDefaultDecayScore();
+        return clamp01(baseScore - (decayScore * lifecycleProperties.getDecay().getPenaltyFactor()));
+    }
+
+    private int compareSummaryPriority(MemoryItemDTO left, MemoryItemDTO right) {
+        return Integer.compare(summaryRank(left), summaryRank(right));
+    }
+
+    private int summaryRank(MemoryItemDTO item) {
+        if (item == null || item.getMemoryRepresentation() == null) {
+            return 1;
+        }
+        return "SUMMARY".equalsIgnoreCase(item.getMemoryRepresentation()) ? 0 : 1;
     }
 
     private double clamp01(double value) {

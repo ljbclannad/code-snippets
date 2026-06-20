@@ -11,6 +11,22 @@
         <result column="memory_type" property="memoryType" jdbcType="VARCHAR"/>
         <result column="memory_key" property="memoryKey" jdbcType="VARCHAR"/>
         <result column="memory_content" property="memoryContent" jdbcType="VARCHAR"/>
+        <result column="memory_representation" property="memoryRepresentation" jdbcType="VARCHAR"/>
+        <result column="summary_group_key" property="summaryGroupKey" jdbcType="VARCHAR"/>
+        <result column="summary_of_memory_id" property="summaryOfMemoryId" jdbcType="BIGINT"/>
+        <result column="lifecycle_status" property="lifecycleStatus" jdbcType="VARCHAR"/>
+        <result column="retention_policy" property="retentionPolicy" jdbcType="VARCHAR"/>
+        <result column="expires_at" property="expiresAt" jdbcType="TIMESTAMP"/>
+        <result column="decay_score" property="decayScore" jdbcType="DECIMAL"/>
+        <result column="last_accessed_at" property="lastAccessedAt" jdbcType="TIMESTAMP"/>
+        <result column="last_reinforced_at" property="lastReinforcedAt" jdbcType="TIMESTAMP"/>
+        <result column="source_count" property="sourceCount" jdbcType="INTEGER"/>
+        <result column="evidence_count" property="evidenceCount" jdbcType="INTEGER"/>
+        <result column="conflict_status" property="conflictStatus" jdbcType="VARCHAR"/>
+        <result column="superseded_by" property="supersededBy" jdbcType="BIGINT"/>
+        <result column="archived_at" property="archivedAt" jdbcType="TIMESTAMP"/>
+        <result column="archive_reason" property="archiveReason" jdbcType="VARCHAR"/>
+        <result column="decision_reason_code" property="decisionReasonCode" jdbcType="VARCHAR"/>
         <result column="embedding_id" property="embeddingId" jdbcType="VARCHAR"/>
         <result column="confidence_score" property="confidenceScore" jdbcType="DECIMAL"/>
         <result column="source_message" property="sourceMessage" jdbcType="VARCHAR"/>
@@ -23,8 +39,11 @@
     <!-- 基础列 -->
     <sql id="Base_Column_List">
         id, customer_id, group_id, memory_type, memory_key, memory_content,
-        embedding_id, confidence_score, source_message, extracted_at,
-        is_deleted, create_time, update_time
+        memory_representation, summary_group_key, summary_of_memory_id,
+        lifecycle_status, retention_policy, expires_at, decay_score, last_accessed_at,
+        last_reinforced_at, source_count, evidence_count, conflict_status, superseded_by,
+        archived_at, archive_reason, decision_reason_code, embedding_id, confidence_score,
+        source_message, extracted_at, is_deleted, create_time, update_time
     </sql>
 
     <!-- 插入记忆 -->
@@ -32,10 +51,18 @@
             useGeneratedKeys="true" keyProperty="id">
         INSERT INTO b_ai_group_memory (
             customer_id, group_id, memory_type, memory_key, memory_content,
-            embedding_id, confidence_score, source_message, extracted_at, is_deleted
+            memory_representation, summary_group_key, summary_of_memory_id,
+            lifecycle_status, retention_policy, expires_at, decay_score, last_accessed_at,
+            last_reinforced_at, source_count, evidence_count, conflict_status, superseded_by,
+            archived_at, archive_reason, decision_reason_code, embedding_id, confidence_score,
+            source_message, extracted_at, is_deleted
         ) VALUES (
             #{customerId}, #{groupId}, #{memoryType}, #{memoryKey}, #{memoryContent},
-            #{embeddingId}, #{confidenceScore}, #{sourceMessage}, #{extractedAt}, 0
+            #{memoryRepresentation}, #{summaryGroupKey}, #{summaryOfMemoryId},
+            #{lifecycleStatus}, #{retentionPolicy}, #{expiresAt}, #{decayScore}, #{lastAccessedAt},
+            #{lastReinforcedAt}, #{sourceCount}, #{evidenceCount}, #{conflictStatus}, #{supersededBy},
+            #{archivedAt}, #{archiveReason}, #{decisionReasonCode}, #{embeddingId}, #{confidenceScore},
+            #{sourceMessage}, #{extractedAt}, 0
         )
     </insert>
 
@@ -54,6 +81,22 @@
             memory_type = #{memoryType},
             memory_key = #{memoryKey},
             memory_content = #{memoryContent},
+            memory_representation = #{memoryRepresentation},
+            summary_group_key = #{summaryGroupKey},
+            summary_of_memory_id = #{summaryOfMemoryId},
+            lifecycle_status = #{lifecycleStatus},
+            retention_policy = #{retentionPolicy},
+            expires_at = #{expiresAt},
+            decay_score = #{decayScore},
+            last_accessed_at = #{lastAccessedAt},
+            last_reinforced_at = #{lastReinforcedAt},
+            source_count = #{sourceCount},
+            evidence_count = #{evidenceCount},
+            conflict_status = #{conflictStatus},
+            superseded_by = #{supersededBy},
+            archived_at = #{archivedAt},
+            archive_reason = #{archiveReason},
+            decision_reason_code = #{decisionReasonCode},
             embedding_id = #{embeddingId},
             confidence_score = #{confidenceScore},
             source_message = #{sourceMessage},
@@ -70,6 +113,7 @@
         WHERE group_id = #{groupId}
           AND customer_id = #{customerId}
           AND is_deleted = 0
+          AND (lifecycle_status IS NULL OR lifecycle_status <> 'ARCHIVED')
         ORDER BY create_time DESC
     </select>
 
@@ -91,6 +135,7 @@
             #{embeddingId}
         </foreach>
         AND is_deleted = 0
+        AND (lifecycle_status IS NULL OR lifecycle_status <> 'ARCHIVED')
     </select>
 
     <select id="selectByEmbeddingIdsWithFilter" resultMap="BaseResultMap">
@@ -102,6 +147,7 @@
             #{embeddingId}
         </foreach>
         AND is_deleted = 0
+        AND (lifecycle_status IS NULL OR lifecycle_status <> 'ARCHIVED')
         <if test="filter != null">
             <if test="filter.memoryTypes != null and filter.memoryTypes.size() > 0">
                 AND memory_type IN
@@ -130,6 +176,7 @@
             #{id}
         </foreach>
         AND is_deleted = 0
+        AND (lifecycle_status IS NULL OR lifecycle_status <> 'ARCHIVED')
         <if test="filter != null">
             <if test="filter.memoryTypes != null and filter.memoryTypes.size() > 0">
                 AND memory_type IN
@@ -156,6 +203,7 @@
         WHERE group_id = #{groupId}
           AND customer_id = #{customerId}
           AND is_deleted = 0
+          AND (lifecycle_status IS NULL OR lifecycle_status <> 'ARCHIVED')
           AND (
                 memory_content LIKE CONCAT('%', #{query}, '%')
                 OR memory_key LIKE CONCAT('%', #{query}, '%')
@@ -205,6 +253,96 @@
     <update id="deleteById">
         UPDATE b_ai_group_memory
         SET is_deleted = 1,
+            update_time = NOW()
+        WHERE id = #{id}
+    </update>
+
+    <select id="selectLifecycleScanCandidates" resultMap="BaseResultMap">
+        SELECT
+        <include refid="Base_Column_List"/>
+        FROM b_ai_group_memory
+        WHERE is_deleted = 0
+          AND lifecycle_status IN ('CONFIRMED', 'DECAYING', 'ARCHIVED')
+        ORDER BY
+            CASE lifecycle_status
+                WHEN 'ARCHIVED' THEN 0
+                WHEN 'DECAYING' THEN 1
+                ELSE 2
+            END,
+            COALESCE(archived_at, expires_at, last_reinforced_at, extracted_at, create_time) ASC
+        LIMIT #{limit}
+    </select>
+
+    <select id="selectCompactionCandidates" resultMap="BaseResultMap">
+        SELECT
+        <include refid="Base_Column_List"/>
+        FROM b_ai_group_memory
+        WHERE is_deleted = 0
+          AND (lifecycle_status IS NULL OR lifecycle_status IN ('CONFIRMED', 'DECAYING'))
+          AND (memory_representation IS NULL OR memory_representation <> 'SUMMARY')
+          AND (
+                evidence_count >= 2
+                OR source_count >= 2
+                OR memory_type = 'OTHER'
+          )
+        ORDER BY evidence_count DESC, source_count DESC, extracted_at DESC
+        LIMIT #{limit}
+    </select>
+
+    <select id="selectSummaryByGroupKey" resultMap="BaseResultMap">
+        SELECT
+        <include refid="Base_Column_List"/>
+        FROM b_ai_group_memory
+        WHERE group_id = #{groupId}
+          AND customer_id = #{customerId}
+          AND summary_group_key = #{summaryGroupKey}
+          AND memory_representation = 'SUMMARY'
+          AND is_deleted = 0
+        ORDER BY update_time DESC
+        LIMIT 1
+    </select>
+
+    <update id="updateCompactionMetadata">
+        UPDATE b_ai_group_memory
+        SET memory_representation = #{memoryRepresentation},
+            summary_group_key = #{summaryGroupKey},
+            summary_of_memory_id = #{summaryOfMemoryId},
+            decision_reason_code = #{decisionReasonCode},
+            update_time = NOW()
+        WHERE id = #{id}
+    </update>
+
+    <select id="countActiveByMemoryType" resultType="int">
+        SELECT COUNT(*)
+        FROM b_ai_group_memory
+        WHERE is_deleted = 0
+          AND memory_type = #{memoryType}
+          AND (lifecycle_status IS NULL OR lifecycle_status <> 'ARCHIVED')
+    </select>
+
+    <select id="selectGovernanceList" resultMap="BaseResultMap">
+        SELECT
+        <include refid="Base_Column_List"/>
+        FROM b_ai_group_memory
+        WHERE is_deleted = 0
+          AND group_id = #{groupId}
+          AND customer_id = #{customerId}
+        <if test="lifecycleStatus != null and lifecycleStatus != ''">
+            AND lifecycle_status = #{lifecycleStatus}
+        </if>
+        ORDER BY update_time DESC, create_time DESC
+    </select>
+
+    <update id="updateLifecycleState">
+        UPDATE b_ai_group_memory
+        SET lifecycle_status = #{lifecycleStatus},
+            decay_score = #{decayScore},
+            retention_policy = #{retentionPolicy},
+            expires_at = #{expiresAt},
+            decision_reason_code = #{decisionReasonCode},
+            archived_at = #{archivedAt},
+            archive_reason = #{archiveReason},
+            last_accessed_at = #{lastAccessedAt},
             update_time = NOW()
         WHERE id = #{id}
     </update>

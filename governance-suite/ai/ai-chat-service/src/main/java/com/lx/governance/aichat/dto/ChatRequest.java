@@ -12,7 +12,6 @@ public class ChatRequest {
     @NotBlank(message = "Group ID cannot be blank")
     private String groupId;
 
-    @NotBlank(message = "Customer ID cannot be blank")
     private String customerId;
 
     private String userId;

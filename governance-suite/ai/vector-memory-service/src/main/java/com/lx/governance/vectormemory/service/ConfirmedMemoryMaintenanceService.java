@@ -86,6 +86,54 @@ public class ConfirmedMemoryMaintenanceService {
         if (updatedMemory.getMemoryContent() == null) {
             updatedMemory.setMemoryContent(existing.getMemoryContent());
         }
+        if (updatedMemory.getMemoryRepresentation() == null) {
+            updatedMemory.setMemoryRepresentation(existing.getMemoryRepresentation());
+        }
+        if (updatedMemory.getSummaryGroupKey() == null) {
+            updatedMemory.setSummaryGroupKey(existing.getSummaryGroupKey());
+        }
+        if (updatedMemory.getSummaryOfMemoryId() == null) {
+            updatedMemory.setSummaryOfMemoryId(existing.getSummaryOfMemoryId());
+        }
+        if (updatedMemory.getLifecycleStatus() == null) {
+            updatedMemory.setLifecycleStatus(existing.getLifecycleStatus());
+        }
+        if (updatedMemory.getRetentionPolicy() == null) {
+            updatedMemory.setRetentionPolicy(existing.getRetentionPolicy());
+        }
+        if (updatedMemory.getExpiresAt() == null) {
+            updatedMemory.setExpiresAt(existing.getExpiresAt());
+        }
+        if (updatedMemory.getDecayScore() == null) {
+            updatedMemory.setDecayScore(existing.getDecayScore());
+        }
+        if (updatedMemory.getLastAccessedAt() == null) {
+            updatedMemory.setLastAccessedAt(existing.getLastAccessedAt());
+        }
+        if (updatedMemory.getLastReinforcedAt() == null) {
+            updatedMemory.setLastReinforcedAt(existing.getLastReinforcedAt());
+        }
+        if (updatedMemory.getSourceCount() == null) {
+            updatedMemory.setSourceCount(existing.getSourceCount());
+        }
+        if (updatedMemory.getEvidenceCount() == null) {
+            updatedMemory.setEvidenceCount(existing.getEvidenceCount());
+        }
+        if (updatedMemory.getConflictStatus() == null) {
+            updatedMemory.setConflictStatus(existing.getConflictStatus());
+        }
+        if (updatedMemory.getSupersededBy() == null) {
+            updatedMemory.setSupersededBy(existing.getSupersededBy());
+        }
+        if (updatedMemory.getArchivedAt() == null) {
+            updatedMemory.setArchivedAt(existing.getArchivedAt());
+        }
+        if (updatedMemory.getArchiveReason() == null) {
+            updatedMemory.setArchiveReason(existing.getArchiveReason());
+        }
+        if (updatedMemory.getDecisionReasonCode() == null) {
+            updatedMemory.setDecisionReasonCode(existing.getDecisionReasonCode());
+        }
         if (updatedMemory.getConfidenceScore() == null) {
             updatedMemory.setConfidenceScore(existing.getConfidenceScore());
         }

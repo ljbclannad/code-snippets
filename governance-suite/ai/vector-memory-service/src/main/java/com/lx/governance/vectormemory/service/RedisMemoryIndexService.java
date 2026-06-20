@@ -75,6 +75,18 @@ public class RedisMemoryIndexService {
         }
     }
 
+    public void removeFromHashIndex(String groupId, String content) {
+        if (!dedupEnabled || redisTemplate == null || groupId == null || content == null) {
+            return;
+        }
+        String hashKey = HASH_KEY_PREFIX + groupId;
+        try {
+            redisTemplate.opsForSet().remove(hashKey, md5(content));
+        } catch (Exception e) {
+            log.error("移除去重索引失败: groupId={}", groupId, e);
+        }
+    }
+
     /**
      * 缓存最近记忆
      */
@@ -107,6 +119,20 @@ public class RedisMemoryIndexService {
             log.debug("缓存最近记忆: groupId={}, memoryId={}", groupId, memoryId);
         } catch (Exception e) {
             log.error("缓存最近记忆失败: groupId={}", groupId, e);
+        }
+    }
+
+    public void removeRecentMemory(String groupId, Long memoryId, String content) {
+        if (!dedupEnabled || redisTemplate == null || groupId == null || memoryId == null) {
+            return;
+        }
+
+        String recentKey = RECENT_KEY_PREFIX + groupId;
+        String value = memoryId + MEMORY_FORMAT_SEPARATOR + (content == null ? "" : content);
+        try {
+            redisTemplate.opsForZSet().remove(recentKey, value);
+        } catch (Exception e) {
+            log.error("移除最近记忆缓存失败: groupId={}, memoryId={}", groupId, memoryId, e);
         }
     }
 
