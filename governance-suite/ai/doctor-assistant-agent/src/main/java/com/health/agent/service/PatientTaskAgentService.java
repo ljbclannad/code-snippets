@@ -15,6 +15,8 @@ import com.health.agent.engine.ReActAgentEngine;
 import com.health.agent.model.AgentContext;
 import com.health.agent.model.AgentResult;
 import com.health.agent.model.AgentSession;
+import com.health.agent.model.AgentStreamEvent;
+import com.health.agent.model.AgentStreamEventType;
 import com.health.agent.model.Message;
 import com.health.agent.model.PendingTask;
 import com.health.agent.model.ResultStatus;
@@ -34,6 +36,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 @Slf4j
 @Service
@@ -87,6 +90,22 @@ public class PatientTaskAgentService {
      * 以保证患者侧总能拿到稳定响应。</p>
      */
     public DoctorAssistantTaskResponse analyze(DoctorAssistantTaskRequest request) {
+        return analyzeInternal(request, null);
+    }
+
+    public DoctorAssistantTaskResponse analyzeStream(
+        DoctorAssistantTaskRequest request,
+        Consumer<AgentStreamEvent> eventSink
+    ) {
+        DoctorAssistantTaskResponse response = analyzeInternal(request, eventSink);
+        emitTaskResultEvent(response, eventSink);
+        return response;
+    }
+
+    private DoctorAssistantTaskResponse analyzeInternal(
+        DoctorAssistantTaskRequest request,
+        Consumer<AgentStreamEvent> eventSink
+    ) {
         // 入口兜底：没有 taskType，或者显式传 NONE，说明这次患者消息不需要进入任务分析链路，直接跳过。
         if (request == null || request.getTaskType() == null || request.getTaskType() == TaskType.NONE) {
             return DoctorAssistantTaskResponse.builder()
@@ -96,7 +115,6 @@ public class PatientTaskAgentService {
                     .build();
         }
 
-        // 先把患者升级请求归一化为统一内部执行命令，后续接真实 Agent 时直接复用这份命令对象。
         AgentExecutionCommand command = request.toExecutionCommand();
         if (agentEngine == null) {
             log.warn("患者来源任务分析未接入真实 Agent，引擎为空，回退模板分析 - taskType: {}, conversationId: {}, correlationId: {}",
@@ -110,6 +128,9 @@ public class PatientTaskAgentService {
 
         try {
             AgentResult agentResult = agentEngine.executeStream(command, event -> {
+                if (eventSink != null && event != null) {
+                    eventSink.accept(event);
+                }
             });
             if (agentResult == null) {
                 log.warn("真实 Agent 返回为空，回退模板分析 - taskType: {}, conversationId: {}, correlationId: {}",
@@ -142,6 +163,22 @@ public class PatientTaskAgentService {
             }
             return analyzeWithTemplateFallback(request, command, "AGENT_EXCEPTION");
         }
+    }
+
+    private void emitTaskResultEvent(
+        DoctorAssistantTaskResponse response,
+        Consumer<AgentStreamEvent> eventSink
+    ) {
+        if (eventSink == null || response == null) {
+            return;
+        }
+        eventSink.accept(AgentStreamEvent.builder()
+                .sessionId(response.getAgentSessionId())
+                .step(0)
+                .type(AgentStreamEventType.TASK_RESULT)
+                .data(response)
+                .timestamp(LocalDateTime.now())
+                .build());
     }
 
     private boolean shouldFallbackToTemplate() {

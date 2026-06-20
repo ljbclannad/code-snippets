@@ -50,6 +50,9 @@ public class StreamResponseAccumulator {
                 errorMessage = event.getError();
                 log.error("流式响应错误: {}", event.getError());
                 break;
+
+            case STATUS:
+                break;
         }
     }
 

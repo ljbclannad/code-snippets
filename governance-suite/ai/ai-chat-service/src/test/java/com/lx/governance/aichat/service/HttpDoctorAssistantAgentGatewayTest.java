@@ -14,6 +14,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.client.RestClient;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lx.governance.aichat.dto.DoctorAssistantTaskRequest;
 import com.lx.governance.aichat.dto.DoctorAssistantTaskResponse;
 import com.lx.governance.aichat.dto.DoctorAssistantTaskStatus;
@@ -54,7 +55,10 @@ class HttpDoctorAssistantAgentGatewayTest {
 
         HttpDoctorAssistantAgentGateway gateway = new HttpDoctorAssistantAgentGateway(
                 RestClient.builder().baseUrl("http://localhost:" + server.getAddress().getPort()).build(),
-                true);
+                new ObjectMapper(),
+                true,
+                "http://localhost:" + server.getAddress().getPort(),
+                5000);
 
         DoctorAssistantTaskResponse response = gateway.analyzePatientTask(DoctorAssistantTaskRequest.builder()
                 .taskType(TaskType.PATIENT_FOLLOW_UP_ANALYSIS)
@@ -71,7 +75,10 @@ class HttpDoctorAssistantAgentGatewayTest {
     void shouldThrowWhenGatewayDisabled() {
         HttpDoctorAssistantAgentGateway gateway = new HttpDoctorAssistantAgentGateway(
                 RestClient.builder().baseUrl("http://localhost:65535").build(),
-                false);
+                new ObjectMapper(),
+                false,
+                "http://localhost:65535",
+                5000);
 
         AiServiceException exception = assertThrows(AiServiceException.class,
                 () -> gateway.analyzePatientTask(DoctorAssistantTaskRequest.builder().build()));

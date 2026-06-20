@@ -1,5 +1,7 @@
 package com.lx.governance.aichat.dto;
 
+import java.util.Map;
+
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -23,6 +25,21 @@ public class StreamEvent {
      * 内容片段（当 type=CONTENT 时）
      */
     private String content;
+
+    /**
+     * 状态阶段（当 type=STATUS 时）
+     */
+    private String stage;
+
+    /**
+     * 状态文案（当 type=STATUS 时）
+     */
+    private String status;
+
+    /**
+     * 额外状态详情
+     */
+    private Map<String, Object> details;
 
     /**
      * 会话ID（当 type=START 或 DONE 时）
@@ -52,6 +69,7 @@ public class StreamEvent {
     public enum EventType {
         START,      // 开始
         CONTENT,    // 内容片段
+        STATUS,     // 运行状态
         DONE,       // 完成
         ERROR       // 错误
     }
@@ -87,6 +105,16 @@ public class StreamEvent {
                 .type(EventType.DONE)
                 .conversationId(conversationId)
                 .tokenUsage(tokenUsage)
+                .timestamp(System.currentTimeMillis())
+                .build();
+    }
+
+    public static StreamEvent status(String stage, String status, Map<String, Object> details) {
+        return StreamEvent.builder()
+                .type(EventType.STATUS)
+                .stage(stage)
+                .status(status)
+                .details(details)
                 .timestamp(System.currentTimeMillis())
                 .build();
     }

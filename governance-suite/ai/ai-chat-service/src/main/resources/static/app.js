@@ -24,6 +24,8 @@ const elements = {
     modeText: document.getElementById("modeText"),
     activeConversationText: document.getElementById("activeConversationText"),
     tokenUsageText: document.getElementById("tokenUsageText"),
+    activeAgentText: document.getElementById("activeAgentText"),
+    activeStageText: document.getElementById("activeStageText"),
     healthBadge: document.getElementById("healthBadge"),
     historyStatus: document.getElementById("historyStatus"),
     conversationList: document.getElementById("conversationList")
@@ -34,6 +36,7 @@ function init() {
     updateModeText();
     updateConversationView();
     updateTokenUsage(null);
+    updateAgentStatus("未触发", "空闲");
     pingHealth();
     maybeLoadConversations();
     appendTrace("系统", "页面已加载，等待发送请求。");
@@ -162,6 +165,7 @@ async function handleSend() {
     addMessage("user", "你", messageText);
     setBusy(true);
     updateTokenUsage(null);
+    updateAgentStatus("处理中", "等待流式响应建立");
 
     if (elements.streamMode.checked) {
         await sendStreamMessage(payload);
@@ -191,9 +195,11 @@ async function sendRegularMessage(payload) {
         applyConversationId(data.conversationId);
         addMessage("assistant", "AI", data.message || "");
         renderRecommendations(data.recommendations || []);
+        updateAgentStatus("未触发", "普通响应完成");
         await maybeLoadConversations();
         appendTrace("响应", `普通响应完成 · conversationId=${data.conversationId || "-"}`);
     } catch (error) {
+        updateAgentStatus("异常", error.message);
         addMessage("error", "系统", error.message);
         appendTrace("错误", error.message);
     } finally {
@@ -242,10 +248,12 @@ async function sendStreamMessage(payload) {
         if (error.name === "AbortError") {
             appendTrace("中断", "已手动停止当前流式输出。");
             markAssistantMeta("已手动停止");
+            updateAgentStatus(elements.activeAgentText.textContent, "已手动停止");
         } else {
             addMessage("error", "系统", error.message);
             appendTrace("错误", error.message);
             markAssistantMeta("流式响应失败");
+            updateAgentStatus("异常", error.message);
         }
     } finally {
         state.abortController = null;
@@ -305,22 +313,46 @@ function handleStreamEvent(event) {
         case "CONTENT":
             appendAssistantContent(event.content || "");
             break;
+        case "STATUS":
+            handleStatusEvent(event);
+            break;
         case "DONE":
             if (event.conversationId) {
                 applyConversationId(event.conversationId);
             }
             updateTokenUsage(event.tokenUsage || null);
             markAssistantMeta(`生成完成 · ${formatTime(event.timestamp)}`);
+            updateAgentStatus(elements.activeAgentText.textContent, "已完成");
             appendTrace("SSE", "DONE");
             break;
         case "ERROR":
             markAssistantMeta("生成失败");
+            updateAgentStatus("异常", event.error || "未知错误");
             addMessage("error", "系统", event.error || "未知流式错误");
             appendTrace("SSE", `ERROR · ${event.error || "未知错误"}`);
             break;
         default:
             appendTrace("SSE", `未知事件类型: ${event.type}`);
     }
+}
+
+function handleStatusEvent(event) {
+    const details = event.details || {};
+    const agentName = resolveAgentName(details);
+    if (agentName) {
+        updateAgentStatus(agentName, event.status || stageLabel(event.stage));
+    } else {
+        updateAgentStatus(elements.activeAgentText.textContent, event.status || stageLabel(event.stage));
+    }
+
+    if (event.stage === "thinking") {
+        markAssistantMeta("Agent 推理中");
+        return;
+    } else if (event.stage === "result") {
+        markAssistantMeta("Agent 结果回传中");
+    }
+
+    appendTrace("状态", `${stageLabel(event.stage)} · ${event.status || "-"}`);
 }
 
 function appendAssistantContent(content) {
@@ -339,6 +371,45 @@ function markAssistantMeta(text) {
     }
     const metaNode = state.activeAssistantMessage.querySelector(".message-meta span:last-child");
     metaNode.textContent = text;
+}
+
+function updateAgentStatus(agentText, stageText) {
+    if (agentText) {
+        elements.activeAgentText.textContent = agentText;
+    }
+    if (stageText) {
+        elements.activeStageText.textContent = stageText;
+    }
+}
+
+function resolveAgentName(details) {
+    if (!details || typeof details !== "object") {
+        return "";
+    }
+    if (typeof details.name === "string" && details.name) {
+        return details.name;
+    }
+    if (typeof details.agentSessionId === "string" && details.agentSessionId) {
+        return `Agent 会话 ${details.agentSessionId}`;
+    }
+    return "";
+}
+
+function stageLabel(stage) {
+    const labels = {
+        agent: "Agent",
+        thinking: "推理",
+        thought: "思考",
+        tool: "工具",
+        observation: "观察",
+        context: "上下文",
+        approval: "审批",
+        final_answer: "结论",
+        result: "结果",
+        done: "完成",
+        error: "错误"
+    };
+    return labels[stage] || stage || "状态";
 }
 
 function applyConversationId(conversationId) {
@@ -420,6 +491,7 @@ function clearChat() {
     elements.messageList.hidden = true;
     elements.emptyState.hidden = false;
     updateTokenUsage(null);
+    updateAgentStatus("未触发", "空闲");
     appendTrace("系统", "对话区域已清空。");
 }
 

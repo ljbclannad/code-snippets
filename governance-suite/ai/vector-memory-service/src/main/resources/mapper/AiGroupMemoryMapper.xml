@@ -113,7 +113,7 @@
         WHERE group_id = #{groupId}
           AND customer_id = #{customerId}
           AND is_deleted = 0
-          AND (lifecycle_status IS NULL OR lifecycle_status <> 'ARCHIVED')
+          AND (lifecycle_status IS NULL OR lifecycle_status <![CDATA[ <> ]]> 'ARCHIVED')
         ORDER BY create_time DESC
     </select>
 
@@ -135,7 +135,7 @@
             #{embeddingId}
         </foreach>
         AND is_deleted = 0
-        AND (lifecycle_status IS NULL OR lifecycle_status <> 'ARCHIVED')
+        AND (lifecycle_status IS NULL OR lifecycle_status <![CDATA[ <> ]]> 'ARCHIVED')
     </select>
 
     <select id="selectByEmbeddingIdsWithFilter" resultMap="BaseResultMap">
@@ -147,7 +147,7 @@
             #{embeddingId}
         </foreach>
         AND is_deleted = 0
-        AND (lifecycle_status IS NULL OR lifecycle_status <> 'ARCHIVED')
+        AND (lifecycle_status IS NULL OR lifecycle_status <![CDATA[ <> ]]> 'ARCHIVED')
         <if test="filter != null">
             <if test="filter.memoryTypes != null and filter.memoryTypes.size() > 0">
                 AND memory_type IN
@@ -176,7 +176,7 @@
             #{id}
         </foreach>
         AND is_deleted = 0
-        AND (lifecycle_status IS NULL OR lifecycle_status <> 'ARCHIVED')
+        AND (lifecycle_status IS NULL OR lifecycle_status <![CDATA[ <> ]]> 'ARCHIVED')
         <if test="filter != null">
             <if test="filter.memoryTypes != null and filter.memoryTypes.size() > 0">
                 AND memory_type IN
@@ -203,7 +203,7 @@
         WHERE group_id = #{groupId}
           AND customer_id = #{customerId}
           AND is_deleted = 0
-          AND (lifecycle_status IS NULL OR lifecycle_status <> 'ARCHIVED')
+          AND (lifecycle_status IS NULL OR lifecycle_status <![CDATA[ <> ]]> 'ARCHIVED')
           AND (
                 memory_content LIKE CONCAT('%', #{query}, '%')
                 OR memory_key LIKE CONCAT('%', #{query}, '%')
@@ -279,7 +279,7 @@
         FROM b_ai_group_memory
         WHERE is_deleted = 0
           AND (lifecycle_status IS NULL OR lifecycle_status IN ('CONFIRMED', 'DECAYING'))
-          AND (memory_representation IS NULL OR memory_representation <> 'SUMMARY')
+          AND (memory_representation IS NULL OR memory_representation <![CDATA[ <> ]]> 'SUMMARY')
           AND (
                 evidence_count >= 2
                 OR source_count >= 2
@@ -317,7 +317,7 @@
         FROM b_ai_group_memory
         WHERE is_deleted = 0
           AND memory_type = #{memoryType}
-          AND (lifecycle_status IS NULL OR lifecycle_status <> 'ARCHIVED')
+          AND (lifecycle_status IS NULL OR lifecycle_status <![CDATA[ <> ]]> 'ARCHIVED')
     </select>
 
     <select id="selectGovernanceList" resultMap="BaseResultMap">

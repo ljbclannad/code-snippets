@@ -78,8 +78,6 @@ class AiChatServiceConcurrencyTest {
     @Mock
     private DegradationStrategyExecutor degradationStrategyExecutor;
     @Mock
-    private RetrievalQueryRewriteService retrievalQueryRewriteService;
-    @Mock
     private LayeredMemoryOrchestrator layeredMemoryOrchestrator;
     @Mock
     private TaskTriggerRouter taskTriggerRouter;
@@ -89,6 +87,8 @@ class AiChatServiceConcurrencyTest {
     private DoctorAssistantAgentGateway doctorAssistantAgentGateway;
     @Mock
     private AgentDispatchPolicy agentDispatchPolicy;
+    @Mock
+    private VisitorIdentityService visitorIdentityService;
 
     private AutoCloseable closeable;
     private ExecutorService executorService;
@@ -111,7 +111,6 @@ class AiChatServiceConcurrencyTest {
 
         aiChatService = new AiChatService(
                 userProfileClient,
-                memoryService,
                 deepSeekClient,
                 searchService,
                 sessionContextService,
@@ -125,12 +124,12 @@ class AiChatServiceConcurrencyTest {
                 quotaService,
                 degradationManager,
                 degradationStrategyExecutor,
-                retrievalQueryRewriteService,
                 layeredMemoryOrchestrator,
                 taskTriggerRouter,
                 doctorAssistantTaskRequestFactory,
                 doctorAssistantAgentGateway,
-                routeRuntime);
+                routeRuntime,
+                visitorIdentityService);
 
         ReflectionTestUtils.setField(aiChatService, "autoRecommendEnabled", false);
         ReflectionTestUtils.setField(aiChatService, "recommendCount", 3);
@@ -145,18 +144,14 @@ class AiChatServiceConcurrencyTest {
                         .build()));
         when(degradationManager.isFeatureEnabled(anyString())).thenReturn(true);
         when(degradationStrategyExecutor.getMemoryRetrievalCount()).thenReturn(5);
-        when(retrievalQueryRewriteService.rewrite(anyString(), any(), any()))
-                .thenAnswer(invocation -> com.lx.governance.aichat.dto.RetrievalQuery.builder()
-                        .originalMessage(invocation.getArgument(0))
-                        .rewrittenQuery(invocation.getArgument(0))
-                        .rewriteSource("BYPASS")
-                        .rewriteReason("test_default")
-                        .build());
         when(taskTriggerRouter.route(org.mockito.ArgumentMatchers.any(com.lx.governance.aichat.dto.TaskTriggerContext.class))).thenReturn(TaskTriggerDecision.builder()
                 .route(TaskTriggerRoute.DIRECT_CHAT)
                 .taskType(TaskType.NONE)
                 .summary("test_default")
                 .build());
+        when(visitorIdentityService.ensureCustomerId(any())).thenAnswer(invocation ->
+                invocation.<ChatRequest>getArgument(0).getCustomerId());
+        when(visitorIdentityService.isVisitor(any())).thenReturn(false);
         when(doctorAssistantTaskRequestFactory.buildPatientDialogRequest(any(), any(), any(), any(), any(), anyString()))
                 .thenAnswer(invocation -> com.lx.governance.aichat.dto.DoctorAssistantTaskRequest.builder()
                         .taskType(invocation.<TaskTriggerDecision>getArgument(4).getTaskType())
@@ -281,13 +276,6 @@ class AiChatServiceConcurrencyTest {
 
         when(sessionContextService.getOrCreateContext(anyString(), anyString(), anyString(), anyString()))
                 .thenReturn(context);
-        when(retrievalQueryRewriteService.rewrite(anyString(), any(), any()))
-                .thenReturn(RetrievalQuery.builder()
-                        .originalMessage("那我这种情况晚饭怎么吃？")
-                        .rewrittenQuery("减重管理 饮食建议 晚饭怎么吃")
-                        .rewriteSource("RULE")
-                        .rewriteReason("context_enriched")
-                        .build());
         when(deepSeekClient.chat(any(), any(), any(),
                 org.mockito.ArgumentMatchers.<com.lx.governance.aichat.dto.LayeredMemories>any())).thenAnswer(invocation -> {
             ChatRequest request = invocation.getArgument(0);

@@ -1,6 +1,7 @@
 package com.lx.governance.aichat.service;
 
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import com.lx.governance.aichat.config.AiChatAgentRouteProperties;
 import com.lx.governance.aichat.dto.ChatRequest;
@@ -18,6 +19,7 @@ public class AgentDispatchPolicy {
 
     private final PlatformDispatchPolicyEngine platformDispatchPolicyEngine;
 
+    @Autowired
     public AgentDispatchPolicy(AiChatAgentRouteProperties properties) {
         this(new PlatformDispatchPolicyEngine(
                 properties != null ? properties.getEnabledTaskTypes() : java.util.List.of(),

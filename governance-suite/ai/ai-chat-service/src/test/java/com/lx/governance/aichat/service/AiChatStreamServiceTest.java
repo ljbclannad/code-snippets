@@ -21,6 +21,9 @@ import com.lx.governance.aichat.dto.LayeredMemories;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.SessionContext;
 import com.lx.governance.aichat.dto.StreamEvent;
+import com.lx.governance.aichat.dto.TaskTriggerDecision;
+import com.lx.governance.aichat.dto.TaskTriggerRoute;
+import com.lx.governance.aichat.dto.TaskType;
 import com.lx.governance.aichat.dto.UserProfileDTO;
 import com.lx.governance.aichat.metrics.AiChatMetrics;
 import com.lx.governance.aichat.quota.QuotaService;
@@ -37,13 +40,21 @@ class AiChatStreamServiceTest {
     @Mock
     private SessionContextService sessionContextService;
     @Mock
-    private MemoryService memoryService;
-    @Mock
     private ChatAsyncProcessingService chatAsyncProcessingService;
     @Mock
     private QuotaService quotaService;
     @Mock
     private LayeredMemoryOrchestrator layeredMemoryOrchestrator;
+    @Mock
+    private TaskTriggerRouter taskTriggerRouter;
+    @Mock
+    private DoctorAssistantTaskRequestFactory doctorAssistantTaskRequestFactory;
+    @Mock
+    private DoctorAssistantAgentGateway doctorAssistantAgentGateway;
+    @Mock
+    private AgentDispatchPolicy agentDispatchPolicy;
+    @Mock
+    private VisitorIdentityService visitorIdentityService;
 
     private AiChatStreamService aiChatStreamService;
 
@@ -54,11 +65,24 @@ class AiChatStreamServiceTest {
                 deepSeekClient,
                 userProfileClient,
                 sessionContextService,
-                memoryService,
                 chatAsyncProcessingService,
                 new AiChatMetrics(new SimpleMeterRegistry()),
                 quotaService,
-                layeredMemoryOrchestrator);
+                layeredMemoryOrchestrator,
+                taskTriggerRouter,
+                doctorAssistantTaskRequestFactory,
+                doctorAssistantAgentGateway,
+                new AgentConversationRouteRuntime(agentDispatchPolicy, true, 10 * 60 * 1000L),
+                visitorIdentityService);
+        when(taskTriggerRouter.route(org.mockito.ArgumentMatchers.any(com.lx.governance.aichat.dto.TaskTriggerContext.class)))
+                .thenReturn(TaskTriggerDecision.builder()
+                .route(TaskTriggerRoute.DIRECT_CHAT)
+                .taskType(TaskType.NONE)
+                .summary("stream_test_default")
+                .build());
+        when(visitorIdentityService.ensureCustomerId(any())).thenAnswer(invocation ->
+                invocation.<ChatRequest>getArgument(0).getCustomerId());
+        when(visitorIdentityService.isVisitor(any())).thenReturn(false);
     }
 
     @Test

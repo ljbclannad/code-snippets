@@ -6,18 +6,26 @@ import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import com.health.agent.dto.patient.DoctorAssistantTaskRequest;
 import com.health.agent.dto.patient.DoctorAssistantTaskResponse;
+import com.health.agent.model.AgentStreamEvent;
 import com.health.agent.service.PatientTaskAgentService;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+
+import java.io.IOException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @Slf4j
 @RestController
@@ -27,6 +35,12 @@ import lombok.extern.slf4j.Slf4j;
 public class PatientTaskController {
 
     private final PatientTaskAgentService patientTaskAgentService;
+    private final ExecutorService streamExecutor = Executors.newFixedThreadPool(4, runnable -> {
+        Thread thread = new Thread(runnable);
+        thread.setName("patient-task-stream-" + thread.getId());
+        thread.setDaemon(true);
+        return thread;
+    });
 
     @Operation(
         summary = "分析患者来源任务",
@@ -99,5 +113,37 @@ public class PatientTaskController {
         // 3. 对患者可见回复做安全收敛，必要时转人工复核 / 待审批
         // 4. 组装医生工作台载荷、审计上下文和最终响应
         return ResponseEntity.ok(patientTaskAgentService.analyze(request));
+    }
+
+    @PostMapping(value = "/analyze/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter analyzeStream(@Valid @RequestBody DoctorAssistantTaskRequest request) {
+        log.info("收到患者来源任务流式分析请求 - taskType: {}, conversationId: {}, correlationId: {}",
+                request.getTaskType(), request.getConversationId(), request.getCorrelationId());
+
+        SseEmitter emitter = new SseEmitter(120000L);
+        CompletableFuture.runAsync(() -> {
+            try {
+                patientTaskAgentService.analyzeStream(request, event -> sendEvent(emitter, event));
+                emitter.complete();
+            } catch (Exception e) {
+                log.error("患者来源任务流式分析失败 - conversationId: {}, correlationId: {}",
+                        request.getConversationId(), request.getCorrelationId(), e);
+                emitter.completeWithError(e);
+            }
+        }, streamExecutor);
+        return emitter;
+    }
+
+    private void sendEvent(SseEmitter emitter, AgentStreamEvent event) {
+        if (emitter == null || event == null) {
+            return;
+        }
+        try {
+            emitter.send(SseEmitter.event()
+                    .name(event.getType().name().toLowerCase())
+                    .data(event));
+        } catch (IOException e) {
+            throw new IllegalStateException("发送患者任务 SSE 事件失败", e);
+        }
     }
 }

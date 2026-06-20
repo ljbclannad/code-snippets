@@ -10,6 +10,8 @@ import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import com.lx.governance.agentplatform.runtime.PlatformRouteDecision;
+import com.lx.governance.agentplatform.runtime.PlatformRouteTarget;
 import com.lx.governance.aichat.client.DeepSeekClient;
 import com.lx.governance.aichat.client.UserProfileClientFixed;
 import com.lx.governance.aichat.config.ProfileCompletionProperties;
@@ -33,8 +35,6 @@ import com.lx.governance.aichat.exception.AiServiceException;
 import com.lx.governance.aichat.exception.ConversationException;
 import com.lx.governance.aichat.metrics.AiChatMetrics;
 import com.lx.governance.aichat.quota.QuotaService;
-import com.lx.governance.agentplatform.runtime.PlatformRouteDecision;
-import com.lx.governance.agentplatform.runtime.PlatformRouteTarget;
 
 import jakarta.annotation.Resource;
 import lombok.RequiredArgsConstructor;
@@ -46,7 +46,6 @@ import lombok.extern.slf4j.Slf4j;
 public class AiChatService {
 
     private final UserProfileClientFixed userProfileClient;
-    private final MemoryService memoryService;
     private final DeepSeekClient deepSeekClient;
     private final ChatHistorySearchService searchService;
     private final SessionContextService sessionContextService;
@@ -60,7 +59,6 @@ public class AiChatService {
     private final QuotaService quotaService;
     private final DegradationManager degradationManager;
     private final DegradationStrategyExecutor degradationStrategyExecutor;
-    private final RetrievalQueryRewriteService retrievalQueryRewriteService;
     private final LayeredMemoryOrchestrator layeredMemoryOrchestrator;
     private final TaskTriggerRouter taskTriggerRouter;
     private final DoctorAssistantTaskRequestFactory doctorAssistantTaskRequestFactory;
@@ -246,9 +244,9 @@ public class AiChatService {
                         if (!visitorMode && triggerDecision != null && triggerDecision.shouldUpgradeToAgent()) {
                             // 命中 Agent 路由后，还要再经过灰度/熔断/策略放行判断，
                             // 避免医生助手链路在高风险时段被无限放大。
-                            PlatformRouteDecision routeDecision =
-                                    agentConversationRouteRuntime.evaluateInvocation(request, sessionContext,
-                                            triggerDecision);
+                            PlatformRouteDecision routeDecision = agentConversationRouteRuntime.evaluateInvocation(
+                                    request, sessionContext,
+                                    triggerDecision);
                             if (!routeDecision.invokeAgent()) {
                                 log.info(
                                         "Agent 灰度/熔断策略未放行，回退普通对话 - conversationId: {}, taskType: {}, reason: {}, correlationId: {}",
@@ -300,8 +298,8 @@ public class AiChatService {
             TaskTriggerDecision triggerDecision,
             UserProfileDTO profile,
             LayeredMemories memories) {
-        PlatformRouteDecision initialDecision =
-                agentConversationRouteRuntime.evaluateInvocation(request, sessionContext, triggerDecision);
+        PlatformRouteDecision initialDecision = agentConversationRouteRuntime.evaluateInvocation(request,
+                sessionContext, triggerDecision);
         if (initialDecision.target() == PlatformRouteTarget.PENDING_REVIEW_SHORT_CIRCUIT) {
             String patientReply = "这条情况已经同步给医生进一步评估，当前先按之前的安全建议观察；如果出现明显不适或症状加重，请及时线下就医。";
             log.info("检测到会话中已有待处理人工复核，短路跳过重复 Agent 调用 - conversationId: {}, correlationId: {}",
@@ -344,8 +342,7 @@ public class AiChatService {
                     .analyzePatientTask(agentTaskRequest);
             long durationMs = System.currentTimeMillis() - agentStart;
             String taskType = triggerDecision.getTaskType() != null ? triggerDecision.getTaskType().name() : "UNKNOWN";
-            PlatformRouteDecision responseDecision =
-                    agentConversationRouteRuntime.evaluateAgentResponse(agentResponse);
+            PlatformRouteDecision responseDecision = agentConversationRouteRuntime.evaluateAgentResponse(agentResponse);
 
             // SKIPPED 表示远端认为当前任务不适合继续走医生助手链路，
             // 这里统一回退普通对话，避免患者端收到空结果。
@@ -424,8 +421,7 @@ public class AiChatService {
             long startTime,
             UserProfileDTO profile,
             LayeredMemories memories) {
-        PlatformRouteDecision fallbackDecision =
-                agentConversationRouteRuntime.fallbackDecision(reason);
+        PlatformRouteDecision fallbackDecision = agentConversationRouteRuntime.fallbackDecision(reason);
         if (fallbackDecision.target() == PlatformRouteTarget.TERMINAL_ERROR) {
             return CompletableFuture.completedFuture(ChatResponse.error("Agent 调用失败且未开启普通对话回退"));
         }
