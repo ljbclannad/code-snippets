@@ -27,6 +27,10 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class SessionContextService {
 
+    private static final String DEFAULT_TOPIC = "健康咨询";
+    private static final String DEFAULT_PHASE = "consulting";
+    private static final String DEFAULT_INTENT = "general_health_consultation";
+    private static final String DEFAULT_COMPLEXITY = "simple";
     private static final String CONTEXT_KEY_PREFIX = "ai:session:context:";
     private static final long CONTEXT_TTL_MINUTES = 30;
     private static final int SIMPLE_WINDOW_SIZE = 3;
@@ -50,7 +54,18 @@ public class SessionContextService {
             String customerId,
             String groupId,
             String currentMessage) {
+        return getOrCreateContext(conversationId, customerId, groupId, currentMessage, null, null);
+    }
+
+    @Retry(name = "sessionContext", fallbackMethod = "getContextFallbackWithRequest")
+    public SessionContext getOrCreateContext(String conversationId,
+            String customerId,
+            String groupId,
+            String currentMessage,
+            String requestId,
+            Long messageTimestamp) {
         String key = CONTEXT_KEY_PREFIX + conversationId;
+        long eventTimestamp = resolveEventTimestamp(messageTimestamp);
 
         try {
             SessionContext context = getFromRedis(key);
@@ -70,10 +85,20 @@ public class SessionContextService {
                 context.setCustomerId(customerId);
                 context.setGroupId(groupId);
                 context.setSessionStartTime(System.currentTimeMillis());
+                context.setLastUpdateTime(System.currentTimeMillis());
                 context.setMessageCount(1);
+                context.setContextVersion(1L);
+                context.setLastMessageAt(eventTimestamp);
+                context.setLastProcessedRequestId(requestId);
 
                 saveToRedis(key, context);
             } else {
+                if (isStaleWrite(context, requestId, eventTimestamp)) {
+                    log.info("检测到乱序上下文请求，复用当前最新上下文 - conversationId: {}, requestId: {}, eventTimestamp: {}, lastMessageAt: {}",
+                            conversationId, requestId, eventTimestamp, context.getLastMessageAt());
+                    return context;
+                }
+
                 // 已有上下文：检测是否需要重新分析
                 if (shouldReanalyzeIntent(context, currentMessage)) {
                     log.info("检测到需要重新分析意图: conversationId={}, 当前话题={}, 消息数={}",
@@ -87,7 +112,7 @@ public class SessionContextService {
 
                     if (updatedContext != null) {
                         // 合并更新（保留元数据）
-                        mergeContextUpdate(context, updatedContext);
+                        mergeContextUpdate(context, updatedContext, requestId, eventTimestamp);
                         saveToRedis(key, context);
 
                         log.info("意图分析已更新: conversationId={}, 新话题={}, 新意图={}",
@@ -134,13 +159,13 @@ public class SessionContextService {
                 .conversationId(conversationId)
                 .customerId(customerId)
                 .groupId(groupId)
-                .currentTopic("健康咨询")
-                .conversationPhase("consulting")
+                .currentTopic(DEFAULT_TOPIC)
+                .conversationPhase(DEFAULT_PHASE)
                 .mentionedEntities(new ArrayList<>())
                 .extractedData(new HashMap<>())
-                .userIntent("一般咨询")
+                .userIntent(DEFAULT_INTENT)
                 .pendingQuestions(new ArrayList<>())
-                .complexity("simple")
+                .complexity(DEFAULT_COMPLEXITY)
                 .recentSummaries(new ArrayList<>())
                 .sessionStartTime(System.currentTimeMillis())
                 .messageCount(1)
@@ -156,16 +181,43 @@ public class SessionContextService {
         return createDefaultContext(conversationId, customerId, groupId);
     }
 
+    private SessionContext getContextFallbackWithRequest(String conversationId,
+            String customerId,
+            String groupId,
+            String currentMessage,
+            String requestId,
+            Long messageTimestamp,
+            Throwable t) {
+        log.warn("会话上下文服务降级: conversationId={}, requestId={}", conversationId, requestId);
+        return createDefaultContext(conversationId, customerId, groupId);
+    }
+
     /**
      * 更新会话上下文
      */
     public void updateContext(String conversationId, String userMessage, String aiResponse) {
+        updateContext(conversationId, userMessage, aiResponse, null, null);
+    }
+
+    public void updateContext(
+            String conversationId,
+            String userMessage,
+            String aiResponse,
+            String requestId,
+            Long messageTimestamp) {
         String key = CONTEXT_KEY_PREFIX + conversationId;
+        long eventTimestamp = resolveEventTimestamp(messageTimestamp);
 
         try {
             SessionContext context = getFromRedis(key);
             if (context == null) {
                 log.warn("上下文不存在，跳过更新: conversationId={}", conversationId);
+                return;
+            }
+
+            if (isStaleWrite(context, requestId, eventTimestamp)) {
+                log.info("跳过乱序上下文更新 - conversationId: {}, requestId: {}, eventTimestamp: {}, lastMessageAt: {}",
+                        conversationId, requestId, eventTimestamp, context.getLastMessageAt());
                 return;
             }
 
@@ -205,6 +257,11 @@ public class SessionContextService {
 
             // 5. 更新时间戳
             context.setLastUpdateTime(System.currentTimeMillis());
+            context.setLastMessageAt(eventTimestamp);
+            if (requestId != null && !requestId.isBlank()) {
+                context.setLastProcessedRequestId(requestId);
+            }
+            context.setContextVersion(nextVersion(context.getContextVersion()));
 
             // 6. 保存到Redis并刷新TTL
             saveToRedis(key, context);
@@ -220,7 +277,16 @@ public class SessionContextService {
      * 记录最近一次任务触发判定，便于后续复盘和观测。
      */
     public void recordTaskTriggerDecision(String conversationId, TaskTriggerDecision decision) {
+        recordTaskTriggerDecision(conversationId, decision, null, null);
+    }
+
+    public void recordTaskTriggerDecision(
+            String conversationId,
+            TaskTriggerDecision decision,
+            String requestId,
+            Long messageTimestamp) {
         String key = CONTEXT_KEY_PREFIX + conversationId;
+        long eventTimestamp = resolveEventTimestamp(messageTimestamp);
 
         try {
             SessionContext context = getFromRedis(key);
@@ -232,6 +298,11 @@ public class SessionContextService {
                 log.warn("任务触发判定为空，跳过记录: conversationId={}", conversationId);
                 return;
             }
+            if (isStaleWrite(context, requestId, eventTimestamp)) {
+                log.info("跳过乱序任务触发判定记录 - conversationId: {}, requestId: {}",
+                        conversationId, requestId);
+                return;
+            }
 
             context.setLastTaskTriggerRoute(decision.getRoute());
             context.setLastTaskType(decision.getTaskType());
@@ -239,6 +310,11 @@ public class SessionContextService {
             context.setLastTaskTriggerSummary(decision.getSummary());
             context.setLastTaskTriggerAt(System.currentTimeMillis());
             context.setLastUpdateTime(System.currentTimeMillis());
+            context.setLastMessageAt(eventTimestamp);
+            if (requestId != null && !requestId.isBlank()) {
+                context.setLastProcessedRequestId(requestId);
+            }
+            context.setContextVersion(nextVersion(context.getContextVersion()));
 
             saveToRedis(key, context);
             log.debug("记录任务触发判定成功: conversationId={}, route={}, taskType={}",
@@ -308,7 +384,8 @@ public class SessionContextService {
         }
 
         // 策略4：长时间未更新（可能是新会话）
-        long timeSinceLastUpdate = System.currentTimeMillis() - context.getLastUpdateTime();
+        long lastUpdateTime = context.getLastUpdateTime() != null ? context.getLastUpdateTime() : 0L;
+        long timeSinceLastUpdate = System.currentTimeMillis() - lastUpdateTime;
         if (timeSinceLastUpdate > 10 * 60 * 1000) {
             log.debug("触发重新分析: 长时间未更新（{}分钟）", timeSinceLastUpdate / 60000);
             return true;
@@ -362,7 +439,7 @@ public class SessionContextService {
     /**
      * 合并上下文更新
      */
-    private void mergeContextUpdate(SessionContext context, SessionContext updatedContext) {
+    private void mergeContextUpdate(SessionContext context, SessionContext updatedContext, String requestId, long eventTimestamp) {
         context.setCurrentTopic(updatedContext.getCurrentTopic());
         context.setConversationPhase(updatedContext.getConversationPhase());
         context.setMentionedEntities(updatedContext.getMentionedEntities());
@@ -371,5 +448,28 @@ public class SessionContextService {
         context.setPendingQuestions(updatedContext.getPendingQuestions());
         context.setComplexity(updatedContext.getComplexity());
         context.setLastUpdateTime(System.currentTimeMillis());
+        context.setLastMessageAt(eventTimestamp);
+        if (requestId != null && !requestId.isBlank()) {
+            context.setLastProcessedRequestId(requestId);
+        }
+        context.setContextVersion(nextVersion(context.getContextVersion()));
+    }
+
+    private long resolveEventTimestamp(Long messageTimestamp) {
+        return messageTimestamp != null && messageTimestamp > 0 ? messageTimestamp : System.currentTimeMillis();
+    }
+
+    private boolean isStaleWrite(SessionContext context, String requestId, long eventTimestamp) {
+        if (context == null || context.getLastMessageAt() == null) {
+            return false;
+        }
+        if (requestId != null && requestId.equals(context.getLastProcessedRequestId())) {
+            return false;
+        }
+        return eventTimestamp < context.getLastMessageAt();
+    }
+
+    private long nextVersion(Long currentVersion) {
+        return currentVersion == null || currentVersion < 1 ? 1L : currentVersion + 1;
     }
 }

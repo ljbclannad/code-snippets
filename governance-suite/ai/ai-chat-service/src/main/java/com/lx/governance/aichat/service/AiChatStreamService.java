@@ -13,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
+import reactor.core.publisher.SignalType;
 
 import java.util.UUID;
 
@@ -67,9 +68,18 @@ public class AiChatStreamService {
                     }
                 })
                 .doFinally(signal -> {
+                    if (signal == SignalType.CANCEL) {
+                        accumulator.markInterrupted("client_cancelled");
+                    } else if (signal == SignalType.ON_ERROR) {
+                        accumulator.markFailed("stream_pipeline_error");
+                    }
                     long duration = System.currentTimeMillis() - startTime;
-                    log.info("流式聊天请求处理完成 - customerId: {}, correlationId: {}, 耗时: {}ms",
-                            request.getCustomerId(), correlationId, duration);
+                    log.info("流式聊天请求处理完成 - customerId: {}, correlationId: {}, state: {}, reason: {}, 耗时: {}ms",
+                            request.getCustomerId(),
+                            correlationId,
+                            accumulator.getCompletionState(),
+                            accumulator.getTerminalReason(),
+                            duration);
 
                     // 如果流式响应完成且无错误，保存完整内容到历史
                     if (accumulator.isCompleted() && !accumulator.hasError()) {
@@ -176,7 +186,9 @@ public class AiChatStreamService {
                     sessionId,
                     request.getCustomerId(),
                     request.getGroupId(),
-                    request.getMessage()
+                    request.getMessage(),
+                    request.getRequestId(),
+                    request.getMessageTimestamp()
             );
 
             log.info("会话上下文已准备 - sessionId: {}, intent: {}, phase: {}, correlationId: {}",
@@ -197,7 +209,11 @@ public class AiChatStreamService {
                     .message(request.getMessage())
                     .sessionContext(sessionContext)
                     .build());
-            sessionContextService.recordTaskTriggerDecision(sessionId, triggerDecision);
+            sessionContextService.recordTaskTriggerDecision(
+                    sessionId,
+                    triggerDecision,
+                    request.getRequestId(),
+                    request.getMessageTimestamp());
             metrics.recordTaskTriggerDecision(triggerDecision);
 
             return Mono.fromCallable(() ->
@@ -330,7 +346,9 @@ public class AiChatStreamService {
             sessionContextService.updateContext(
                     sessionId,
                     request.getMessage(),
-                    fullContent
+                    fullContent,
+                    request.getRequestId(),
+                    request.getMessageTimestamp()
             );
 
             log.debug("会话上下文已更新 - sessionId: {}, assistantLength: {}", sessionId,

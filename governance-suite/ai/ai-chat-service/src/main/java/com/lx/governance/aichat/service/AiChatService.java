@@ -45,6 +45,9 @@ import lombok.extern.slf4j.Slf4j;
 @RequiredArgsConstructor
 public class AiChatService {
 
+    private static final String INTENT_CASUAL_CHAT = "casual_chat";
+    private static final String INTENT_FACT_QUERY = "fact_query";
+
     private final UserProfileClientFixed userProfileClient;
     private final DeepSeekClient deepSeekClient;
     private final ChatHistorySearchService searchService;
@@ -56,6 +59,7 @@ public class AiChatService {
     private final ProfileCompletionProperties profileCompletionProperties;
     private final ChatAsyncProcessingService chatAsyncProcessingService;
     private final ConversationExecutionGuard conversationExecutionGuard;
+    private final ChatRequestIdempotencyService chatRequestIdempotencyService;
     private final QuotaService quotaService;
     private final DegradationManager degradationManager;
     private final DegradationStrategyExecutor degradationStrategyExecutor;
@@ -116,8 +120,11 @@ public class AiChatService {
                     truncate(request.getMessage(), 50),
                     correlationId);
 
-            return conversationExecutionGuard.tryExecute(sessionId, () -> processConversationRequest(
-                    request, sessionId, correlationId, startTime))
+            return chatRequestIdempotencyService.executeOrReplay(
+                    sessionId,
+                    request,
+                    () -> conversationExecutionGuard.tryExecute(sessionId, () -> processConversationRequest(
+                            request, sessionId, correlationId, startTime)))
                     .exceptionally(ex -> buildErrorResponse(request, correlationId, startTime, ex));
         });
     }
@@ -140,7 +147,9 @@ public class AiChatService {
                             sessionId,
                             request.getCustomerId(),
                             request.getGroupId(),
-                            request.getMessage()));
+                            request.getMessage(),
+                            request.getRequestId(),
+                            request.getMessageTimestamp()));
             if (sessionContext.getUserId() == null || sessionContext.getUserId().isBlank()) {
                 sessionContext.setUserId(request.getUserId() != null && !request.getUserId().isBlank()
                         ? request.getUserId()
@@ -180,7 +189,11 @@ public class AiChatService {
             // 这里分别把“最终路由判定”打到指标和会话上下文里：
             // 前者用于观测流量分布，后者用于后续复盘和调试当前会话。
             metrics.recordTaskTriggerDecision(triggerDecision);
-            sessionContextService.recordTaskTriggerDecision(sessionId, triggerDecision);
+            sessionContextService.recordTaskTriggerDecision(
+                    sessionId,
+                    triggerDecision,
+                    request.getRequestId(),
+                    request.getMessageTimestamp());
 
             if (triggerDecision.shouldUpgradeToAgent()) {
                 metrics.recordAgentUpgradeTriggered();
@@ -204,10 +217,17 @@ public class AiChatService {
             long startTime,
             TaskTriggerDecision triggerDecision) {
         boolean visitorMode = isVisitorRequest(request);
+        boolean skipProfileLoad = shouldSkipProfileLoad(visitorMode, sessionContext);
 
-        // 先异步拉取用户画像。画像是普通对话、画像补全和记忆重写的共同输入。
+        // 先判断本轮是否值得拉取用户画像。
+        // casual_chat / fact_query / visitor 模式会直接跳过，避免把低价值请求打到画像服务。
         CompletableFuture<UserProfileDTO> profileFuture;
-        if (visitorMode) {
+        if (skipProfileLoad) {
+            log.info("跳过用户画像加载 - conversationId: {}, intent: {}, visitorMode: {}, correlationId: {}",
+                    sessionId,
+                    sessionContext != null ? sessionContext.getUserIntent() : null,
+                    visitorMode,
+                    correlationId);
             profileFuture = CompletableFuture.completedFuture(new UserProfileDTO());
         } else {
             profileFuture = userProfileClient
@@ -222,10 +242,12 @@ public class AiChatService {
         return profileFuture.thenComposeAsync(profile -> {
             // 如果画像诊断发现关键字段缺失，优先走追问补全链路，
             // 当前轮不会继续执行长期记忆检索或 Agent 分流。
-            CompletableFuture<ChatResponse> followUpResponse = handleProfileCompletionIfNeeded(
-                    request, sessionContext, profile);
-            if (followUpResponse != null) {
-                return followUpResponse;
+            if (!skipProfileLoad) {
+                CompletableFuture<ChatResponse> followUpResponse = handleProfileCompletionIfNeeded(
+                        request, sessionContext, profile);
+                if (followUpResponse != null) {
+                    return followUpResponse;
+                }
             }
 
             // 分层记忆加载会同时返回 short-term 和 long-term memories。
@@ -289,6 +311,16 @@ public class AiChatService {
         }, chatExecutor);
     }
 
+    private boolean shouldSkipProfileLoad(boolean visitorMode, SessionContext sessionContext) {
+        if (visitorMode) {
+            return true;
+        }
+        String intent = sessionContext != null && sessionContext.getUserIntent() != null
+                ? sessionContext.getUserIntent().trim().toLowerCase()
+                : "";
+        return INTENT_CASUAL_CHAT.equals(intent) || INTENT_FACT_QUERY.equals(intent);
+    }
+
     private CompletableFuture<ChatResponse> invokeAgentOrFallback(
             ChatRequest request,
             SessionContext sessionContext,
@@ -304,7 +336,12 @@ public class AiChatService {
             String patientReply = "这条情况已经同步给医生进一步评估，当前先按之前的安全建议观察；如果出现明显不适或症状加重，请及时线下就医。";
             log.info("检测到会话中已有待处理人工复核，短路跳过重复 Agent 调用 - conversationId: {}, correlationId: {}",
                     sessionId, correlationId);
-            sessionContextService.updateContext(sessionId, request.getMessage(), patientReply);
+            sessionContextService.updateContext(
+                    sessionId,
+                    request.getMessage(),
+                    patientReply,
+                    request.getRequestId(),
+                    request.getMessageTimestamp());
             ChatGenerationResult agentConversationResult = new ChatGenerationResult();
             agentConversationResult.setAnswer(patientReply);
             agentConversationResult.setConversationId(sessionId);
@@ -496,7 +533,12 @@ public class AiChatService {
                 correlationId);
 
         // Agent 成功分支也要并回患者对话主链路，但仅使用患者可见回复，避免把医生侧内部载荷写入上下文或记忆。
-        sessionContextService.updateContext(sessionId, request.getMessage(), patientReply);
+        sessionContextService.updateContext(
+                sessionId,
+                request.getMessage(),
+                patientReply,
+                request.getRequestId(),
+                request.getMessageTimestamp());
         log.debug("Agent 成功后已更新会话上下文 - sessionId: {}, correlationId: {}", sessionId, correlationId);
 
         // 为了让 Agent 成功分支也能进入统一的聊天后处理链路，
@@ -550,7 +592,9 @@ public class AiChatService {
             sessionContextService.updateContext(
                     sessionContext.getConversationId(),
                     request.getMessage(),
-                    "");
+                    "",
+                    request.getRequestId(),
+                    request.getMessageTimestamp());
 
             String followUpMessage = followUpResponseBuilder.buildFollowUpMessage(
                     questions,
@@ -622,7 +666,12 @@ public class AiChatService {
             ChatGenerationResult chatResult) {
         // direct chat 的成功结果在这里统一收口：
         // 先更新当前会话上下文，再进入异步后处理（保存聊天历史、同步索引、触发记忆提取）。
-        sessionContextService.updateContext(sessionId, request.getMessage(), chatResult.getAnswer());
+        sessionContextService.updateContext(
+                sessionId,
+                request.getMessage(),
+                chatResult.getAnswer(),
+                request.getRequestId(),
+                request.getMessageTimestamp());
         log.debug("会话上下文已更新 - sessionId: {}, correlationId: {}", sessionId, correlationId);
 
         chatAsyncProcessingService.handleChatCompleted(request, chatResult, correlationId);

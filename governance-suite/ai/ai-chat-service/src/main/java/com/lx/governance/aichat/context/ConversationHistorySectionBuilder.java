@@ -22,7 +22,7 @@ public class ConversationHistorySectionBuilder implements PromptSectionBuilder {
         }
 
         int sectionBudget = Math.min(
-                context.getBudgetAllocation().getSessionContextBudget(),
+                context.getBudgetAllocation().getConversationHistoryBudget(),
                 context.getRemainingBudget());
         String content = support.buildConversationHistory(
                 context.getInput().getCustomerId(),
@@ -33,11 +33,16 @@ public class ConversationHistorySectionBuilder implements PromptSectionBuilder {
             return PromptSectionResult.empty(PromptSectionType.CONVERSATION_HISTORY);
         }
 
+        int usedTokens = support.estimateTokens(content);
+
         return PromptSectionResult.builder()
                 .type(PromptSectionType.CONVERSATION_HISTORY)
                 .title("## 对话历史")
                 .content(content)
-                .usedTokens(support.estimateTokens(content))
+                .usedTokens(usedTokens)
+                .allocatedTokens(sectionBudget)
+                .originalTokens(usedTokens)
+                .compressed(false)
                 .build();
     }
 }

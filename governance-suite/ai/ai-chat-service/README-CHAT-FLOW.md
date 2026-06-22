@@ -51,6 +51,24 @@
 - `recentSummaries`
 - `pendingQuestions`
 
+如果从实际运行态来分，这些字段的核心价值大致是：
+
+- 身份与路由域
+  - `conversationId / customerId / userId / groupId / tenantId`
+  - 作用是绑定会话主体，并给灰度、路由、审计提供稳定索引
+- 会话语义骨架
+  - `currentTopic / userIntent / conversationPhase / complexity`
+  - 作用是描述“聊什么、想干什么、是不是闲聊、问题复杂不复杂”
+- 近场上下文
+  - `recentSummaries / pendingQuestions`
+  - 作用是保留最近几轮摘要和待确认信息，支撑上下文延续、画像补全和短期记忆
+- 局部结构化信号
+  - `mentionedEntities / extractedData`
+  - 作用是缓存已经识别出的实体、指标和值，减少后续重复理解成本
+- 运行态治理信号
+  - `messageCount / lastUpdateTime / lastTaskTrigger* / lastAgent*`
+  - 作用是支撑意图重分析、任务复盘、人工复核短路和 Agent 结果治理
+
 这部分是当前会话的短生命周期运行态，不是长期记忆。
 
 ### 2. 用户画像加载
@@ -65,6 +83,16 @@
 - key 前缀：`ai:profile:`
 - 正式数据源仍然在 `user-profile-service` 管理的业务表中
 
+当前不是每轮都拉画像。
+
+以下情况会直接跳过画像 RPC：
+
+- `visitor` 模式
+- `userIntent = casual_chat`
+- `userIntent = fact_query`
+
+这几类请求会使用空 `UserProfileDTO` 继续后续主链路，不进入画像补全追问。
+
 ### 3. 画像诊断
 
 在生成回答之前，`ProfileDiagnosisService` 会判断当前画像字段是否足够支撑本轮回答。
@@ -74,6 +102,7 @@
 - 如果画像信息不足，会生成追问问题
 - 追问内容会写回会话上下文
 - 当前轮可能直接返回追问，而不进入完整回答链路
+- 但前提是本轮没有命中“跳过画像加载”的短路条件
 
 这一步目前是实用型字段补全门控，不是完整的画像候选态处理逻辑。画像候选态已经下沉到 `user-profile-service`。
 
@@ -193,6 +222,17 @@
 - 待确认问题
 - 最近几轮摘要
 
+这些字段之所以适合做短期记忆，是因为：
+
+- `currentTopic`
+  - 成本低，但能快速稳定当前主题
+- `userIntent`
+  - 能显式告诉模型这轮是在闲聊、问事实、补资料，还是请求分析
+- `pendingQuestions`
+  - 能提醒模型当前还在补信息阶段，不要过早跳到结论
+- `recentSummaries`
+  - 能用很少 token 保留最近几轮表达，维持会话连续性
+
 特点：
 
 - 成本低
@@ -215,6 +255,61 @@
   - `minConfidence`
   - `verifiedOnly`
   - `recentDays`
+
+当前长期记忆里实际存放的核心内容，可以理解成“带治理属性的可检索事实片段”，主要包括：
+
+- 记忆分类
+  - `memoryType`
+  - 当前内部类型有：`SYMPTOM / ALLERGY / MEDICATION / DIET / PREFERENCE / OTHER`
+  - 用来把症状、过敏、用药、饮食、偏好等长期事实分开治理和检索
+- 记忆标识与关键词
+  - `id / memoryKey`
+  - 用来做去重、追踪、关键词召回和主题归并
+- 记忆正文
+  - `memoryContent`
+  - 这是最终被检索出来、提供给 prompt 或 Agent 快照消费的长期事实本体
+- 来源上下文
+  - `sourceMessage / source`
+  - 用来说明这条记忆来自哪句原始表达、哪类来源
+- 可信度与治理状态
+  - `confidenceScore / verified / lifecycleStatus / conflictStatus`
+  - 用来区分高可信记忆、低可信记忆和待治理记忆
+- 时间与生命周期
+  - `extractedAt / expiresAt / archivedAt / retentionPolicy / decayScore`
+  - 用来控制记忆是否应该保留、衰减、归档或过期
+- 摘要与证据关系
+  - `memoryRepresentation / summaryGroupKey / summaryOfMemoryId / evidenceCount / sourceCount`
+  - 用来支持“多条证据 -> 一条摘要记忆”的聚合关系
+
+不过 `ai-chat-service` 自己不会直接消费底层全量实体，而是拿一个轻量版 `MemoryItemDTO`：
+
+- `id`
+- `content`
+- `similarity`
+- `confidenceScore`
+- `verified`
+- `source`
+
+这样做的原因是，上游主链路更关心“记忆内容、相似度、可信度、来源”，而不是底层所有生命周期治理细节。
+
+补充说明：第一次对话时，长期记忆里的 `confidenceScore` 和 `similarity` 并不是一回事。
+
+- 对本轮回答之前来说，当前这次对话还没有走完异步 `extractMemory(...)`
+- 所以本轮刚产生的内容，不会在同一轮立刻作为长期记忆被自己检索到
+- 如果该用户/群组此前没有历史长期记忆，那么第 1 轮长期记忆通常就是空
+- 如果该用户/群组以前已经沉淀过历史长期记忆，那么：
+  - `confidenceScore`
+    - 是这条记忆当初从对话里被抽取出来时，抽取模型给出的业务可信度
+    - 当前低于 `0.70` 的抽取结果不会进入长期记忆主链路
+    - chat 侧返回时会把 `confidenceScore >= 0.8` 视作 `verified = true`
+  - `similarity`
+    - 是本次检索时，当前 query 和这条历史记忆之间的相关度
+    - 向量召回看 Milvus 距离换算
+    - Redis 最近记忆看启发式 `redis-base + confidence bonus`
+    - MySQL 关键词记忆看 `keyword-base + 命中 bonus + confidence bonus`
+    - 如果启用 rerank，还可能被新的语义分数覆盖
+
+所以第一次对话里如果能召回长期记忆，本质上召回的是“以前存下来的记忆”，不是“本轮刚说完就写回来的记忆”。
 
 当前意图过滤策略已覆盖：
 

@@ -28,6 +28,7 @@ import com.lx.governance.aichat.dto.UserProfileDTO;
 import com.lx.governance.aichat.exception.AiServiceException;
 import com.lx.governance.aichat.monitor.TokenMonitor;
 import com.lx.governance.aichat.monitor.TokenUsageMetrics;
+import com.lx.governance.aichat.stream.MarkdownStreamNormalizer;
 import com.lx.governance.agentplatform.model.PlatformCostScope;
 import com.lx.governance.agentplatform.runtime.PlatformMetricsService;
 
@@ -223,6 +224,7 @@ public class DeepSeekClient {
 
                 // 发送开始事件
                 String conversationId = request.getConversationId();
+                MarkdownStreamNormalizer markdownNormalizer = new MarkdownStreamNormalizer();
 
                 // Call StreamingChatModel
                 return Flux.concat(
@@ -230,8 +232,21 @@ public class DeepSeekClient {
                         streamingChatModel.stream(prompt)
                                 .map(response -> {
                                     String content = response.getResult().getOutput().getContent();
-                                    return StreamEvent.content(content);
+                                    return content == null ? "" : content;
                                 })
+                                .<StreamEvent>handle((content, sink) -> {
+                                    String normalized = markdownNormalizer.onChunk(content);
+                                    if (!normalized.isEmpty()) {
+                                        sink.next(StreamEvent.content(normalized));
+                                    }
+                                })
+                                .concatWith(Flux.defer(() -> {
+                                    String finalized = markdownNormalizer.finish();
+                                    if (finalized.isEmpty()) {
+                                        return Flux.<StreamEvent>empty();
+                                    }
+                                    return Flux.just(StreamEvent.content(finalized));
+                                }))
                                 .doOnComplete(() -> {
                                     long duration = System.currentTimeMillis() - startTime;
                                     log.info("DeepSeek API streaming completed in {}ms", duration);
@@ -286,14 +301,28 @@ public class DeepSeekClient {
                                 .build());
 
                 String conversationId = request.getConversationId();
+                MarkdownStreamNormalizer markdownNormalizer = new MarkdownStreamNormalizer();
 
                 return Flux.concat(
                         Flux.just(StreamEvent.start(conversationId)),
                         streamingChatModel.stream(prompt)
                                 .map(response -> {
                                     String content = response.getResult().getOutput().getContent();
-                                    return StreamEvent.content(content);
+                                    return content == null ? "" : content;
                                 })
+                                .<StreamEvent>handle((content, sink) -> {
+                                    String normalized = markdownNormalizer.onChunk(content);
+                                    if (!normalized.isEmpty()) {
+                                        sink.next(StreamEvent.content(normalized));
+                                    }
+                                })
+                                .concatWith(Flux.defer(() -> {
+                                    String finalized = markdownNormalizer.finish();
+                                    if (finalized.isEmpty()) {
+                                        return Flux.<StreamEvent>empty();
+                                    }
+                                    return Flux.just(StreamEvent.content(finalized));
+                                }))
                                 .doOnComplete(() -> {
                                     long duration = System.currentTimeMillis() - startTime;
                                     log.info("DeepSeek API streaming completed in {}ms", duration);

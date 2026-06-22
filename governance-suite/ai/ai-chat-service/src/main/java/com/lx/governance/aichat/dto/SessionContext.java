@@ -105,6 +105,22 @@ public class SessionContext {
     private Integer messageCount;
 
     /**
+     * 上下文版本号。
+     * 每次成功写入当前会话上下文时递增，用于排查乱序覆盖问题。
+     */
+    private Long contextVersion;
+
+    /**
+     * 最近一次成功写入上下文的消息时间戳。
+     */
+    private Long lastMessageAt;
+
+    /**
+     * 最近一次成功写入上下文的请求 ID。
+     */
+    private String lastProcessedRequestId;
+
+    /**
      * 最近一次任务路由去向。
      */
     private TaskTriggerRoute lastTaskTriggerRoute;

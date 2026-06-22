@@ -27,14 +27,44 @@ public class BudgetAllocation {
     private int memoryBudget;
 
     /**
+     * 短期记忆预算
+     */
+    private int shortTermMemoryBudget;
+
+    /**
+     * 长期记忆预算
+     */
+    private int longTermMemoryBudget;
+
+    /**
+     * 对话历史预算
+     */
+    private int conversationHistoryBudget;
+
+    /**
      * 扩展画像预算
      */
     private int extendedProfileBudget;
 
     /**
+     * 画像总预算
+     */
+    private int profileBudget;
+
+    /**
      * 用户消息预留
      */
     private int userMessageReserve;
+
+    /**
+     * 系统 Prompt 可用预算
+     */
+    private int systemPromptBudget;
+
+    /**
+     * 工具结果预算
+     */
+    private int toolResultBudget;
 
     /**
      * 总预算

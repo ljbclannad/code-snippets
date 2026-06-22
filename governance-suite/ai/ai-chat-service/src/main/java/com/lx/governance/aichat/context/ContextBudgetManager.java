@@ -5,7 +5,6 @@ import java.util.List;
 
 import org.springframework.stereotype.Component;
 
-import com.lx.governance.aichat.config.ContextBudgetProperties;
 import com.lx.governance.aichat.dto.LayeredMemories;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.SessionContext;
@@ -24,8 +23,7 @@ import lombok.extern.slf4j.Slf4j;
 @Component
 public class ContextBudgetManager {
 
-    private final ContextBudgetProperties properties;
-    private final DynamicBudgetStrategy dynamicBudgetStrategy;
+    private final PromptBudgetPolicy promptBudgetPolicy;
     private final List<PromptSectionBuilder> sectionBuilders;
 
     private int lastCoreProfileTokens = 0;
@@ -36,11 +34,9 @@ public class ContextBudgetManager {
     private int lastTotalTokens = 0;
 
     public ContextBudgetManager(
-            ContextBudgetProperties properties,
-            DynamicBudgetStrategy dynamicBudgetStrategy,
+            PromptBudgetPolicy promptBudgetPolicy,
             List<PromptSectionBuilder> sectionBuilders) {
-        this.properties = properties;
-        this.dynamicBudgetStrategy = dynamicBudgetStrategy;
+        this.promptBudgetPolicy = promptBudgetPolicy;
         this.sectionBuilders = sectionBuilders.stream()
                 .sorted(Comparator.comparingInt(PromptSectionBuilder::getOrder))
                 .toList();
@@ -91,8 +87,9 @@ public class ContextBudgetManager {
                 ? input.getSessionContext().getComplexity()
                 : "medium";
 
-        BudgetAllocation budgetAllocation = dynamicBudgetStrategy.calculateBudget(complexity, buildBaseBudget());
-        int remainingBudget = budgetAllocation.getTotalBudget();
+        BudgetAllocation budgetAllocation = promptBudgetPolicy.resolve(complexity);
+        int remainingBudget = budgetAllocation.getSystemPromptBudget();
+        StringBuilder sectionTrace = new StringBuilder();
 
         for (PromptSectionBuilder sectionBuilder : sectionBuilders) {
             if (remainingBudget <= 0) {
@@ -113,27 +110,26 @@ public class ContextBudgetManager {
                     .append(result.getContent()).append("\n");
             remainingBudget -= result.getUsedTokens();
             recordSectionUsage(result);
+            appendSectionTrace(sectionTrace, result);
             log.debug("Prompt section built - type: {}, tokens: {}, remaining: {}",
                     result.getType(), result.getUsedTokens(), remainingBudget);
         }
 
         prompt.append("\n请基于以上信息，提供专业、个性化的健康建议。");
 
-        lastTotalTokens = budgetAllocation.getTotalBudget() - remainingBudget;
+        lastTotalTokens = budgetAllocation.getSystemPromptBudget() - remainingBudget;
         long duration = System.currentTimeMillis() - startTime;
-        log.info("上下文构建完成 - 总 tokens: {}/{}, 剩余预算: {}, 耗时: {}ms",
-                lastTotalTokens, budgetAllocation.getTotalBudget(), remainingBudget, duration);
+        log.info(
+                "上下文构建完成 - usedTokens: {}/{}, totalBudget: {}, userMessageReserve: {}, remainingBudget: {}, sections: [{}], 耗时: {}ms",
+                lastTotalTokens,
+                budgetAllocation.getSystemPromptBudget(),
+                budgetAllocation.getTotalBudget(),
+                budgetAllocation.getUserMessageReserve(),
+                remainingBudget,
+                sectionTrace,
+                duration);
 
         return prompt.toString();
-    }
-
-    private DynamicBudgetStrategy.BaseBudgetConfig buildBaseBudget() {
-        DynamicBudgetStrategy.BaseBudgetConfig baseBudget = new DynamicBudgetStrategy.BaseBudgetConfig();
-        baseBudget.setCoreProfileBudget(properties.getCoreProfileBudget());
-        baseBudget.setRelevantMemoriesBudget(properties.getRelevantMemoriesBudget());
-        baseBudget.setConversationHistoryBudget(properties.getConversationHistoryBudget());
-        baseBudget.setExtendedProfileBudget(properties.getExtendedProfileBudget());
-        return baseBudget;
     }
 
     private void recordSectionUsage(PromptSectionResult result) {
@@ -167,6 +163,19 @@ public class ContextBudgetManager {
         lastConversationTokens = 0;
         lastExtendedProfileTokens = 0;
         lastTotalTokens = 0;
+    }
+
+    private void appendSectionTrace(StringBuilder sectionTrace, PromptSectionResult result) {
+        if (sectionTrace.length() > 0) {
+            sectionTrace.append("; ");
+        }
+        sectionTrace.append(result.getType())
+                .append("{alloc=").append(result.getAllocatedTokens())
+                .append(",raw=").append(result.getOriginalTokens())
+                .append(",used=").append(result.getUsedTokens())
+                .append(",chars=").append(result.getContent() != null ? result.getContent().length() : 0)
+                .append(",compressed=").append(result.isCompressed())
+                .append("}");
     }
 
     public int getLastCoreProfileTokens() {

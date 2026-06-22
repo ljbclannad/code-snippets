@@ -166,9 +166,13 @@ class PromptSectionBuildersTest {
         return PromptSectionContext.builder()
                 .budgetAllocation(BudgetAllocation.builder()
                         .coreProfileBudget(120)
-                        .sessionContextBudget(80)
+                        .sessionContextBudget(32)
+                        .conversationHistoryBudget(48)
                         .memoryBudget(120)
+                        .shortTermMemoryBudget(42)
+                        .longTermMemoryBudget(78)
                         .extendedProfileBudget(80)
+                        .systemPromptBudget(400)
                         .totalBudget(400)
                         .build());
     }

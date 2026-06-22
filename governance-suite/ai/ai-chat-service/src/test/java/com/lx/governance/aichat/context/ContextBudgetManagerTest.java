@@ -45,7 +45,9 @@ class ContextBudgetManagerTest {
                 new ConversationHistorySectionBuilder(support),
                 new ExtendedProfileSectionBuilder(support));
 
-        manager = new ContextBudgetManager(properties, new DynamicBudgetStrategy(), builders);
+        manager = new ContextBudgetManager(
+                new PromptBudgetPolicy(properties, new DynamicBudgetStrategy()),
+                builders);
     }
 
     @Test

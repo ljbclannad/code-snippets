@@ -33,11 +33,16 @@ public class ExtendedProfileSectionBuilder implements PromptSectionBuilder {
             return PromptSectionResult.empty(PromptSectionType.EXTENDED_PROFILE);
         }
 
+        int usedTokens = support.estimateTokens(content);
+
         return PromptSectionResult.builder()
                 .type(PromptSectionType.EXTENDED_PROFILE)
                 .title("## 补充信息")
                 .content(content)
-                .usedTokens(support.estimateTokens(content))
+                .usedTokens(usedTokens)
+                .allocatedTokens(sectionBudget)
+                .originalTokens(usedTokens)
+                .compressed(false)
                 .build();
     }
 }

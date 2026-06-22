@@ -11,6 +11,9 @@ public class PromptSectionResult {
     String title;
     String content;
     int usedTokens;
+    int allocatedTokens;
+    int originalTokens;
+    boolean compressed;
 
     public boolean isEmpty() {
         return content == null || content.isBlank();
@@ -22,6 +25,9 @@ public class PromptSectionResult {
                 .title("")
                 .content("")
                 .usedTokens(0)
+                .allocatedTokens(0)
+                .originalTokens(0)
+                .compressed(false)
                 .build();
     }
 }

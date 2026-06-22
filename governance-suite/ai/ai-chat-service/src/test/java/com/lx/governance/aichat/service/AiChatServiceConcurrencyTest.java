@@ -22,6 +22,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -72,6 +73,8 @@ class AiChatServiceConcurrencyTest {
     @Mock
     private ChatAsyncProcessingService chatAsyncProcessingService;
     @Mock
+    private ChatRequestIdempotencyService chatRequestIdempotencyService;
+    @Mock
     private QuotaService quotaService;
     @Mock
     private DegradationManager degradationManager;
@@ -121,6 +124,7 @@ class AiChatServiceConcurrencyTest {
                 profileCompletionProperties,
                 chatAsyncProcessingService,
                 conversationExecutionGuard,
+                chatRequestIdempotencyService,
                 quotaService,
                 degradationManager,
                 degradationStrategyExecutor,
@@ -142,6 +146,8 @@ class AiChatServiceConcurrencyTest {
                         .shortTermMemories(Collections.emptyList())
                         .longTermMemories(Collections.emptyList())
                         .build()));
+        when(chatRequestIdempotencyService.executeOrReplay(anyString(), any(), any()))
+                .thenAnswer(invocation -> invocation.<Supplier<CompletableFuture<ChatResponse>>>getArgument(2).get());
         when(degradationManager.isFeatureEnabled(anyString())).thenReturn(true);
         when(degradationStrategyExecutor.getMemoryRetrievalCount()).thenReturn(5);
         when(taskTriggerRouter.route(org.mockito.ArgumentMatchers.any(com.lx.governance.aichat.dto.TaskTriggerContext.class))).thenReturn(TaskTriggerDecision.builder()

@@ -40,6 +40,9 @@ public class SessionContextSectionBuilder implements PromptSectionBuilder {
                 .title("## 会话上下文")
                 .content(content)
                 .usedTokens(support.estimateTokens(content))
+                .allocatedTokens(sectionBudget)
+                .originalTokens(estimatedTokens)
+                .compressed(estimatedTokens > sectionBudget)
                 .build();
     }
 }
