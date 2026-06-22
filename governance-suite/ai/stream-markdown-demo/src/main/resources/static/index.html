@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SSE / WebSocket Markdown Demo</title>
+    <link rel="stylesheet" href="/app.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+<div class="page-shell">
+    <section class="intro-card">
+        <p class="eyebrow">Streaming Demo</p>
+        <h1>后端 SSE / WebSocket + 前端 Markdown 渲染</h1>
+        <p class="lead">一个可直接运行的小项目，用同一份页面分别演示 SSE 和 WebSocket 的增量 Markdown 输出。</p>
+        <div class="badge-row">
+            <span class="badge">Spring Boot</span>
+            <span class="badge">SSE</span>
+            <span class="badge">WebSocket</span>
+            <span class="badge">Markdown</span>
+        </div>
+    </section>
+
+    <section class="workspace">
+        <aside class="control-panel">
+            <label class="field">
+                <span>演示内容</span>
+                <textarea id="promptInput" rows="8">请分别展示标题、列表、代码块和表格，说明流式 Markdown 为什么适合 AI 输出。</textarea>
+            </label>
+
+            <label class="field">
+                <span>传输方式</span>
+                <select id="transportSelect">
+                    <option value="sse">SSE</option>
+                    <option value="ws">WebSocket</option>
+                </select>
+            </label>
+
+            <div class="action-row">
+                <button id="startBtn" class="primary-btn" type="button">开始演示</button>
+                <button id="stopBtn" class="ghost-btn" type="button">停止</button>
+            </div>
+
+            <div class="status-card">
+                <div>
+                    <span class="status-label">状态</span>
+                    <strong id="statusText">Idle</strong>
+                </div>
+                <div>
+                    <span class="status-label">传输</span>
+                    <strong id="activeTransportText">-</strong>
+                </div>
+            </div>
+
+            <div class="tips-card">
+                <h2>怎么观察效果</h2>
+                <ul>
+                    <li>左侧切换 `SSE` 或 `WebSocket`。</li>
+                    <li>点击开始后，右侧会边接收边把 Markdown 渲染成 HTML。</li>
+                    <li>下方日志会展示连接、分片和结束事件。</li>
+                </ul>
+            </div>
+        </aside>
+
+        <main class="result-panel">
+            <section class="panel">
+                <div class="panel-head">
+                    <h2>实时渲染结果</h2>
+                    <span id="renderModeText" class="pill">Markdown Live</span>
+                </div>
+                <article id="preview" class="markdown-body"></article>
+            </section>
+
+            <section class="panel">
+                <div class="panel-head">
+                    <h2>事件日志</h2>
+                </div>
+                <div id="eventLog" class="event-log"></div>
+            </section>
+        </main>
+    </section>
+</div>
+<script src="/app.js"></script>
+</body>
+</html>

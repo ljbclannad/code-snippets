@@ -96,6 +96,13 @@
             <version>0.21.0</version>
         </dependency>
 
+        <!-- HTML Crawling / Parsing -->
+        <dependency>
+            <groupId>org.jsoup</groupId>
+            <artifactId>jsoup</artifactId>
+            <version>1.18.1</version>
+        </dependency>
+
         <!-- Text Processing - Apache Commons Text -->
         <dependency>
             <groupId>org.apache.commons</groupId>

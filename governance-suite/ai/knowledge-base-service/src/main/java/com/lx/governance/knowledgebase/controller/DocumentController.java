@@ -1,12 +1,15 @@
 package com.lx.governance.knowledgebase.controller;
 
 import com.lx.governance.common.api.ApiResponse;
+import com.lx.governance.knowledgebase.dto.CrawlImportRequest;
+import com.lx.governance.knowledgebase.dto.CrawlImportResponse;
 import com.lx.governance.knowledgebase.dto.DocumentInfoResponse;
 import com.lx.governance.knowledgebase.dto.UploadDocumentRequest;
 import com.lx.governance.knowledgebase.entity.KnowledgeDocument;
 import com.lx.governance.knowledgebase.entity.KnowledgeDocumentChunk;
 import com.lx.governance.knowledgebase.entity.KnowledgeDocumentParseResult;
 import com.lx.governance.knowledgebase.service.DocumentProcessingService;
+import com.lx.governance.knowledgebase.service.MedicalDocumentCrawlService;
 import com.lx.governance.knowledgebase.service.DocumentChunkService;
 import com.lx.governance.knowledgebase.service.DocumentParseResultService;
 import com.lx.governance.knowledgebase.service.DocumentService;
@@ -32,6 +35,7 @@ public class DocumentController {
     private final DocumentService documentService;
     private final DocumentParseResultService parseResultService;
     private final DocumentChunkService documentChunkService;
+    private final MedicalDocumentCrawlService medicalDocumentCrawlService;
 
     /**
      * 上传文档
@@ -58,6 +62,25 @@ public class DocumentController {
         } catch (Exception e) {
             log.error("文档上传失败", e);
             return ApiResponse.fail("UPLOAD_FAILED", "文档上传失败: " + e.getMessage(), null);
+        }
+    }
+
+    /**
+     * 抓取网页并导入为知识库文档。
+     */
+    @PostMapping("/crawl")
+    public ApiResponse<CrawlImportResponse> crawlAndImport(
+            @PathVariable String kbId,
+            @Validated @RequestBody CrawlImportRequest request) {
+        log.info("抓取导入文档: kbId={}, seedUrl={}, maxPages={}", kbId, request.getSeedUrl(), request.getMaxPages());
+        try {
+            return ApiResponse.ok(medicalDocumentCrawlService.crawlAndImport(kbId, request), null);
+        } catch (IllegalArgumentException e) {
+            log.warn("抓取导入参数错误: {}", e.getMessage());
+            return ApiResponse.fail("INVALID_PARAM", e.getMessage(), null);
+        } catch (Exception e) {
+            log.error("抓取导入失败: kbId={}, seedUrl={}", kbId, request.getSeedUrl(), e);
+            return ApiResponse.fail("CRAWL_IMPORT_FAILED", "抓取导入失败: " + e.getMessage(), null);
         }
     }
 
