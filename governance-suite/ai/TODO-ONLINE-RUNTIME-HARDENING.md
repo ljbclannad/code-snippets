@@ -64,12 +64,12 @@
     - long-term memory budget
     - tool result budget
 - [x] 在 `ContextBudgetManager` 增加按 section 的字符/Token 级裁剪策略
-- [ ] 在 `SessionContextSectionBuilder` 增加字段优先级和截断规则
-- [ ] 在 `LayeredMemoryOrchestrator` 增加长期记忆进入 prompt 前的二次裁剪
+- [x] 在 `SessionContextSectionBuilder` 增加字段优先级和截断规则
+- [x] 在 `LayeredMemoryOrchestrator` 增加长期记忆进入 prompt 前的二次裁剪
   - 先按相似度
   - 再按类型
   - 再按预算截断
-- [ ] 在 `ReActPromptBuilder` 中增加 snapshot summary 压缩模板
+- [x] 在 `ReActPromptBuilder` 中增加 snapshot summary 压缩模板
   - `profileSnapshot`
   - `sessionContext`
   - `triggerDecision`
@@ -115,16 +115,16 @@
   - rerank
   - model generation
   - agent invoke
-- [ ] 在 `ai-chat-service` 增加按路由结果的 RT 与降级率统计
+- [x] 在 `ai-chat-service` 增加按路由结果的 RT 与降级率统计
   - `DIRECT_CHAT`
   - `AGENT_FALLBACK`
   - `PENDING_REVIEW_SHORT_CIRCUIT`
-- [ ] 审查并隔离线程池
+- [x] 审查并隔离线程池
   - `memoryExtractExecutor`
   - deepseek executor
   - agent stream executor
   - tool executor
-- [ ] 补各线程池 reject 指标和告警阈值
+- [x] 补各线程池 reject 指标和告警阈值
 - [ ] 评估 `ConversationExecutionGuard` 在热点会话下的队头阻塞情况
 - [ ] 形成一份链路级容量压测基线
   - 目标 QPS
@@ -157,16 +157,16 @@
 
 ### 3.3 TODO
 
-- [ ] 在 `ai-chat-service` 明确主链路过载策略
+- [x] 在 `ai-chat-service` 明确主链路过载策略
   - 超额时：
     - 直接拒绝
     - 或降级回复
     - 不做无上限排队
-- [ ] 在 `ChatAsyncProcessingService` / MQ 链路补队列堆积监控
-- [ ] 为 `memory.extraction.queue`、聊天历史同步队列建立 backlog 告警
-- [ ] 在 Agent 入口定义有界并发和有界队列策略
+- [x] 在 `ChatAsyncProcessingService` / MQ 链路补队列堆积监控
+- [x] 为 `memory.extraction.queue`、聊天历史同步队列建立 backlog 告警
+- [x] 在 Agent 入口定义有界并发和有界队列策略
   - 请求过多时直接拒绝或回退 direct chat
-- [ ] 将“主链路拒绝 / 异步入队 / 重任务限流”写成统一运行策略文档
+- [x] 将“主链路拒绝 / 异步入队 / 重任务限流”写成统一运行策略文档
 
 ### 3.4 验收标准
 
@@ -312,9 +312,9 @@
 
 - [x] 给 `SessionContext` 增加版本字段或 `lastMessageAt`
 - [x] 在 `SessionContextService.updateContext(...)` 增加版本检查
-- [ ] 在 `recordAgentOutcome(...)` 增加写入保护
+- [x] 在 `recordAgentOutcome(...)` 增加写入保护
 - [x] 在 `recordTaskTriggerDecision(...)` 增加写入保护
-- [ ] 设计乱序场景回放测试
+- [x] 设计乱序场景回放测试
 
 ### 7.4 验收标准
 
@@ -462,7 +462,7 @@
 
 - [ ] 请求幂等与重复发送治理
 - [ ] 流式中断状态收口
-- [ ] 上下文版本保护
+- [x] 上下文版本保护
 - [ ] 主链路过载时的限流 / 拒绝 / 降级策略
 - [ ] Token budget 统一治理
 

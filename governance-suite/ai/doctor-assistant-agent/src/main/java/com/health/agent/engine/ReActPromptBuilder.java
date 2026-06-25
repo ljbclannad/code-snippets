@@ -140,17 +140,13 @@ public class ReActPromptBuilder implements AgentPromptProvider {
         }
 
         appendSection(builder, "Current Patient Message", command.getPatientMessage());
-        appendSection(builder, "Trigger Decision Summary", extractTriggerSummary(command.getTriggerDecision()));
-        appendSection(builder, "Trigger Decision Reasons", extractTriggerReasons(command.getTriggerDecision()));
-        appendSection(builder, "Profile Snapshot Summary", summarizeMap(command.getProfileSnapshot(), 8));
-        appendSection(builder, "Session Context Summary", summarizeMap(command.getSessionContext(), 8));
+        appendSection(builder, "Trigger Decision Summary", summarizeTriggerDecisionSnapshot(command.getTriggerDecision()));
+        appendSection(builder, "Profile Snapshot Summary", summarizeProfileSnapshot(command.getProfileSnapshot()));
+        appendSection(builder, "Session Context Summary", summarizeSessionContextSnapshot(command.getSessionContext()));
 
         MemorySnapshot memorySnapshot = command.getMemorySnapshot();
         if (memorySnapshot != null) {
-            appendSection(builder, "Short-term Memory Snapshot",
-                    summarizeList(memorySnapshot.getShortTermMemories(), 4, 120));
-            appendSection(builder, "Long-term Memory Snapshot",
-                    summarizeList(memorySnapshot.getLongTermMemories(), 4, 120));
+            appendSection(builder, "Memory Snapshot Summary", summarizeMemorySnapshot(memorySnapshot));
         }
         appendSection(builder, "Task-specific Analysis Focus", taskTypeGuidance(command.getTaskType()));
 
@@ -216,8 +212,14 @@ public class ReActPromptBuilder implements AgentPromptProvider {
         StringBuilder builder = new StringBuilder();
         appendSection(builder, "Current Patient Message", summarizeObject(slotValue(context, "patient_message"), 320));
         appendSection(builder, "Upstream Routing Decision", summarizeRoutingDecision(context));
-        appendSection(builder, "Patient Profile Facts", summarizeObject(preferredSlotValue(context,
-                "patient_profile", "profile_snapshot"), 420));
+        Object profileSnapshot = preferredSlotValue(context, "patient_profile", "profile_snapshot");
+        if (profileSnapshot instanceof Map<?, ?> profileMap) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> casted = (Map<String, Object>) profileMap;
+            appendSection(builder, "Patient Profile Facts", summarizeProfileSnapshot(casted));
+        } else {
+            appendSection(builder, "Patient Profile Facts", summarizeObject(profileSnapshot, 420));
+        }
         appendSection(builder, "Short-term Memory", summarizeMemorySection(slotValue(context, "chat_history"), 4, 140));
         appendSection(builder, "Long-term Memory", summarizeLongTermMemory(context));
         appendSection(builder, "Current Known Risk", summarizeKnownRisk(context));
@@ -301,6 +303,54 @@ public class ReActPromptBuilder implements AgentPromptProvider {
             return collection.stream().limit(5).map(String::valueOf).collect(Collectors.joining(" | "));
         }
         return null;
+    }
+
+    private String summarizeTriggerDecisionSnapshot(Map<String, Object> triggerDecision) {
+        if (triggerDecision == null || triggerDecision.isEmpty()) {
+            return null;
+        }
+        List<String> lines = new ArrayList<>();
+        appendSnapshotLine(lines, "summary", extractTriggerSummary(triggerDecision), 120);
+        appendSnapshotLine(lines, "reasons", extractTriggerReasons(triggerDecision), 180);
+        appendSnapshotLine(lines, "route", triggerDecision.get("route"), 60);
+        appendSnapshotLine(lines, "taskType", triggerDecision.get("taskType"), 60);
+        return lines.isEmpty() ? null : String.join("\n", lines);
+    }
+
+    private String summarizeProfileSnapshot(Map<String, Object> profileSnapshot) {
+        if (profileSnapshot == null || profileSnapshot.isEmpty()) {
+            return null;
+        }
+        List<String> lines = new ArrayList<>();
+        appendSnapshotLine(lines, "basicInfo", profileSnapshot.get("basicInfo"), 120);
+        appendSnapshotLine(lines, "healthProfile", profileSnapshot.get("healthProfile"), 160);
+        appendSnapshotLine(lines, "behaviorPreferences", profileSnapshot.get("behaviorPreferences"), 160);
+        appendSnapshotLine(lines, "medicalHistory", profileSnapshot.get("medicalHistory"), 120);
+        return lines.isEmpty() ? summarizeMap(profileSnapshot, 6) : String.join("\n", lines);
+    }
+
+    private String summarizeSessionContextSnapshot(Map<String, Object> sessionContext) {
+        if (sessionContext == null || sessionContext.isEmpty()) {
+            return null;
+        }
+        List<String> lines = new ArrayList<>();
+        appendSnapshotLine(lines, "topic", sessionContext.get("currentTopic"), 80);
+        appendSnapshotLine(lines, "intent", sessionContext.get("userIntent"), 80);
+        appendSnapshotLine(lines, "phase", sessionContext.get("conversationPhase"), 60);
+        appendSnapshotLine(lines, "pendingQuestions", sessionContext.get("pendingQuestions"), 120);
+        appendSnapshotLine(lines, "mentionedEntities", sessionContext.get("mentionedEntities"), 120);
+        appendSnapshotLine(lines, "recentSummaries", sessionContext.get("recentSummaries"), 160);
+        return lines.isEmpty() ? summarizeMap(sessionContext, 6) : String.join("\n", lines);
+    }
+
+    private String summarizeMemorySnapshot(MemorySnapshot memorySnapshot) {
+        if (memorySnapshot == null) {
+            return null;
+        }
+        List<String> lines = new ArrayList<>();
+        appendSnapshotLine(lines, "shortTerm", summarizeList(memorySnapshot.getShortTermMemories(), 3, 80), 220);
+        appendSnapshotLine(lines, "longTerm", summarizeList(memorySnapshot.getLongTermMemories(), 3, 80), 220);
+        return lines.isEmpty() ? null : String.join("\n", lines);
     }
 
     private String summarizeMap(Map<String, Object> source, int maxEntries) {
@@ -491,5 +541,18 @@ public class ReActPromptBuilder implements AgentPromptProvider {
             return summarizeList(list, 4, Math.max(32, maxChars / 3));
         }
         return abbreviate(String.valueOf(value), maxChars);
+    }
+
+    private void appendSnapshotLine(List<String> lines, String label, Object value, int maxChars) {
+        if (value == null) {
+            return;
+        }
+        String summary = value instanceof String text
+                ? abbreviate(text, maxChars)
+                : summarizeObject(value, maxChars);
+        if (summary == null || summary.isBlank()) {
+            return;
+        }
+        lines.add(label + ": " + summary);
     }
 }

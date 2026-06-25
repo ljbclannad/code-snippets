@@ -236,7 +236,241 @@ classDiagram
     DoctorAssistantTaskResponse --> DoctorAssistantPendingTaskPayload : pendingTask
 ```
 
-补充说明：
+
+
+## 当前系统里的 AI 调用小目录
+
+这一节只回答一个问题：当前系统里，哪些步骤真的调用了 AI 模型，它们各自负责什么，以及核心参数应该怎么配。
+
+小目录：
+
+- `ai-chat-service`
+  - 意图分析
+  - 检索 query rewrite
+  - 普通对话 / 流式回答
+- `vector-memory-service`
+  - embedding
+  - rerank
+  - 长期记忆提取
+- `doctor-assistant-agent`
+  - ReAct 推理
+  - 流式执行与最终收口
+- `knowledge-base-service`
+  - 查询改写
+  - 检索重排
+  - 元数据抽取 / 语义去重判定
+- 非 AI 步骤说明
+
+### 1. `ai-chat-service` 里哪些步骤用了 AI
+
+1. 意图分析：`DeepSeekIntentAnalyzer`
+   - 作用：
+     - 把当前用户消息和最近若干轮摘要转成 `SessionContext`
+     - 产出 `currentTopic / userIntent / pendingQuestions / complexity`
+     - 给后续的画像补全、记忆检索、Agent 升级判定提供入口标签
+   - 现在的实现方式：
+     - 通过 `DeepSeekIntentAnalyzer -> DeepSeekClient.chat(...)` 间接走主聊天模型
+     - 当前实际复用了主聊天的 `temperature=0.7`
+   - 更合理的参数建议：
+     - `temperature: 0.0 ~ 0.2`
+     - `maxTokens: 300 ~ 600`
+   - 为什么这么配：
+     - 这是分类和结构化抽取任务，目标是稳定、可重复，不是创造性表达
+     - 温度太高会让 `userIntent / complexity / pendingQuestions` 抖动，直接影响后续路由
+
+2. 记忆检索改写：`RetrievalRewriteClient`
+   - 作用：
+     - 把用户口语问题改写成适合长期记忆召回的短 query
+     - 同时产出 `keywords / filterExpression / suggestedMemoryTypes / minConfidence / recentDays`
+     - 本质上是在“检索前”把 query 结构化
+   - 当前实现参数：
+     - `temperature: 0.0`
+     - `maxTokens: 64`
+     - `maxQueryLength: 80`
+   - 这套参数是合理的：
+     - rewrite 任务最怕发散和话多
+     - `0.0` 可以尽量稳定，`64` 足够覆盖短 query 和轻量 JSON 输出
+
+3. 普通对话生成：`DeepSeekClient.chat(...) / chatStream(...)`
+   - 作用：
+     - 结合 `system prompt + 当前问题 + 画像 + sessionContext + layeredMemories`
+     - 生成患者可见回复
+     - 是主链路里最核心的一次模型调用
+   - 当前实现参数：
+     - `model: deepseek-v4-pro`
+     - `temperature: 0.7`
+     - `maxTokens: 2000`
+   - 参数建议：
+     - `temperature: 0.5 ~ 0.7`
+     - `maxTokens: 1200 ~ 2000`
+   - 为什么这么配：
+     - 患者对话需要自然度和可读性，不能像分类器那样压到 `0.0`
+     - 但医疗场景也不能太发散，所以一般不建议再往 `0.8+` 走
+     - `maxTokens` 太大容易拉长 RT 和成本，太小又容易截断解释型回答
+
+### 2. `vector-memory-service` 里哪些步骤用了 AI
+
+1. 向量化：`EmbeddingService`
+   - 作用：
+     - 给 query、memory content 生成 embedding
+     - 支撑 Milvus 向量检索、语义去重、embedding-based rerank
+   - 当前实现参数：
+     - `model: text-embedding-v3`
+     - `dimension: 1024`
+   - 配置建议：
+     - embedding 模型一旦选定，维度必须和 Milvus collection 严格一致
+     - 不存在 `temperature` 这类采样参数，核心是模型版本、维度、批量大小、超时和重试
+   - 为什么这么配：
+     - 这一层追求的是语义空间稳定，不是文本生成
+
+2. 记忆重排：`MemoryRerankService`
+   - 作用：
+     - 对三路召回合并后的候选记忆做二次排序
+     - 让“和当前问题最相关”的记忆排到前面
+   - 当前实现有两类 provider：
+     - `embedding`
+       - 用 query embedding 和 memory embedding 算余弦相似度
+     - `bge-http`
+       - 调外部 `bge-reranker-v2-m3`
+   - 配置建议：
+     - 默认 `strategy: partial`
+     - 默认 provider 优先 `embedding` 或 `bge-http + fallback-to-embedding=true`
+   - 为什么这么配：
+     - `partial` 先只修正 Redis 最近记忆，性价比通常最高
+     - 全量 rerank 相关性更强，但 RT 和成本也更高
+     - rerank 不是生成任务，所以也没有 `temperature`
+
+3. 长期记忆提取：`MemoryExtractionService -> DeepSeekService.extractMemories(...)`
+   - 作用：
+     - 在对话完成后异步抽取长期可沉淀的稳定信息
+     - 输出 `preference / health / goal / fact / context`
+   - 当前实现参数：
+     - `temperature: 0.1`
+     - `topP: 0.8`
+     - `n: 1`
+     - `presencePenalty: 0.0`
+     - `frequencyPenalty: 0.0`
+     - `maxTokens: 600`
+   - 这套参数基本就是推荐值：
+     - 记忆提取是结构化抽取任务，应该极度保守
+     - 低温度、单候选、有限输出长度，能显著减少模型脑补和重复波动
+
+### 3. `doctor-assistant-agent` 里哪些步骤用了 AI
+
+1. ReAct 推理：`doctor-assistant-agent` 的 `DeepSeekClient`
+   - 作用：
+     - 接收 `sessionContext / profileSnapshot / memorySnapshot / triggerDecision / tool schema`
+     - 让 Agent 逐步决定下一步是：
+       - 继续思考
+       - 调哪个工具
+       - 是否需要人工复核
+       - 最终如何生成患者可见回答
+   - 当前实现参数：
+     - `model: deepseek-chat`
+     - `temperature: 0.7`
+     - `maxTokens: 2000`
+     - `request-timeout: 5s`
+     - `max-retries: 2`
+   - 当前配置能跑，但从工程角度看偏“单档位”
+   - 更推荐的拆法是：
+     - 规划 / 工具选择阶段：`temperature: 0.1 ~ 0.3`
+     - 最终患者回复阶段：`temperature: 0.4 ~ 0.6`
+   - 为什么这么配：
+     - ReAct 的 thought / action decision 更像协议决策，应该稳定
+     - 患者可见收口回复可以稍微自然一点，但也不宜太高
+   - 如果暂时只能保留一个统一温度：
+     - 建议优先降到 `0.4 ~ 0.5`
+     - 比统一 `0.7` 更适合工具编排和医疗风险场景
+
+2. 流式执行与收口：`chatStream(...)`
+   - 作用：
+     - 在 Agent 流式执行中把模型增量结果持续推给上游
+     - 最后收口为 `patientSafeReply / structuredResult / pendingTask`
+   - 参数建议：
+     - 和普通 Agent chat 保持同一模型版本
+     - 不要因为是 stream 就单独把温度调高
+   - 为什么这么配：
+     - stream 只是输出形态变化，不是任务目标变化
+
+### 4. `knowledge-base-service` 里哪些步骤用了 AI
+
+这一部分不是 `AI Chat x Doctor Assistant Agent` 主链路的必经路径，但在当前系统里也已经接了模型能力，适合单独标出来。
+
+1. 查询改写：`DeepSeekKnowledgeService.rewriteQuery(...)`
+   - 作用：
+     - 把知识库检索 query 改写成更容易召回的表达
+
+2. 检索重排：`DeepSeekKnowledgeService.rerank(...)`
+   - 作用：
+     - 对候选知识片段做语义重排
+
+3. 元数据抽取：`DeepSeekKnowledgeService.extractMetadata(...)`
+   - 作用：
+     - 从文档内容抽结构化 metadata、summary、keywords、suggestedTags
+
+4. 语义去重判定：`DeepSeekKnowledgeService.detectDuplicate(...)`
+   - 作用：
+     - 判定两个知识文档是否高度重复
+
+5. 当前实现参数
+   - `model: deepseek-chat`
+   - `temperature: 0.2`
+   - `max_tokens: 2000`
+
+6. 参数建议
+   - metadata / duplicate / rewrite / rerank 这几类都更偏结构化和排序任务
+   - `temperature` 保持在 `0.1 ~ 0.3` 比较稳
+   - `max_tokens` 根据任务拆开：
+     - rewrite: `128 ~ 256`
+     - rerank: `800 ~ 2000`
+     - metadata extraction: `600 ~ 1200`
+     - duplicate judge: `300 ~ 600`
+
+### 5. 哪些关键步骤当前并没有调用 AI
+
+这一点也值得明确，不然很容易把整条链路都误以为“全是模型在做”。
+
+- `user-profile-service`
+  - 当前主要是画像查询、候选字段治理、审核，不是在线 LLM 调用
+- `SessionContextService`
+  - Redis 上下文读写本身不是模型调用
+- `TaskTriggerRouter`
+  - 主要基于上游已经产出的 `userIntent / complexity / triggerDecision` 做路由
+- `PatientTaskSafetyService / MedicalSafetyService`
+  - 当前以规则、关键词、安全约束为主，不是在线生成式模型
+
+### 6. AI 核心参数配置建议总表
+
+| 步骤                       | 当前实现                                              | 建议配置                                     | 原因                           |
+| -------------------------- | ----------------------------------------------------- | -------------------------------------------- | ------------------------------ |
+| 意图分析                   | 复用主 chat，等效 `temperature=0.7`                   | `temperature=0.0~0.2`, `maxTokens=300~600`   | 分类和结构化抽取优先稳定       |
+| 检索 rewrite               | `temperature=0.0`, `maxTokens=64`                     | 保持现状                                     | 短 query 改写不需要创造性      |
+| 普通对话                   | `temperature=0.7`, `maxTokens=2000`                   | `temperature=0.5~0.7`, `maxTokens=1200~2000` | 兼顾自然度、稳定性、成本       |
+| Agent ReAct                | `temperature=0.7`, `maxTokens=2000`                   | 规划 `0.1~0.3`，收口 `0.4~0.6`               | 工具选择要稳，患者回复可稍自然 |
+| 记忆提取                   | `temperature=0.1`, `topP=0.8`, `n=1`, `maxTokens=600` | 保持现状                                     | 结构化抽取要保守、可重复       |
+| Embedding                  | `text-embedding-v3`, `1024 dim`                       | 保持模型和维度一致                           | 关键是向量空间稳定，不涉及采样 |
+| Rerank                     | `embedding` 或 `bge-reranker-v2-m3`                   | 默认 `partial`，失败回退 embedding           | 在效果和 RT 之间找平衡         |
+| KB metadata/rewrite/rerank | `temperature=0.2`, `max_tokens=2000`                  | `temperature=0.1~0.3`，按任务拆 `max_tokens` | 结构化任务需要稳，不宜过热     |
+
+### 7. 如果要继续工程化，我会优先补的点
+
+- 把 `ai-chat-service` 的意图分析从主聊天参数里拆出来
+  - 它不该继续复用 `temperature=0.7`
+- 把 `doctor-assistant-agent` 的单一 `temperature` 拆成：
+  - planner temperature
+  - final response temperature
+- 给所有模型调用补统一的：
+  - `promptVersion`
+  - `modelVersion`
+  - `temperature`
+  - `maxTokens`
+  - `timeout`
+  - `cost scope`
+- 让线上 bad case 能回答这几个问题：
+  - 这次是哪个步骤调用了模型
+  - 当时用的什么参数
+  - 为什么输出会偏
+  - 是否应该通过调温度、裁剪上下文或改 prompt 来修
 
 - `SessionContext`
   - 是聊天主链路里最核心的运行态对象
@@ -1913,7 +2147,7 @@ sequenceDiagram
 - 长期记忆和短期上下文互相污染
 - Agent 首轮就把大量 token 花在重复背景上
 
-我通常会把压缩分成四层来做：
+我通常会把压缩拆成四层，而且“固定预算”本身不是拍脑袋定出来的，而是先给一个保守默认值，再用线上样本回调：
 
 - 第一层：源头不放大
   - `SessionContext` 只保留滑动窗口摘要，不保留全量聊天历史
@@ -1921,44 +2155,88 @@ sequenceDiagram
   - `ReActPromptBuilder` 对 snapshot 做 summary，而不是把整份对象原样塞进 prompt
 - 第二层：分区预算
   - 系统提示、当前问题、画像、短期上下文、长期记忆、工具结果分别给固定预算
-  - 这样可以保证最重要的“当前问题 + 当前状态 + 高价值证据”永远在前面
+  - 固定预算的目的不是追求绝对精确，而是防止某一类上下文无限膨胀，把真正重要的信息顶掉
 - 第三层：分层裁剪
   - 长期记忆先按相似度排序
   - 再按类型过滤
-  - 再按字符预算裁剪
+  - 再按预算裁剪
   - 如果仍然超预算，优先丢掉低置信度、低相似度、低时效性的记忆
 - 第四层：结构化压缩
   - `profileSnapshot / sessionContext / triggerDecision` 不用原始 JSON，而是转成稳定的 key-value summary
   - 工具结果也不直接拼全量输出，而是提取结论字段、风险字段、证据字段
 
-在当前项目里，最适合落代码的位置是：
+固定预算怎么设，核心不是问“这个数字对不对”，而是问“它有没有保护住高价值信息，同时没有浪费太多空间”。一个比较稳妥的做法是：
 
-- `ContextBudgetManager`
-  - 统一管理各 section 预算
-- `SessionContextSectionBuilder`
-  - 控制会话上下文字段输出顺序和截断规则
-- `LayeredMemoryOrchestrator`
-  - 控制长期记忆进入 prompt 前的裁剪
-- `ReActPromptBuilder`
-  - 控制 Agent 首轮 prompt 对 snapshot 的摘要方式
+- 先定总预算
+  - 例如当前 `ai-chat-service` 里默认 `totalBudget=4000`，`userMessageReserve=500`
+  - 那系统侧可支配预算就是 `3500`
+- 再按职责切 section
+  - system prompt: `600`
+  - current user message reserve: `500`
+  - core profile: `600`
+  - session context: `250`
+  - conversation history: `350`
+  - short-term memory: `400`
+  - long-term memory: `900`
+  - tool result: `250`
+  - buffer / 结构开销: `150`
+- 然后跑真实样本看三件事
+  - 哪些 section 经常打满预算
+  - 哪些 section 长期只用到一半
+  - 被裁掉以后，回答质量是不是明显下降
 
-真正上线时，我不会只说“做压缩”，而是会给出明确策略：
+举个例子，如果用户当前问的是“我上周说过晚上血糖高，这周运动后还是 11 左右，要不要调整饮食”，那这一轮最有价值的信息通常是：
 
-- 主链路优先保：
-  - 当前用户问题
-  - 当前意图
-  - 当前待补字段
-  - topN 高价值长期记忆
-- 次优先级再保：
-  - 扩展画像
-  - 低优先级工具结果
-  - 更旧的历史摘要
+- 当前问题本身
+- 最近 2 到 4 轮短期上下文
+- 最近一次血糖异常相关长期记忆
+- 当前待确认字段，比如是否空腹、是否餐后、有没有药物变化
 
-评估是否压得合理，至少看三类指标：
+这时预算就不应该平均分，而应该偏向短期上下文和相关长期记忆。相反，如果只是“什么是低 GI 食物”，那画像、长期记忆、工具结果都应该缩得更小，甚至直接不带。
 
-- prompt tokens 的 `P50 / P95`
-- 长回答场景下的 RT 和成本变化
-- 裁剪前后回答质量是否下降，尤其是多轮连续追问场景
+所以“固定预算”更准确地说应该是“分区上限 + 动态放缩”：
+
+- `simple` 问题
+  - 缩小历史、长期记忆、扩展画像预算
+- `medium` 问题
+  - 使用默认 section 配比
+- `complex` 问题
+  - 放大短期上下文和长期记忆预算，但仍保留硬上限
+
+一次对话的上下文该带多少，不建议按“固定轮数”硬切，而建议按“固定预算 + 信息密度”控制：
+
+- 短期上下文
+  - 优先保最近 2 到 5 轮中和当前问题强相关的摘要
+  - 不是保最近 20 条原始消息
+- 长期记忆
+  - 只保 `topK`，常见是 `3` 到 `8` 条
+  - 每条记忆进入 prompt 前都要再做 summary
+- 工具结果
+  - 只保结论、风险、证据三段
+  - 原始 payload 留在审计和结构化 slots，不直接进模型主 prompt
+
+什么时候要做上下文压缩，线上一般有四个明确信号：
+
+- 组装后的 prompt 已经超过总预算的 `70%` 到 `80%`
+  - 这时应该开始温和压缩低优先级 section
+- 某个 section 连续多轮都打满预算
+  - 说明这块不是偶发膨胀，而是 section 配置失衡
+- 会话轮数增长，但最近几轮的信息复用率很低
+  - 说明原始历史在堆积噪声，应该沉淀成摘要
+- Agent 首轮已经携带了 `sessionContext + profileSnapshot + memorySnapshot`
+  - 如果后续再拼完整工具结果和大段历史，很容易重复，应该立即压缩
+
+
+评估是否压得合理，至少看四类指标：
+
+- prompt tokens 的 `P50 / P95 / P99`
+- 各 section 的预算命中率、裁剪率、空跑率
+- 长回答和多轮追问场景下的 RT、成本变化
+- 裁剪前后回答质量是否下降，尤其是连续追问、历史依赖、工具回灌场景
+
+如果要把这段话收成一句面试或设计评审里的结论，我会这样讲：
+
+- token 压缩不是简单截短文本，而是先做分层存储，再做分区预算，再按优先级裁剪，最后用线上指标反推预算是否合理；预算从来不是一次设对，而是通过真实样本持续校准。
 
 ### 2. 性能怎么优化到想要的 QPS
 
@@ -2006,19 +2284,6 @@ sequenceDiagram
   - rerank 只在必要时开启
   - 减少不必要工具调用
 
-在当前项目里，主要代码落点是：
-
-- `AiChatService` / `AiChatStreamService`
-  - 主链路分流和降级
-- `QuotaService`
-  - 入口配额限制
-- `ConversationExecutionGuard`
-  - 单会话串行保护
-- `ChatAsyncProcessingService`
-  - 把长尾后处理移出主链路
-- `AgentAsyncConfig` / `ActionExecutor`
-  - Agent 线程池和工具线程池隔离
-
 面试里如果被追问“怎么知道已经优化到目标 QPS”，我会明确说不是看平均 RT，而是看：
 
 - 主链路 `P95 / P99`
@@ -2058,15 +2323,6 @@ sequenceDiagram
 - 队列越长，排队时间越不可控
 - 用户重试会进一步放大流量
 - 队列里的请求很可能已经失去时效性
-
-在当前项目里可以这样落：
-
-- `AiChatController / AiChatService`
-  - 主链路超额时直接返回降级回复或限流错误
-- `ChatAsyncProcessingService`
-  - 历史同步和记忆提取继续异步 MQ 化
-- `ActionExecutor`
-  - 工具执行线程池使用有界队列，满了直接 reject
 
 上线后至少要监控：
 
@@ -2115,15 +2371,6 @@ sequenceDiagram
   - 必须显式防重复
   - 不能因为上游重试就重复发提醒、重复建任务、重复发报告
 
-如果要把这个问题真正写进代码，最直接的落点是：
-
-- `AiChatService`
-  - 在进入主链路前加 `requestId` 幂等检查
-- Redis
-  - 存 `conversationId:requestId -> response snapshot`
-- `DoctorAssistantTaskRequest`
-  - 继续透传 `idempotencyKey`
-
 评估是否生效，不是看“有没有重试”，而是看：
 
 - 幂等命中率
@@ -2167,15 +2414,6 @@ sequenceDiagram
   - 不和正式聊天历史混存
 - 前端重连补偿接口
   - 通过 `conversationId` 拉最近一次 completed turn
-
-当前项目里最适合落代码的位置是：
-
-- `AiChatStreamService`
-  - 区分 completed / interrupted / failed
-- `StreamResponseAccumulator`
-  - 增加 partial / final 状态
-- `ChatAsyncProcessingService`
-  - 只对 `COMPLETED` 响应进入正式异步后处理
 
 上线后要重点看：
 
@@ -2250,15 +2488,6 @@ sequenceDiagram
 - 资源隔离
   - chat、tool、stream、memory extraction 不共用线程池
 
-当前项目里已经有一些落点基础：
-
-- `QuotaService`
-  - 可以扩展租户/群组维度策略
-- `ConversationExecutionGuard`
-  - 保护单会话串行
-- `AgentAccessGuard`
-  - 控制 Agent 入口请求和 SSE 连接上限
-
 上线后要监控：
 
 - 热点租户流量占比
@@ -2287,13 +2516,6 @@ sequenceDiagram
 
 - 因为最后写的未必是最新消息
 - 旧消息回放可能把 `currentTopic / userIntent / pendingQuestions` 冲掉
-
-在当前项目里，如果要补强，最适合的落点是：
-
-- `SessionContextService`
-  - 给上下文增加 version / lastMessageAt 保护
-- `ChatAsyncProcessingService`
-  - 对异步补偿任务增加幂等键
 
 ### 9. 如果记忆、索引、主历史三份数据不一致怎么办
 
@@ -2357,17 +2579,6 @@ sequenceDiagram
   - 分段 timeout
   - 慢依赖隔离
   - 明确的降级优先级
-
-如果面试官继续追问“这些怎么落代码”，我会明确说：
-
-- 不是所有线上问题都要一次性重写系统
-- 但必须提前给出明确的代码落点、数据结构和开关位
-- 当前项目里最值得优先补的代码点通常是：
-  - 请求幂等键
-  - 流式中断状态
-  - 上下文版本保护
-  - 异步补偿任务
-  - 更完整的 token budget 裁剪器
 
 面试里如果要一句话收口，可以这样讲：
 

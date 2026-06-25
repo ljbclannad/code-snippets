@@ -61,4 +61,22 @@ class AgentMetricsTest {
                 .count()
         );
     }
+
+    @Test
+    void shouldRecordEntryRejectedMetrics() {
+        SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
+        AgentMetrics agentMetrics = new AgentMetrics(meterRegistry);
+
+        agentMetrics.recordEntryRejected("patient_task", "PATIENT_TASK_OVERLOADED", "fallback");
+
+        assertEquals(
+            1,
+            meterRegistry.get("agent.entry.rejected")
+                .tag("entry", "patient_task")
+                .tag("reason", "PATIENT_TASK_OVERLOADED")
+                .tag("disposition", "fallback")
+                .counter()
+                .count()
+        );
+    }
 }

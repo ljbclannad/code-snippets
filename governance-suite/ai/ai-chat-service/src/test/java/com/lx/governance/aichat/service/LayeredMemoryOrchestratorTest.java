@@ -18,6 +18,9 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
+import com.lx.governance.aichat.config.ContextBudgetProperties;
+import com.lx.governance.aichat.context.DynamicBudgetStrategy;
+import com.lx.governance.aichat.context.PromptBudgetPolicy;
 import com.lx.governance.aichat.dto.LayeredMemories;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.MessageSummary;
@@ -42,7 +45,13 @@ class LayeredMemoryOrchestratorTest {
     void setUp() {
         MockitoAnnotations.openMocks(this);
         memorySelfQueryPlanner = new MemorySelfQueryPlanner(new StructuredMemoryQueryValidator());
-        orchestrator = new LayeredMemoryOrchestrator(memoryService, retrievalQueryRewriteService, intentMemoryFilterStrategy, memorySelfQueryPlanner);
+        ContextBudgetProperties properties = new ContextBudgetProperties();
+        orchestrator = new LayeredMemoryOrchestrator(
+                memoryService,
+                retrievalQueryRewriteService,
+                intentMemoryFilterStrategy,
+                memorySelfQueryPlanner,
+                new PromptBudgetPolicy(properties, new DynamicBudgetStrategy()));
         when(intentMemoryFilterStrategy.decide(any())).thenReturn(IntentMemoryFilterStrategy.MemoryFilterDecision.builder()
                 .memoryTypes(java.util.Set.of("DIET"))
                 .minConfidence(0.7)
@@ -191,5 +200,53 @@ class LayeredMemoryOrchestratorTest {
                 org.mockito.ArgumentMatchers.<StructuredMemoryQuery>argThat(query -> "减重管理 饮食建议 那我这种情况晚饭怎么吃".equals(query.getSemanticQuery())
                         && Integer.valueOf(30).equals(query.getFilter().getRecentDays())
                         && Boolean.FALSE.equals(query.getFilter().getVerifiedOnly())));
+    }
+
+    @Test
+    void shouldTrimLongTermMemoriesBySimilarityTypeAndBudget() throws Exception {
+        SessionContext context = SessionContext.builder()
+                .currentTopic("减重管理")
+                .userIntent("饮食建议")
+                .complexity("complex")
+                .build();
+
+        MemoryItemDTO preferredHigh = new MemoryItemDTO();
+        preferredHigh.setContent("饮食记忆".repeat(120));
+        preferredHigh.setSimilarity(0.95);
+        preferredHigh.setConfidenceScore(0.9);
+        preferredHigh.setSource("DIET");
+
+        MemoryItemDTO keywordHigherSimilarity = new MemoryItemDTO();
+        keywordHigherSimilarity.setContent("关键词记忆".repeat(220));
+        keywordHigherSimilarity.setSimilarity(0.99);
+        keywordHigherSimilarity.setConfidenceScore(0.95);
+        keywordHigherSimilarity.setSource("KEYWORD");
+
+        MemoryItemDTO preferredSecond = new MemoryItemDTO();
+        preferredSecond.setContent("饮食补充");
+        preferredSecond.setSimilarity(0.8);
+        preferredSecond.setConfidenceScore(0.8);
+        preferredSecond.setSource("DIET");
+
+        when(retrievalQueryRewriteService.rewrite(anyString(), any(), any()))
+                .thenReturn(RetrievalQuery.builder()
+                        .rewrittenQuery("减重管理 饮食建议 晚饭怎么吃")
+                        .suggestedMemoryTypes(new java.util.LinkedHashSet<>(List.of("DIET")))
+                        .build());
+        when(memoryService.retrieveMemories(eq("group-1"), eq("customer-1"), any(StructuredMemoryQuery.class)))
+                .thenReturn(CompletableFuture.completedFuture(List.of(keywordHigherSimilarity, preferredSecond, preferredHigh)));
+
+        LayeredMemories memories = orchestrator.loadMemories(
+                "group-1",
+                "customer-1",
+                "那我这种情况晚饭和加餐应该怎么一起调整，才能兼顾控糖和减重？",
+                context,
+                new UserProfileDTO(),
+                true,
+                5).get();
+
+        assertEquals(2, memories.getLongTermMemories().size());
+        assertEquals("DIET", memories.getLongTermMemories().get(0).getSource());
+        assertEquals("DIET", memories.getLongTermMemories().get(1).getSource());
     }
 }

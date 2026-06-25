@@ -189,6 +189,16 @@ profile-completion:
   rules-config: classpath:profile-completion-rules.yml
 
 ai-chat:
+  async-backlog-alert:
+    enabled: true
+    check-interval-ms: 30000
+    repeat-alert-interval-ms: 300000
+    queue-thresholds:
+      memory-extraction-ready-threshold: 100
+      chat-history-sync-ready-threshold: 100
+    rpc-thresholds:
+      user-profile-pending-threshold: 50
+      vector-memory-pending-threshold: 50
   agent:
     enabled: false
     base-url: ${DOCTOR_ASSISTANT_AGENT_BASE_URL:http://localhost:8088}

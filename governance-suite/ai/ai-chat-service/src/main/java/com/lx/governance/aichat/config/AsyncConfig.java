@@ -1,11 +1,14 @@
 package com.lx.governance.aichat.config;
 
+import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
+
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableAsync;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
-import java.util.concurrent.Executor;
+import com.lx.governance.aichat.metrics.AiAsyncExecutorMetrics;
 
 /**
  * 异步配置类
@@ -26,16 +29,8 @@ public class AsyncConfig {
      * 它更像是为后续将聊天主处理流程显式切到独立线程池而预留。
      */
     @Bean(name = "chatExecutor")
-    public Executor chatExecutor() {
-        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(10);
-        executor.setMaxPoolSize(20);
-        executor.setQueueCapacity(200);
-        executor.setThreadNamePrefix("chat-");
-        executor.setWaitForTasksToCompleteOnShutdown(true);
-        executor.setAwaitTerminationSeconds(60);
-        executor.initialize();
-        return executor;
+    public Executor chatExecutor(AiAsyncExecutorMetrics asyncExecutorMetrics) {
+        return buildExecutor(asyncExecutorMetrics, "chatExecutor", 10, 20, 200, "chat-");
     }
 
     /**
@@ -44,15 +39,30 @@ public class AsyncConfig {
      * 这类任务不在用户主对话链路上，单独隔离后可以降低对主请求 RT 和可用性的影响。
      */
     @Bean(name = "memoryExtractExecutor")
-    public Executor memoryExtractExecutor() {
+    public Executor memoryExtractExecutor(AiAsyncExecutorMetrics asyncExecutorMetrics) {
+        return buildExecutor(asyncExecutorMetrics, "memoryExtractExecutor", 4, 8, 200, "memory-extract-");
+    }
+
+    private Executor buildExecutor(
+            AiAsyncExecutorMetrics asyncExecutorMetrics,
+            String executorName,
+            int corePoolSize,
+            int maxPoolSize,
+            int queueCapacity,
+            String threadNamePrefix) {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(4);
-        executor.setMaxPoolSize(8);
-        executor.setQueueCapacity(200);
-        executor.setThreadNamePrefix("memory-extract-");
+        executor.setCorePoolSize(corePoolSize);
+        executor.setMaxPoolSize(maxPoolSize);
+        executor.setQueueCapacity(queueCapacity);
+        executor.setThreadNamePrefix(threadNamePrefix);
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(60);
+        executor.setRejectedExecutionHandler((runnable, threadPoolExecutor) -> {
+            asyncExecutorMetrics.recordRejected(executorName);
+            throw new RejectedExecutionException(executorName + " 已饱和");
+        });
         executor.initialize();
+        asyncExecutorMetrics.bind(executorName, executor);
         return executor;
     }
 }

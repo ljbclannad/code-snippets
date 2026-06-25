@@ -325,11 +325,25 @@ public class SessionContextService {
     }
 
     public void recordAgentOutcome(String conversationId, DoctorAssistantTaskResponse response) {
+        recordAgentOutcome(conversationId, response, null, null);
+    }
+
+    public void recordAgentOutcome(
+            String conversationId,
+            DoctorAssistantTaskResponse response,
+            String requestId,
+            Long messageTimestamp) {
         String key = CONTEXT_KEY_PREFIX + conversationId;
+        long eventTimestamp = resolveEventTimestamp(messageTimestamp);
 
         try {
             SessionContext context = getFromRedis(key);
             if (context == null || response == null) {
+                return;
+            }
+            if (isStaleWrite(context, requestId, eventTimestamp)) {
+                log.info("跳过乱序 agent 执行结果记录 - conversationId: {}, requestId: {}, eventTimestamp: {}, lastMessageAt: {}",
+                        conversationId, requestId, eventTimestamp, context.getLastMessageAt());
                 return;
             }
 
@@ -339,6 +353,11 @@ public class SessionContextService {
             context.setLastAgentExecutionPath(response.getExecutionPath());
             context.setLastAgentOutcomeAt(System.currentTimeMillis());
             context.setLastUpdateTime(System.currentTimeMillis());
+            context.setLastMessageAt(eventTimestamp);
+            if (requestId != null && !requestId.isBlank()) {
+                context.setLastProcessedRequestId(requestId);
+            }
+            context.setContextVersion(nextVersion(context.getContextVersion()));
 
             saveToRedis(key, context);
             log.debug("记录 agent 执行结果成功: conversationId={}, status={}, pendingTaskId={}",

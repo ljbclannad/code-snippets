@@ -1,6 +1,8 @@
 package com.lx.governance.aichat.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.lx.governance.aichat.dto.DoctorAssistantTaskResponse;
+import com.lx.governance.aichat.dto.DoctorAssistantTaskStatus;
 import com.lx.governance.aichat.dto.SessionContext;
 import com.lx.governance.aichat.dto.TaskTriggerDecision;
 import com.lx.governance.aichat.dto.TaskTriggerReason;
@@ -163,5 +165,56 @@ class SessionContextServiceTest {
 
         verify(valueOperations, times(1)).get(anyString());
         verify(valueOperations, times(1)).set(anyString(), anyString(), anyLong(), any(TimeUnit.class));
+    }
+
+    @Test
+    void testRecordAgentOutcome_SuccessWithWriteProtectionMetadata() throws Exception {
+        String conversationId = "conv-001";
+        SessionContext existingContext = SessionContext.builder()
+            .conversationId(conversationId)
+            .customerId("user-001")
+            .contextVersion(2L)
+            .lastMessageAt(1_000L)
+            .recentSummaries(new ArrayList<>())
+            .build();
+
+        String json = objectMapper.writeValueAsString(existingContext);
+        when(valueOperations.get(anyString())).thenReturn(json);
+
+        DoctorAssistantTaskResponse response = DoctorAssistantTaskResponse.builder()
+            .status(DoctorAssistantTaskStatus.SUCCESS)
+            .executionPath("agent_success")
+            .build();
+
+        sessionContextService.recordAgentOutcome(conversationId, response, "req-002", 2_000L);
+
+        verify(valueOperations, times(1)).get(anyString());
+        verify(valueOperations, times(1)).set(anyString(), anyString(), anyLong(), any(TimeUnit.class));
+    }
+
+    @Test
+    void testRecordAgentOutcome_ShouldSkipStaleWrite() throws Exception {
+        String conversationId = "conv-001";
+        SessionContext existingContext = SessionContext.builder()
+            .conversationId(conversationId)
+            .customerId("user-001")
+            .contextVersion(3L)
+            .lastMessageAt(5_000L)
+            .lastProcessedRequestId("req-new")
+            .recentSummaries(new ArrayList<>())
+            .build();
+
+        String json = objectMapper.writeValueAsString(existingContext);
+        when(valueOperations.get(anyString())).thenReturn(json);
+
+        DoctorAssistantTaskResponse response = DoctorAssistantTaskResponse.builder()
+            .status(DoctorAssistantTaskStatus.SUCCESS)
+            .executionPath("agent_success")
+            .build();
+
+        sessionContextService.recordAgentOutcome(conversationId, response, "req-old", 4_000L);
+
+        verify(valueOperations, times(1)).get(anyString());
+        verify(valueOperations, never()).set(anyString(), anyString(), anyLong(), any(TimeUnit.class));
     }
 }

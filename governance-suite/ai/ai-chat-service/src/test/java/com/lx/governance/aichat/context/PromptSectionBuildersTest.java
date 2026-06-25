@@ -2,6 +2,7 @@ package com.lx.governance.aichat.context;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -57,17 +58,54 @@ class PromptSectionBuildersTest {
     void sessionContextBuilderShouldFormatSummariesIndependently() {
         SessionContext sessionContext = SessionContext.builder()
                 .currentTopic("减重")
+                .userIntent("饮食建议")
                 .recentSummaries(List.of(MessageSummary.builder().userMessage("用户上周开始跑步").build()))
                 .build();
 
         PromptSectionResult result = new SessionContextSectionBuilder(support).build(contextBuilder()
                 .input(PromptBuildInput.builder().sessionContext(sessionContext).build())
+                .budgetAllocation(BudgetAllocation.builder()
+                        .coreProfileBudget(120)
+                        .sessionContextBudget(120)
+                        .conversationHistoryBudget(48)
+                        .memoryBudget(120)
+                        .shortTermMemoryBudget(42)
+                        .longTermMemoryBudget(78)
+                        .extendedProfileBudget(80)
+                        .systemPromptBudget(400)
+                        .totalBudget(400)
+                        .build())
                 .remainingBudget(200)
                 .build());
 
         assertEquals(PromptSectionType.SESSION_CONTEXT, result.getType());
         assertTrue(result.getContent().contains("当前话题：减重"));
         assertTrue(result.getContent().contains("用户上周开始跑步"));
+    }
+
+    @Test
+    void sessionContextBuilderShouldKeepHighPriorityFieldsWhenBudgetIsTight() {
+        SessionContext sessionContext = SessionContext.builder()
+                .currentTopic("血糖管理")
+                .userIntent("复诊分析")
+                .conversationPhase("consulting")
+                .mentionedEntities(List.of("空腹血糖", "糖化血红蛋白", "胰岛素"))
+                .pendingQuestions(List.of("最近一周早餐后血糖波动大概多少"))
+                .recentSummaries(List.of(
+                        MessageSummary.builder().userMessage("用户描述最近一周早餐后血糖波动明显").build(),
+                        MessageSummary.builder().userMessage("希望结合饮食和运动一起调整").build()))
+                .build();
+
+        PromptSectionResult result = new SessionContextSectionBuilder(support).build(contextBuilder()
+                .input(PromptBuildInput.builder().sessionContext(sessionContext).build())
+                .remainingBudget(32)
+                .build());
+
+        assertEquals(PromptSectionType.SESSION_CONTEXT, result.getType());
+        assertTrue(result.getContent().contains("当前话题：血糖管理"));
+        assertTrue(result.getContent().contains("用户意图：复诊分析"));
+        assertFalse(result.getContent().contains("最近对话："));
+        assertTrue(result.isCompressed());
     }
 
     @Test

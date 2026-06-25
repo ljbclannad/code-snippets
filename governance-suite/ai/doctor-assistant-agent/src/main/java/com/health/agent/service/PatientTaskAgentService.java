@@ -102,6 +102,25 @@ public class PatientTaskAgentService {
         return response;
     }
 
+    public DoctorAssistantTaskResponse buildEntryRejectedResponse(
+        DoctorAssistantTaskRequest request,
+        String fallbackReason,
+        String errorMessage
+    ) {
+        return DoctorAssistantTaskResponse.builder()
+            .taskId(buildTaskId(request))
+            .conversationId(request != null ? request.getConversationId() : null)
+            .correlationId(request != null ? request.getCorrelationId() : null)
+            .taskType(request != null ? request.getTaskType() : null)
+            .status(DoctorAssistantTaskStatus.SKIPPED)
+            .executionPath("ENTRY_GUARD")
+            .agentExecutionStatus("REJECTED")
+            .fallbackReason(fallbackReason)
+            .needsHumanReview(Boolean.FALSE)
+            .errorMessage(errorMessage)
+            .build();
+    }
+
     private DoctorAssistantTaskResponse analyzeInternal(
         DoctorAssistantTaskRequest request,
         Consumer<AgentStreamEvent> eventSink

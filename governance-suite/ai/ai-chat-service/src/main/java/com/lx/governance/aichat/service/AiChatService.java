@@ -5,6 +5,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Value;
@@ -47,6 +48,18 @@ public class AiChatService {
 
     private static final String INTENT_CASUAL_CHAT = "casual_chat";
     private static final String INTENT_FACT_QUERY = "fact_query";
+    private static final String STAGE_SESSION_CONTEXT = "session_context";
+    private static final String STAGE_TASK_TRIGGER_ROUTER = "task_trigger_router";
+    private static final String STAGE_PROFILE_FETCH = "profile_fetch";
+    private static final String STAGE_PROFILE_DIAGNOSIS = "profile_diagnosis";
+    private static final String STAGE_MEMORY_RETRIEVAL = "memory_retrieval";
+    private static final String STAGE_MODEL_GENERATION = "model_generation";
+    private static final String STAGE_AGENT_INVOKE = "agent_invoke";
+    private static final String ROUTE_RESULT_DIRECT_CHAT = "DIRECT_CHAT";
+    private static final String ROUTE_RESULT_AGENT_SUCCESS = "AGENT_SUCCESS";
+    private static final String ROUTE_RESULT_AGENT_FALLBACK = "AGENT_FALLBACK";
+    private static final String ROUTE_RESULT_PENDING_REVIEW_SHORT_CIRCUIT = "PENDING_REVIEW_SHORT_CIRCUIT";
+    private static final String ROUTE_RESULT_OVERLOAD_REJECTED = "OVERLOAD_REJECTED";
 
     private final UserProfileClientFixed userProfileClient;
     private final DeepSeekClient deepSeekClient;
@@ -142,6 +155,7 @@ public class AiChatService {
 
             // SessionContext 是整条链路的第一层上下文来源，
             // 后续路由判定、画像补全和记忆检索都会依赖这里的意图、阶段和摘要信息。
+            long sessionContextStart = System.currentTimeMillis();
             SessionContext sessionContext = metrics
                     .recordContextAnalysis(() -> sessionContextService.getOrCreateContext(
                             sessionId,
@@ -150,6 +164,7 @@ public class AiChatService {
                             request.getMessage(),
                             request.getRequestId(),
                             request.getMessageTimestamp()));
+            metrics.recordStageLatency(STAGE_SESSION_CONTEXT, System.currentTimeMillis() - sessionContextStart);
             if (sessionContext.getUserId() == null || sessionContext.getUserId().isBlank()) {
                 sessionContext.setUserId(request.getUserId() != null && !request.getUserId().isBlank()
                         ? request.getUserId()
@@ -167,6 +182,7 @@ public class AiChatService {
 
             // TaskTriggerRouter 只负责“判定这次是否要升级到医生助手 Agent”，
             // 不直接发起远程调用；它的输出会作为后续 direct chat / agent 分流依据。
+            long taskTriggerStart = System.currentTimeMillis();
             TaskTriggerDecision triggerDecision = taskTriggerRouter.route(TaskTriggerContext.builder()
                     .customerId(request.getCustomerId())
                     .userId(request.getUserId())
@@ -176,6 +192,7 @@ public class AiChatService {
                     .message(request.getMessage())
                     .sessionContext(sessionContext)
                     .build());
+            metrics.recordStageLatency(STAGE_TASK_TRIGGER_ROUTER, System.currentTimeMillis() - taskTriggerStart);
 
             log.info(
                     "TaskTriggerRouter 判定完成 - conversationId: {}, route: {}, taskType: {}, reasons: {}, summary: {}, correlationId: {}",
@@ -230,12 +247,14 @@ public class AiChatService {
                     correlationId);
             profileFuture = CompletableFuture.completedFuture(new UserProfileDTO());
         } else {
+            long profileFetchStart = System.currentTimeMillis();
             profileFuture = userProfileClient
                     .requestUserProfile(request.getCustomerId())
                     .whenComplete((profile, ex) -> {
                         if (ex == null) {
                             metrics.recordProfileFetch(() -> profile);
                         }
+                        metrics.recordStageLatency(STAGE_PROFILE_FETCH, System.currentTimeMillis() - profileFetchStart);
                     });
         }
 
@@ -243,8 +262,11 @@ public class AiChatService {
             // 如果画像诊断发现关键字段缺失，优先走追问补全链路，
             // 当前轮不会继续执行长期记忆检索或 Agent 分流。
             if (!skipProfileLoad) {
+                long profileDiagnosisStart = System.currentTimeMillis();
                 CompletableFuture<ChatResponse> followUpResponse = handleProfileCompletionIfNeeded(
                         request, sessionContext, profile);
+                metrics.recordStageLatency(STAGE_PROFILE_DIAGNOSIS,
+                        System.currentTimeMillis() - profileDiagnosisStart);
                 if (followUpResponse != null) {
                     return followUpResponse;
                 }
@@ -252,8 +274,11 @@ public class AiChatService {
 
             // 分层记忆加载会同时返回 short-term 和 long-term memories。
             // 其中长期记忆会通过 ai-chat-service -> vector-memory-service 的链路进行向量召回。
+            long memoryRetrievalStart = System.currentTimeMillis();
             return loadLayeredMemoriesAsync(request, sessionContext, profile, correlationId)
                     .thenComposeAsync(memories -> {
+                        metrics.recordStageLatency(STAGE_MEMORY_RETRIEVAL,
+                                System.currentTimeMillis() - memoryRetrievalStart);
                         log.info("上下文获取完成 - customerId: {}, 短期记忆数: {}, 长期记忆数: {}, correlationId: {}",
                                 request.getCustomerId(),
                                 memories.getShortTermMemories().size(),
@@ -348,6 +373,10 @@ public class AiChatService {
             agentConversationResult.setMessageId("pending-review-short-circuit");
             chatAsyncProcessingService.handleChatCompleted(request, agentConversationResult, correlationId);
             metrics.recordAgentFallback("pending_review_short_circuit");
+            metrics.recordRouteResult(
+                    ROUTE_RESULT_PENDING_REVIEW_SHORT_CIRCUIT,
+                    false,
+                    System.currentTimeMillis() - startTime);
             return CompletableFuture.completedFuture(ChatResponse.success(patientReply, sessionId));
         }
 
@@ -378,6 +407,7 @@ public class AiChatService {
             DoctorAssistantTaskResponse agentResponse = doctorAssistantAgentGateway
                     .analyzePatientTask(agentTaskRequest);
             long durationMs = System.currentTimeMillis() - agentStart;
+            metrics.recordStageLatency(STAGE_AGENT_INVOKE, durationMs);
             String taskType = triggerDecision.getTaskType() != null ? triggerDecision.getTaskType().name() : "UNKNOWN";
             PlatformRouteDecision responseDecision = agentConversationRouteRuntime.evaluateAgentResponse(agentResponse);
 
@@ -424,8 +454,13 @@ public class AiChatService {
                     agentResponse.getNeedsHumanReview(),
                     agentResponse.getPendingTask() != null,
                     correlationId);
-            sessionContextService.recordAgentOutcome(sessionId, agentResponse);
+            sessionContextService.recordAgentOutcome(
+                    sessionId,
+                    agentResponse,
+                    request.getRequestId(),
+                    request.getMessageTimestamp());
             metrics.recordConversationPathLatency("agent", System.currentTimeMillis() - startTime);
+            metrics.recordRouteResult(ROUTE_RESULT_AGENT_SUCCESS, false, System.currentTimeMillis() - startTime);
             return CompletableFuture.completedFuture(buildAgentChatResponse(
                     request,
                     sessionContext,
@@ -434,7 +469,9 @@ public class AiChatService {
                     agentResponse));
         } catch (Exception e) {
             String taskType = triggerDecision.getTaskType() != null ? triggerDecision.getTaskType().name() : "UNKNOWN";
-            metrics.recordAgentInvocation(taskType, "failure", System.currentTimeMillis() - agentStart);
+            long durationMs = System.currentTimeMillis() - agentStart;
+            metrics.recordStageLatency(STAGE_AGENT_INVOKE, durationMs);
+            metrics.recordAgentInvocation(taskType, "failure", durationMs);
             log.error("Agent 调用失败，准备回退普通对话 - conversationId: {}, taskType: {}, correlationId: {}",
                     sessionId, taskType, correlationId, e);
             return fallbackToDirectChat(
@@ -476,7 +513,9 @@ public class AiChatService {
                 correlationId,
                 startTime,
                 profile,
-                memories));
+                memories,
+                ROUTE_RESULT_AGENT_FALLBACK,
+                true));
     }
 
     private ChatResponse processDirectChat(
@@ -487,10 +526,35 @@ public class AiChatService {
             long startTime,
             UserProfileDTO profile,
             LayeredMemories memories) {
+        return processDirectChat(
+                request,
+                sessionContext,
+                sessionId,
+                correlationId,
+                startTime,
+                profile,
+                memories,
+                ROUTE_RESULT_DIRECT_CHAT,
+                false);
+    }
+
+    private ChatResponse processDirectChat(
+            ChatRequest request,
+            SessionContext sessionContext,
+            String sessionId,
+            String correlationId,
+            long startTime,
+            UserProfileDTO profile,
+            LayeredMemories memories,
+            String routeResult,
+            boolean degraded) {
         // 普通对话模型调用使用的是“画像 + SessionContext + 分层记忆”三层上下文，
         // 其中长期记忆已经由 vector-memory-service 召回完成。
+        long modelGenerationStart = System.currentTimeMillis();
         ChatGenerationResult chatResult = deepSeekClient.chat(request, profile, sessionContext, memories);
+        metrics.recordStageLatency(STAGE_MODEL_GENERATION, System.currentTimeMillis() - modelGenerationStart);
         metrics.recordConversationPathLatency("direct_chat", System.currentTimeMillis() - startTime);
+        metrics.recordRouteResult(routeResult, degraded, System.currentTimeMillis() - startTime);
         return buildChatResponse(
                 request,
                 sessionContext,
@@ -840,6 +904,11 @@ public class AiChatService {
             ConversationException ex = (ConversationException) actual;
             return ChatResponse.error(ex.getErrorCode().getMessage() +
                     (ex.getDetail() != null ? ": " + ex.getDetail() : ""));
+        }
+
+        if (actual instanceof RejectedExecutionException) {
+            metrics.recordRouteResult(ROUTE_RESULT_OVERLOAD_REJECTED, true, duration);
+            return ChatResponse.error("当前服务负载较高，请稍后再试");
         }
 
         if (actual instanceof AiServiceException) {

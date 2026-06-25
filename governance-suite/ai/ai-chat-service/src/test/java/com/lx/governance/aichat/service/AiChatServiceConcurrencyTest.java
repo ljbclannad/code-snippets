@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.times;
@@ -19,8 +20,10 @@ import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
@@ -181,8 +184,9 @@ class AiChatServiceConcurrencyTest {
                 org.mockito.ArgumentMatchers.any(com.lx.governance.aichat.dto.SessionContext.class),
                 org.mockito.ArgumentMatchers.any(com.lx.governance.aichat.dto.TaskTriggerDecision.class)))
                 .thenReturn(new AgentDispatchPolicy.Decision(true, "gray_enabled"));
-        doNothing().when(sessionContextService).recordTaskTriggerDecision(anyString(), any());
-        doNothing().when(sessionContextService).updateContext(anyString(), anyString(), anyString());
+        doNothing().when(sessionContextService).recordTaskTriggerDecision(anyString(), any(), any(), any());
+        doNothing().when(sessionContextService).updateContext(anyString(), anyString(), anyString(), any(), any());
+        doNothing().when(sessionContextService).recordAgentOutcome(anyString(), any(), any(), any());
     }
 
     @AfterEach
@@ -205,7 +209,7 @@ class AiChatServiceConcurrencyTest {
                 .complexity("simple")
                 .build();
 
-        when(sessionContextService.getOrCreateContext(anyString(), anyString(), anyString(), anyString()))
+        when(sessionContextService.getOrCreateContext(anyString(), anyString(), anyString(), anyString(), any(), any()))
                 .thenAnswer(invocation -> {
                     firstEntered.countDown();
                     releaseFirst.await(2, TimeUnit.SECONDS);
@@ -249,7 +253,7 @@ class AiChatServiceConcurrencyTest {
                 .complexity("simple")
                 .build();
 
-        when(sessionContextService.getOrCreateContext(anyString(), anyString(), anyString(), anyString()))
+        when(sessionContextService.getOrCreateContext(anyString(), anyString(), anyString(), anyString(), any(), any()))
                 .thenReturn(context);
         when(deepSeekClient.chat(any(), any(), any(),
                 org.mockito.ArgumentMatchers.<com.lx.governance.aichat.dto.LayeredMemories>any())).thenAnswer(invocation -> {
@@ -280,7 +284,7 @@ class AiChatServiceConcurrencyTest {
                 .complexity("complex")
                 .build();
 
-        when(sessionContextService.getOrCreateContext(anyString(), anyString(), anyString(), anyString()))
+        when(sessionContextService.getOrCreateContext(anyString(), anyString(), anyString(), anyString(), any(), any()))
                 .thenReturn(context);
         when(deepSeekClient.chat(any(), any(), any(),
                 org.mockito.ArgumentMatchers.<com.lx.governance.aichat.dto.LayeredMemories>any())).thenAnswer(invocation -> {
@@ -319,7 +323,7 @@ class AiChatServiceConcurrencyTest {
                 .complexity("complex")
                 .build();
 
-        when(sessionContextService.getOrCreateContext(anyString(), anyString(), anyString(), anyString()))
+        when(sessionContextService.getOrCreateContext(anyString(), anyString(), anyString(), anyString(), any(), any()))
                 .thenReturn(context);
         when(taskTriggerRouter.route(org.mockito.ArgumentMatchers.any(com.lx.governance.aichat.dto.TaskTriggerContext.class))).thenReturn(TaskTriggerDecision.builder()
                 .route(TaskTriggerRoute.DOCTOR_ASSISTANT_AGENT)
@@ -346,7 +350,7 @@ class AiChatServiceConcurrencyTest {
 
         assertTrue(response.getSuccess());
         verify(taskTriggerRouter, atLeastOnce()).route(org.mockito.ArgumentMatchers.any(com.lx.governance.aichat.dto.TaskTriggerContext.class));
-        verify(sessionContextService).recordTaskTriggerDecision(eq("conv-4"), any(TaskTriggerDecision.class));
+        verify(sessionContextService).recordTaskTriggerDecision(eq("conv-4"), any(TaskTriggerDecision.class), any(), any());
         verify(doctorAssistantTaskRequestFactory).buildPatientDialogRequest(eq(request), eq(context), any(UserProfileDTO.class), any(), any(TaskTriggerDecision.class), anyString());
         verify(doctorAssistantAgentGateway).analyzePatientTask(any());
     }
@@ -362,7 +366,7 @@ class AiChatServiceConcurrencyTest {
                 .complexity("complex")
                 .build();
 
-        when(sessionContextService.getOrCreateContext(anyString(), anyString(), anyString(), anyString()))
+        when(sessionContextService.getOrCreateContext(anyString(), anyString(), anyString(), anyString(), any(), any()))
                 .thenReturn(context);
         when(taskTriggerRouter.route(org.mockito.ArgumentMatchers.any(com.lx.governance.aichat.dto.TaskTriggerContext.class))).thenReturn(TaskTriggerDecision.builder()
                 .route(TaskTriggerRoute.DOCTOR_ASSISTANT_AGENT)
@@ -381,8 +385,38 @@ class AiChatServiceConcurrencyTest {
 
         assertTrue(response.getSuccess());
         assertEquals("建议继续观察并补充近一周血糖记录。", response.getMessage());
-        verify(sessionContextService).updateContext("conv-5", "请帮我分析一下最近一周的体重变化", "建议继续观察并补充近一周血糖记录。");
+        verify(sessionContextService).updateContext(
+                eq("conv-5"),
+                eq("请帮我分析一下最近一周的体重变化"),
+                eq("建议继续观察并补充近一周血糖记录。"),
+                isNull(),
+                isNull());
         verify(chatAsyncProcessingService).handleChatCompleted(eq(request), any(ChatGenerationResult.class), anyString());
+    }
+
+    @Test
+    void shouldFastFailWhenChatExecutorIsOverloaded() throws Exception {
+        SessionContext context = SessionContext.builder()
+                .conversationId("conv-overload")
+                .customerId("customer-1")
+                .groupId("group-1")
+                .conversationPhase("consulting")
+                .userIntent("一般咨询")
+                .complexity("simple")
+                .build();
+
+        when(sessionContextService.getOrCreateContext(anyString(), anyString(), anyString(), anyString(), any(), any()))
+                .thenReturn(context);
+
+        ReflectionTestUtils.setField(aiChatService, "chatExecutor", (Executor) command -> {
+            throw new RejectedExecutionException("chatExecutor 已饱和");
+        });
+
+        ChatResponse response = aiChatService.handleChatRequest(buildRequest("conv-overload"))
+                .get(1, TimeUnit.SECONDS);
+
+        assertFalse(response.getSuccess());
+        assertEquals("当前服务负载较高，请稍后再试", response.getErrorMessage());
     }
 
     private ChatRequest buildRequest(String conversationId) {

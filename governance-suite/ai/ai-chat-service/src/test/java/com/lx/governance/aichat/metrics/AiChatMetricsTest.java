@@ -119,4 +119,47 @@ class AiChatMetricsTest {
                 .counter()
                 .count());
     }
+
+    @Test
+    void shouldRecordStageLatencyMetrics() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        AiChatMetrics metrics = new AiChatMetrics(registry);
+
+        metrics.recordStageLatency("session_context", 18);
+        metrics.recordStageLatency("memory_retrieval", 42);
+
+        assertEquals(1L, registry.get("ai.chat.stage.time")
+                .tag("stage", "session_context")
+                .timer()
+                .count());
+        assertEquals(1L, registry.get("ai.chat.stage.time")
+                .tag("stage", "memory_retrieval")
+                .timer()
+                .count());
+    }
+
+    @Test
+    void shouldRecordRouteResultMetrics() {
+        SimpleMeterRegistry registry = new SimpleMeterRegistry();
+        AiChatMetrics metrics = new AiChatMetrics(registry);
+
+        metrics.recordRouteResult("DIRECT_CHAT", false, 38);
+        metrics.recordRouteResult("AGENT_FALLBACK", true, 91);
+
+        assertEquals(1.0, registry.get("ai.chat.route.results")
+                .tag("route_result", "DIRECT_CHAT")
+                .tag("degraded", "false")
+                .counter()
+                .count());
+        assertEquals(1.0, registry.get("ai.chat.route.results")
+                .tag("route_result", "AGENT_FALLBACK")
+                .tag("degraded", "true")
+                .counter()
+                .count());
+        assertEquals(1L, registry.get("ai.chat.route.time")
+                .tag("route_result", "AGENT_FALLBACK")
+                .tag("degraded", "true")
+                .timer()
+                .count());
+    }
 }

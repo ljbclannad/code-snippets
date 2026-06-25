@@ -1,0 +1,99 @@
+# 工具清单
+
+本文件描述减重随访分析常用工具、推荐用途与风险分层。
+如果与源码定义冲突，以 `DoctorToolDefinitionRegistry.java` 为准。
+
+## 低风险工具
+
+### 数据获取
+
+- `get_patient_profile`
+  - 用途：读取患者基本资料、目标、慢病等基础信息
+  - 常见入参：`customerId`
+- `get_weight_history`
+  - 用途：读取最近一段时间的体重记录
+  - 常见入参：`customerId`、`days`
+- `get_chat_history`
+  - 用途：读取最近聊天内容，用于症状、依从性、情绪证据提取
+  - 常见入参：`customerId`、`limit`
+- `get_prescription_history`
+  - 用途：读取处方历史，辅助分析用药依从性和药物相关风险
+  - 常见入参：`customerId`、`limit`
+- `get_health_knowledge`
+  - 用途：读取减重管理相关知识点，用于补充教育建议
+  - 常见入参：`topic`
+
+### 分析与判断
+
+- `calculate_bmi`
+  - 用途：计算 BMI
+  - 常见入参：`weight`、`height`
+- `analyze_weight_trend`
+  - 用途：分析阶段性减重趋势、波动和反弹
+  - 常见入参：`weightRecords`
+- `detect_weight_plateau`
+  - 用途：判断是否进入减重平台期
+  - 常见入参：`weightRecords`
+- `analyze_adherence_signals`
+  - 用途：分析饮食和运动依从性
+  - 常见入参：`customerId`、`recentDays`、`taskLimit`
+- `triage_red_flags`
+  - 用途：识别红旗症状并给出分诊等级
+  - 常见入参：`customerId`、`limit`
+- `analyze_medication_adherence`
+  - 用途：分析漏服、停药、自行调药风险
+  - 常见入参：`customerId`、`chatLimit`、`prescriptionLimit`
+- `summarize_symptom_timeline`
+  - 用途：提取症状出现时间、持续时长、变化趋势
+  - 常见入参：`customerId`、`limit`
+- `assess_follow_up_urgency`
+  - 用途：评估随访紧急度和建议时窗
+  - 常见入参：`customerId`、`limit`
+- `generate_patient_education_points`
+  - 用途：生成患者教育要点
+  - 常见入参：`topic`、`riskLevel`
+- `check_self_monitoring_completeness`
+  - 用途：检查近期监测数据是否缺关键项目
+  - 常见入参：`customerId`、`recentDays`
+- `extract_structured_symptoms`
+  - 用途：结构化抽取症状、程度、频率、诱因和缓解因素
+  - 常见入参：`customerId`、`limit`
+- `screen_mental_health_risk`
+  - 用途：识别焦虑、抑郁、失眠、自伤等风险
+  - 常见入参：`customerId`、`limit`
+- `recommend_follow_up_data_requests`
+  - 用途：根据数据缺口给出下一轮随访需要补采的字段
+  - 常见入参：`customerId`、`taskType`
+
+## 中风险工具
+
+- `send_reminder`
+  - 用途：发送提醒消息
+  - 风险点：会产生真实外发行为
+- `create_follow_up_task`
+  - 用途：创建随访任务
+  - 风险点：会改变任务系统状态
+- `send_health_report`
+  - 用途：向患者发送阶段性报告
+  - 风险点：会产生对外沟通结果
+
+## 高风险工具
+
+- `draft_weight_management_plan`
+  - 用途：起草减重管理方案建议
+  - 风险点：可能影响后续治疗或管理决策
+- `recommend_medical_review`
+  - 用途：建议转人工医学复核
+  - 风险点：会触发更高级别人工处理流程
+
+## 推荐调用顺序
+
+1. 先读取基础资料和时间窗内证据。
+2. 再做趋势、平台期、依从性和症状分析。
+3. 最后再决定是否触发提醒、任务、报告或人工复核。
+
+## 选型原则
+
+- 任务目标不明确时，优先使用只读工具补证据。
+- 有症状、情绪、药物问题时，不只看体重趋势，要补聊天和处方证据。
+- 需要真实动作时，先确认是否有足够证据支撑。
