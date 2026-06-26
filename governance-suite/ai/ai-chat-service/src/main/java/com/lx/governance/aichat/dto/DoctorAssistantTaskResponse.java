@@ -53,6 +53,11 @@ public class DoctorAssistantTaskResponse {
     private String patientSafeReply;
 
     /**
+     * 面向患者的证据卡片。
+     */
+    private java.util.List<PatientVisibleEvidence> patientVisibleEvidence;
+
+    /**
      * 面向医生的结构化分析结果。
      */
     private StructuredTaskResult structuredResult;

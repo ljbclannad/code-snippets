@@ -1,15 +1,22 @@
 package com.lx.governance.knowledgebase.controller;
 
 import com.lx.governance.common.api.ApiResponse;
+import com.lx.governance.knowledgebase.dto.CrawlJobManifestView;
+import com.lx.governance.knowledgebase.dto.CrawlJobSummary;
 import com.lx.governance.knowledgebase.dto.CrawlImportRequest;
 import com.lx.governance.knowledgebase.dto.CrawlImportResponse;
+import com.lx.governance.knowledgebase.dto.DocumentGovernanceUpdateRequest;
 import com.lx.governance.knowledgebase.dto.DocumentInfoResponse;
+import com.lx.governance.knowledgebase.dto.LocalBatchImportRequest;
+import com.lx.governance.knowledgebase.dto.LocalBatchImportResponse;
 import com.lx.governance.knowledgebase.dto.UploadDocumentRequest;
 import com.lx.governance.knowledgebase.entity.KnowledgeDocument;
 import com.lx.governance.knowledgebase.entity.KnowledgeDocumentChunk;
 import com.lx.governance.knowledgebase.entity.KnowledgeDocumentParseResult;
 import com.lx.governance.knowledgebase.service.DocumentProcessingService;
+import com.lx.governance.knowledgebase.service.LocalDocumentBatchImportService;
 import com.lx.governance.knowledgebase.service.MedicalDocumentCrawlService;
+import com.lx.governance.knowledgebase.service.MedicalDocumentGovernanceService;
 import com.lx.governance.knowledgebase.service.DocumentChunkService;
 import com.lx.governance.knowledgebase.service.DocumentParseResultService;
 import com.lx.governance.knowledgebase.service.DocumentService;
@@ -36,6 +43,8 @@ public class DocumentController {
     private final DocumentParseResultService parseResultService;
     private final DocumentChunkService documentChunkService;
     private final MedicalDocumentCrawlService medicalDocumentCrawlService;
+    private final LocalDocumentBatchImportService localDocumentBatchImportService;
+    private final MedicalDocumentGovernanceService medicalDocumentGovernanceService;
 
     /**
      * 上传文档
@@ -81,6 +90,60 @@ public class DocumentController {
         } catch (Exception e) {
             log.error("抓取导入失败: kbId={}, seedUrl={}", kbId, request.getSeedUrl(), e);
             return ApiResponse.fail("CRAWL_IMPORT_FAILED", "抓取导入失败: " + e.getMessage(), null);
+        }
+    }
+
+    @PostMapping("/local-batch-import")
+    public ApiResponse<LocalBatchImportResponse> localBatchImport(
+            @PathVariable String kbId,
+            @Validated @RequestBody LocalBatchImportRequest request) {
+        log.info("本地批量导入文档: kbId={}, manifestPath={}, dryRun={}",
+                kbId, request.getManifestPath(), request.getDryRun());
+        try {
+            return ApiResponse.ok(localDocumentBatchImportService.importFromManifest(kbId, request), null);
+        } catch (IllegalArgumentException e) {
+            log.warn("本地批量导入参数错误: {}", e.getMessage());
+            return ApiResponse.fail("INVALID_PARAM", e.getMessage(), null);
+        } catch (Exception e) {
+            log.error("本地批量导入失败: kbId={}, manifestPath={}", kbId, request.getManifestPath(), e);
+            return ApiResponse.fail("LOCAL_BATCH_IMPORT_FAILED", "本地批量导入失败: " + e.getMessage(), null);
+        }
+    }
+
+    @GetMapping("/crawl/jobs")
+    public ApiResponse<List<CrawlJobSummary>> listCrawlJobs(
+            @RequestParam(defaultValue = "20") int limit) {
+        try {
+            return ApiResponse.ok(medicalDocumentCrawlService.listCrawlJobs(limit), null);
+        } catch (Exception e) {
+            log.error("查询抓取作业列表失败", e);
+            return ApiResponse.fail("CRAWL_JOB_LIST_FAILED", "查询抓取作业列表失败: " + e.getMessage(), null);
+        }
+    }
+
+    @GetMapping("/crawl/jobs/{jobId}")
+    public ApiResponse<CrawlJobManifestView> getCrawlJob(@PathVariable String jobId) {
+        try {
+            return ApiResponse.ok(medicalDocumentCrawlService.getCrawlJob(jobId), null);
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.fail("CRAWL_JOB_NOT_FOUND", e.getMessage(), null);
+        } catch (Exception e) {
+            log.error("查询抓取作业失败: jobId={}", jobId, e);
+            return ApiResponse.fail("CRAWL_JOB_READ_FAILED", "查询抓取作业失败: " + e.getMessage(), null);
+        }
+    }
+
+    @PostMapping("/crawl/jobs/{jobId}/retry")
+    public ApiResponse<CrawlImportResponse> retryCrawlJob(
+            @PathVariable String kbId,
+            @PathVariable String jobId) {
+        try {
+            return ApiResponse.ok(medicalDocumentCrawlService.retryCrawlJob(kbId, jobId), null);
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.fail("CRAWL_JOB_NOT_FOUND", e.getMessage(), null);
+        } catch (Exception e) {
+            log.error("重试抓取作业失败: kbId={}, jobId={}", kbId, jobId, e);
+            return ApiResponse.fail("CRAWL_JOB_RETRY_FAILED", "重试抓取作业失败: " + e.getMessage(), null);
         }
     }
 
@@ -191,6 +254,42 @@ public class DocumentController {
         } catch (Exception e) {
             log.error("激活文档失败: kbId={}, docId={}", kbId, docId, e);
             return ApiResponse.fail("ACTIVATE_FAILED", "激活文档失败: " + e.getMessage(), null);
+        }
+    }
+
+    @PostMapping("/{docId}/governance/review")
+    public ApiResponse<DocumentInfoResponse> reviewDocument(
+            @PathVariable String kbId,
+            @PathVariable String docId,
+            @RequestBody DocumentGovernanceUpdateRequest request) {
+        try {
+            KnowledgeDocument document = medicalDocumentGovernanceService.reviewDocument(kbId, docId, request);
+            DocumentInfoResponse response = new DocumentInfoResponse();
+            BeanUtils.copyProperties(document, response);
+            return ApiResponse.ok(response, null);
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.fail("DOC_NOT_FOUND", e.getMessage(), null);
+        } catch (Exception e) {
+            log.error("审核文档失败: kbId={}, docId={}", kbId, docId, e);
+            return ApiResponse.fail("DOC_REVIEW_FAILED", "审核文档失败: " + e.getMessage(), null);
+        }
+    }
+
+    @PostMapping("/{docId}/governance/invalidate")
+    public ApiResponse<DocumentInfoResponse> invalidateDocument(
+            @PathVariable String kbId,
+            @PathVariable String docId,
+            @RequestBody DocumentGovernanceUpdateRequest request) {
+        try {
+            KnowledgeDocument document = medicalDocumentGovernanceService.invalidateDocument(kbId, docId, request);
+            DocumentInfoResponse response = new DocumentInfoResponse();
+            BeanUtils.copyProperties(document, response);
+            return ApiResponse.ok(response, null);
+        } catch (IllegalArgumentException e) {
+            return ApiResponse.fail("DOC_NOT_FOUND", e.getMessage(), null);
+        } catch (Exception e) {
+            log.error("失效文档失败: kbId={}, docId={}", kbId, docId, e);
+            return ApiResponse.fail("DOC_INVALIDATE_FAILED", "失效文档失败: " + e.getMessage(), null);
         }
     }
 

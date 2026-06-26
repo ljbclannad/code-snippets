@@ -13,11 +13,21 @@ public class CrawlImportResponse {
 
     private String seedUrl;
 
+    private String crawlJobId;
+
+    private String outputDir;
+
+    private boolean dryRun;
+
     private int requestedPages;
 
     private int crawledPages;
 
     private int importedDocuments;
+
+    private int skippedDocuments;
+
+    private int refreshedDocuments;
 
     private List<CrawledPageSummary> pages;
 }

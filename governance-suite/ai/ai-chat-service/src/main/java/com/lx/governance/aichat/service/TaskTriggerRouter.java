@@ -29,6 +29,7 @@ public class TaskTriggerRouter implements PlatformTaskRouter {
 
     private static final String INTENT_CASUAL_CHAT = "casual_chat";
     private static final String INTENT_FACT_QUERY = "fact_query";
+    private static final String INTENT_MEDICAL_KNOWLEDGE_QA = "medical_knowledge_qa";
     private static final String INTENT_GENERAL_HEALTH_CONSULTATION = "general_health_consultation";
     private static final String INTENT_PROFILE_FOLLOW_UP_ANSWER = "profile_follow_up_answer";
     private static final String INTENT_FOLLOW_UP_TREND_ANALYSIS = "follow_up_trend_analysis";
@@ -41,6 +42,18 @@ public class TaskTriggerRouter implements PlatformTaskRouter {
 
     private static final List<String> SIMPLE_FACT_QUERY_KEYWORDS = List.of(
         "是什么", "什么意思", "怎么理解", "解释一下", "介绍一下"
+    );
+
+    private static final List<String> MEDICAL_KNOWLEDGE_KEYWORDS = List.of(
+        "高血压", "糖尿病", "血糖", "血压", "胆固醇", "药", "药物", "停药", "减量", "加量", "症状", "指南", "说明书", "禁忌"
+    );
+
+    private static final List<String> HIGH_RISK_MEDICAL_KEYWORDS = List.of(
+        "胸痛", "呼吸困难", "昏迷", "抽搐", "自杀", "轻生", "急诊", "晕厥", "黑便", "呕血"
+    );
+
+    private static final List<String> MEDICAL_SENSITIVE_FACT_KEYWORDS = List.of(
+        "停药", "换药", "加量", "减量", "禁忌", "处方", "确诊", "诊断", "急症"
     );
 
     private static final List<String> ANALYSIS_KEYWORDS = List.of(
@@ -102,8 +115,32 @@ public class TaskTriggerRouter implements PlatformTaskRouter {
             return direct(TaskTriggerReason.CASUAL_CHAT_SIGNAL, "命中寒暄或轻量闲聊信号");
         }
 
+        boolean medicalKnowledgeIntent = hasIntent(intent, INTENT_MEDICAL_KNOWLEDGE_QA);
+        boolean medicalKnowledgeSignal = medicalKnowledgeIntent || containsAny(message, MEDICAL_KNOWLEDGE_KEYWORDS);
+        boolean highRiskMedicalSignal = containsAny(message, HIGH_RISK_MEDICAL_KEYWORDS);
+        boolean medicalSensitiveFactSignal = containsAny(message, MEDICAL_SENSITIVE_FACT_KEYWORDS);
+
+        if (highRiskMedicalSignal) {
+            return agent(
+                TaskType.RISK_STRATIFICATION_AND_ESCALATION,
+                reasons(TaskTriggerReason.HIGH_RISK_MEDICAL_SIGNAL),
+                "命中高风险医疗关键词，强制升级 Agent"
+            );
+        }
+
         // “是什么/解释一下”这类偏事实解释的问题，默认保持 direct chat。
         // 只有在同时带有明显分析诉求时，才继续往后看是否需要升级。
+        if (medicalKnowledgeSignal && medicalSensitiveFactSignal) {
+            return agent(
+                TaskType.RISK_STRATIFICATION_AND_ESCALATION,
+                reasons(TaskTriggerReason.MEDICAL_SENSITIVE_FACT_QUERY),
+                "命中医疗安全敏感事实问题，升级到 Agent"
+            );
+        }
+        if (medicalKnowledgeSignal
+            && (medicalKnowledgeIntent || hasIntent(intent, INTENT_FACT_QUERY) || containsAny(message, SIMPLE_FACT_QUERY_KEYWORDS))) {
+            return direct(TaskTriggerReason.MEDICAL_KNOWLEDGE_QA, "命中医疗知识检索问答信号");
+        }
         if (hasIntent(intent, INTENT_FACT_QUERY)
             || (containsAny(message, SIMPLE_FACT_QUERY_KEYWORDS) && !hasIntent(intent, INTENT_FOLLOW_UP_TREND_ANALYSIS)
             && !containsAny(message, ANALYSIS_KEYWORDS))) {

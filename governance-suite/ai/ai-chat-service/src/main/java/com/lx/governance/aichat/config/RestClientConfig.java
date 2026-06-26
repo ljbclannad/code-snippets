@@ -30,12 +30,27 @@ public class RestClientConfig {
     @Value("${spring.ai.openai.read-timeout:60s}")
     private Duration openAiReadTimeout;
 
+    @Value("${ai-chat.kb.base-url:http://localhost:8103}")
+    private String knowledgeBaseBaseUrl;
+
+    @Value("${ai-chat.kb.timeout-ms:10000}")
+    private int knowledgeBaseTimeoutMs;
+
     @Bean
     public RestClient doctorAssistantAgentRestClient() {
         return RestClient.builder()
                 .baseUrl(doctorAssistantAgentBaseUrl)
                 .defaultHeader("Content-Type", "application/json")
                 .requestFactory(clientHttpRequestFactory(doctorAssistantAgentTimeoutMs))
+                .build();
+    }
+
+    @Bean
+    public RestClient knowledgeBaseRestClient() {
+        return RestClient.builder()
+                .baseUrl(knowledgeBaseBaseUrl)
+                .defaultHeader("Content-Type", "application/json")
+                .requestFactory(clientHttpRequestFactory(knowledgeBaseTimeoutMs))
                 .build();
     }
 

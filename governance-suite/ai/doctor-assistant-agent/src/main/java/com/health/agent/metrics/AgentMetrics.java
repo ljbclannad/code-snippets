@@ -4,6 +4,7 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
+import io.micrometer.core.instrument.DistributionSummary;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -187,6 +188,59 @@ public class AgentMetrics {
             .description("按状态统计的会话数")
             .register(meterRegistry)
             .increment();
+    }
+
+    public void recordKnowledgeRetrieval(String source, String outcome, long durationMs, int resultCount) {
+        String safeSource = source == null || source.isBlank() ? "unknown" : source;
+        String safeOutcome = outcome == null || outcome.isBlank() ? "unknown" : outcome;
+
+        Counter.builder("agent.kb.retrieval.total")
+            .description("Knowledge retrieval attempts by source and outcome")
+            .tag("source", safeSource)
+            .tag("outcome", safeOutcome)
+            .register(meterRegistry)
+            .increment();
+
+        if (durationMs >= 0) {
+            Timer.builder("agent.kb.retrieval.duration")
+                .description("Knowledge retrieval duration")
+                .tag("source", safeSource)
+                .tag("outcome", safeOutcome)
+                .register(meterRegistry)
+                .record(durationMs, TimeUnit.MILLISECONDS);
+        }
+
+        DistributionSummary.builder("agent.kb.retrieval.results")
+            .description("Knowledge retrieval result count")
+            .baseUnit("items")
+            .tag("source", safeSource)
+            .tag("outcome", safeOutcome)
+            .register(meterRegistry)
+            .record(Math.max(resultCount, 0));
+    }
+
+    public void recordEvidenceUsage(String stage, String taskType, int evidenceCount, boolean blocked) {
+        String safeStage = stage == null || stage.isBlank() ? "unknown" : stage;
+        String safeTaskType = taskType == null || taskType.isBlank() ? "unknown" : taskType;
+        String evidenceState = evidenceCount > 0 ? "present" : "missing";
+
+        Counter.builder("agent.evidence.usage.total")
+            .description("Evidence usage distribution by stage")
+            .tag("stage", safeStage)
+            .tag("task_type", safeTaskType)
+            .tag("evidence_state", evidenceState)
+            .tag("blocked", Boolean.toString(blocked))
+            .register(meterRegistry)
+            .increment();
+
+        DistributionSummary.builder("agent.evidence.count")
+            .description("Evidence item count by stage")
+            .baseUnit("items")
+            .tag("stage", safeStage)
+            .tag("task_type", safeTaskType)
+            .tag("blocked", Boolean.toString(blocked))
+            .register(meterRegistry)
+            .record(Math.max(evidenceCount, 0));
     }
 
     public void bindExecutor(String executorName, ThreadPoolExecutor executor) {

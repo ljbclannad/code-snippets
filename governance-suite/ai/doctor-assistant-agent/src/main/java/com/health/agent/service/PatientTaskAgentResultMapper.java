@@ -18,10 +18,13 @@ import com.health.agent.dto.patient.DoctorAssistantPendingTaskPayload;
 import com.health.agent.dto.patient.DoctorAssistantTaskRequest;
 import com.health.agent.dto.patient.DoctorAssistantTaskStatus;
 import com.health.agent.dto.patient.DoctorWorkbenchPayload;
+import com.health.agent.dto.patient.EvidenceDetail;
+import com.health.agent.dto.patient.PatientVisibleEvidence;
 import com.health.agent.dto.patient.StructuredTaskResult;
 import com.health.agent.model.AgentResult;
 import com.health.agent.model.PendingTask;
 import com.health.agent.model.ResultStatus;
+import com.health.agent.model.StructuredEvidenceItem;
 import com.health.agent.model.StructuredFinalAnswer;
 import com.lx.governance.agentplatform.model.WorkbenchAction;
 import com.lx.governance.agentplatform.model.WorkbenchActionType;
@@ -71,6 +74,8 @@ public class PatientTaskAgentResultMapper {
                         fallback != null ? fallback.getEvidenceSources() : List.of()))
                 .inferences(copyOrDefault(finalAnswer.getInferences(),
                         fallback != null ? fallback.getInferences() : List.of()))
+                .evidenceDetails(copyEvidenceDetails(finalAnswer.getEvidenceDetails(),
+                        fallback != null ? fallback.getEvidenceDetails() : List.of()))
                 .build();
         return enrichWithUpstreamEvidence(merged, command);
     }
@@ -99,6 +104,7 @@ public class PatientTaskAgentResultMapper {
         String taskId,
         String agentSessionId,
         StructuredTaskResult structuredResult,
+        List<PatientVisibleEvidence> patientVisibleEvidence,
         boolean needsHumanReview,
         DoctorAssistantPendingTaskPayload pendingTaskPayload,
         String executionPath,
@@ -128,6 +134,8 @@ public class PatientTaskAgentResultMapper {
                 .agentEvidenceSources(filterEvidenceSources(structuredResult.getEvidenceSources(), false))
                 .inferenceEvidence(copyOrDefault(structuredResult.getInferences(), List.of()))
                 .uncertainties(structuredResult.getUncertainties())
+                .evidenceDetails(toEvidenceDetails(structuredResult))
+                .patientVisibleEvidence(copyPatientVisibleEvidence(patientVisibleEvidence))
                 .pendingTask(pendingTaskPayload)
                 .build();
     }
@@ -236,6 +244,14 @@ public class PatientTaskAgentResultMapper {
         if (base.getInferences() == null) {
             base.setInferences(new ArrayList<>());
         }
+        List<StructuredEvidenceItem> evidenceDetails = copyEvidenceDetails(base.getEvidenceDetails(), List.of());
+        if (evidenceDetails.isEmpty()) {
+            evidenceDetails = synthesizeEvidenceDetails(supportingEvidence, evidenceSources);
+        }
+        if (command != null) {
+            evidenceDetails = mergeEvidenceDetails(evidenceDetails, buildUpstreamEvidenceDetails(command));
+        }
+        base.setEvidenceDetails(evidenceDetails);
         return base;
     }
 
@@ -303,6 +319,114 @@ public class PatientTaskAgentResultMapper {
         return new ArrayList<>(merged);
     }
 
+    private List<StructuredEvidenceItem> copyEvidenceDetails(
+            List<StructuredEvidenceItem> primary,
+            List<StructuredEvidenceItem> fallback) {
+        List<StructuredEvidenceItem> source = primary != null && !primary.isEmpty() ? primary : fallback;
+        if (source == null || source.isEmpty()) {
+            return new ArrayList<>();
+        }
+        return source.stream()
+                .filter(Objects::nonNull)
+                .map(item -> StructuredEvidenceItem.builder()
+                        .summary(item.getSummary())
+                        .source(item.getSource())
+                        .evidenceType(item.getEvidenceType())
+                        .upstream(item.getUpstream())
+                        .title(item.getTitle())
+                        .snippet(item.getSnippet())
+                        .trustLevel(item.getTrustLevel())
+                        .score(item.getScore())
+                        .hitReason(item.getHitReason())
+                        .build())
+                .collect(Collectors.toCollection(ArrayList::new));
+    }
+
+    private List<StructuredEvidenceItem> buildUpstreamEvidenceDetails(AgentExecutionCommand command) {
+        return synthesizeEvidenceDetails(
+                buildUpstreamSupportingEvidence(command),
+                buildUpstreamEvidenceSources(command));
+    }
+
+    private List<StructuredEvidenceItem> synthesizeEvidenceDetails(
+            List<String> supportingEvidence,
+            List<String> evidenceSources) {
+        List<String> evidenceList = copyOrDefault(supportingEvidence, List.of());
+        List<String> sourceList = copyOrDefault(evidenceSources, List.of());
+        List<StructuredEvidenceItem> details = new ArrayList<>();
+
+        for (int i = 0; i < evidenceList.size(); i++) {
+            String summary = evidenceList.get(i);
+            if (summary == null || summary.isBlank()) {
+                continue;
+            }
+            String source = resolveEvidenceSource(sourceList, i);
+            details.add(StructuredEvidenceItem.builder()
+                    .summary(summary)
+                    .source(source)
+                    .evidenceType(isUpstreamSource(source) ? "UPSTREAM_CONTEXT" : "SUPPORTING_EVIDENCE")
+                    .upstream(isUpstreamSource(source))
+                    .build());
+        }
+
+        if (details.isEmpty()) {
+            for (String source : sourceList) {
+                if (source == null || source.isBlank()) {
+                    continue;
+                }
+                details.add(StructuredEvidenceItem.builder()
+                        .summary("证据来源: " + source)
+                        .source(source)
+                        .evidenceType(isUpstreamSource(source) ? "UPSTREAM_CONTEXT" : "SOURCE_ONLY")
+                        .upstream(isUpstreamSource(source))
+                        .build());
+            }
+        }
+        return details;
+    }
+
+    private String resolveEvidenceSource(List<String> sources, int index) {
+        if (sources == null || sources.isEmpty()) {
+            return null;
+        }
+        if (sources.size() == 1) {
+            return sources.get(0);
+        }
+        if (index < sources.size()) {
+            return sources.get(index);
+        }
+        return null;
+    }
+
+    private boolean isUpstreamSource(String source) {
+        return source != null && UPSTREAM_EVIDENCE_SOURCES.contains(source);
+    }
+
+    private List<StructuredEvidenceItem> mergeEvidenceDetails(
+            List<StructuredEvidenceItem> primary,
+            List<StructuredEvidenceItem> additions) {
+        List<StructuredEvidenceItem> merged = copyEvidenceDetails(primary, List.of());
+        Set<String> identities = merged.stream()
+                .map(this::evidenceIdentity)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        for (StructuredEvidenceItem item : copyEvidenceDetails(additions, List.of())) {
+            if (identities.add(evidenceIdentity(item))) {
+                merged.add(item);
+            }
+        }
+        return merged;
+    }
+
+    private String evidenceIdentity(StructuredEvidenceItem item) {
+        if (item == null) {
+            return "";
+        }
+        return String.join("|",
+                defaultValue(item.getSummary(), ""),
+                defaultValue(item.getSource(), ""),
+                defaultValue(item.getEvidenceType(), ""));
+    }
+
     private WorkbenchViewType resolveViewType(boolean needsHumanReview, DoctorAssistantPendingTaskPayload pendingTaskPayload) {
         if (needsHumanReview && pendingTaskPayload != null) {
             return WorkbenchViewType.APPROVAL;
@@ -367,6 +491,7 @@ public class PatientTaskAgentResultMapper {
         viewData.put("inferenceEvidence", copyOrDefault(structuredResult.getInferences(), List.of()));
         viewData.put("uncertainties", copyOrDefault(structuredResult.getUncertainties(), List.of()));
         viewData.put("supportingEvidence", copyOrDefault(structuredResult.getSupportingEvidence(), List.of()));
+        viewData.put("evidenceDetails", toEvidenceDetails(structuredResult));
         return viewData;
     }
 
@@ -376,7 +501,42 @@ public class PatientTaskAgentResultMapper {
                 filterEvidenceSources(structuredResult.getEvidenceSources(), true));
         extensions.put("agentEvidenceSources",
                 filterEvidenceSources(structuredResult.getEvidenceSources(), false));
+        extensions.put("evidenceDetails", toEvidenceDetails(structuredResult));
         return extensions;
+    }
+
+    private List<EvidenceDetail> toEvidenceDetails(StructuredTaskResult structuredResult) {
+        List<StructuredEvidenceItem> items = copyEvidenceDetails(
+                structuredResult.getEvidenceDetails(),
+                synthesizeEvidenceDetails(structuredResult.getSupportingEvidence(), structuredResult.getEvidenceSources()));
+        return items.stream()
+                .map(item -> EvidenceDetail.builder()
+                        .summary(item.getSummary())
+                        .source(item.getSource())
+                        .evidenceType(item.getEvidenceType())
+                        .upstream(item.getUpstream())
+                        .title(item.getTitle())
+                        .snippet(item.getSnippet())
+                        .trustLevel(item.getTrustLevel())
+                        .score(item.getScore())
+                        .hitReason(item.getHitReason())
+                        .build())
+                .collect(Collectors.toCollection(ArrayList::new));
+    }
+
+    private List<PatientVisibleEvidence> copyPatientVisibleEvidence(List<PatientVisibleEvidence> source) {
+        if (source == null || source.isEmpty()) {
+            return new ArrayList<>();
+        }
+        return source.stream()
+                .filter(Objects::nonNull)
+                .map(item -> PatientVisibleEvidence.builder()
+                        .title(item.getTitle())
+                        .summary(item.getSummary())
+                        .source(item.getSource())
+                        .trustLevel(item.getTrustLevel())
+                        .build())
+                .collect(Collectors.toCollection(ArrayList::new));
     }
 
     private List<String> filterEvidenceSources(List<String> evidenceSources, boolean upstream) {

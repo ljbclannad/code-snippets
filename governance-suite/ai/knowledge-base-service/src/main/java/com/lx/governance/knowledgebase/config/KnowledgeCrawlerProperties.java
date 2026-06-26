@@ -25,6 +25,12 @@ public class KnowledgeCrawlerProperties {
 
     private int maxContentLength = 200000;
 
+    private boolean respectRobotsTxt = true;
+
+    private int fetchRetryCount = 2;
+
+    private long fetchRetryBackoffMillis = 300L;
+
     private String defaultCreatedBy = "kb-crawler";
 
     private String outputPath = "/tmp/kb/crawler";

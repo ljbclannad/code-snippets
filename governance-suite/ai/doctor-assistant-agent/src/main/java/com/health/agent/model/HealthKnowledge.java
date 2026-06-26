@@ -1,5 +1,6 @@
 package com.health.agent.model;
 
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
@@ -34,6 +35,18 @@ public class HealthKnowledge {
     private String tags;
 
     private String source;
+
+    @TableField(exist = false)
+    private String trustLevel;
+
+    @TableField(exist = false)
+    private String hitReason;
+
+    @TableField(exist = false)
+    private Double score;
+
+    @TableField(exist = false)
+    private String applicableScope;
 
     private LocalDateTime createdAt;
 

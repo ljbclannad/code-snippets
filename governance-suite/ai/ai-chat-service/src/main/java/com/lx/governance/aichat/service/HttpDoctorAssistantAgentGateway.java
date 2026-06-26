@@ -282,7 +282,13 @@ public class HttpDoctorAssistantAgentGateway implements DoctorAssistantAgentGate
         details.put("needsHumanReview", response.getNeedsHumanReview());
         details.put("agentSessionId", response.getAgentSessionId());
         details.put("fallbackReason", response.getFallbackReason());
+        details.put("patientVisibleEvidence", response.getPatientVisibleEvidence());
         events.add(StreamEvent.status("result", "Agent 结果已回传患者对话链路", details));
+        if (response.getPatientVisibleEvidence() != null && !response.getPatientVisibleEvidence().isEmpty()) {
+            events.add(StreamEvent.status("evidence", "已附带患者可见证据卡片", Map.of(
+                    "items", response.getPatientVisibleEvidence(),
+                    "count", response.getPatientVisibleEvidence().size())));
+        }
         if (response.getPatientSafeReply() != null && !response.getPatientSafeReply().isBlank()) {
             events.add(StreamEvent.content(response.getPatientSafeReply()));
             events.add(StreamEvent.done(

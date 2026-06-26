@@ -93,6 +93,12 @@ public class DoctorWorkbenchPayload {
     @Builder.Default
     private List<String> uncertainties = new ArrayList<>();
 
+    @Builder.Default
+    private List<EvidenceDetail> evidenceDetails = new ArrayList<>();
+
+    @Builder.Default
+    private List<PatientVisibleEvidence> patientVisibleEvidence = new ArrayList<>();
+
     /**
      * 如进入审批/接管流程，这里附带待处理任务摘要。
      */

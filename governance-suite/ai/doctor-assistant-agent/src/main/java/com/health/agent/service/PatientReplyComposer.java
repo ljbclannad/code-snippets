@@ -2,11 +2,14 @@ package com.health.agent.service;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Component;
 
+import com.health.agent.dto.patient.PatientVisibleEvidence;
 import com.health.agent.dto.patient.StructuredTaskResult;
 import com.health.agent.dto.patient.TaskType;
+import com.health.agent.model.StructuredEvidenceItem;
 
 @Component
 public class PatientReplyComposer {
@@ -26,6 +29,20 @@ public class PatientReplyComposer {
 
     public String composeAutoAnalysisFailureReply() {
         return "当前自动分析还没形成稳定结论，建议先补充近几天的症状、监测结果和执行情况，再由医生进一步评估。";
+    }
+
+    public List<PatientVisibleEvidence> buildPatientVisibleEvidence(StructuredTaskResult structuredResult) {
+        if (structuredResult == null || structuredResult.getEvidenceDetails() == null) {
+            return List.of();
+        }
+        return structuredResult.getEvidenceDetails().stream()
+                .filter(Objects::nonNull)
+                .filter(item -> !Boolean.TRUE.equals(item.getUpstream()))
+                .filter(item -> !isLowTrust(item))
+                .map(this::toPatientVisibleEvidence)
+                .filter(Objects::nonNull)
+                .limit(3)
+                .collect(Collectors.toList());
     }
 
     private String composeFollowUpReply(StructuredTaskResult structuredResult, boolean needsHumanReview) {
@@ -68,5 +85,33 @@ public class PatientReplyComposer {
             return null;
         }
         return actions.get(0);
+    }
+
+    private boolean isLowTrust(StructuredEvidenceItem item) {
+        return item.getTrustLevel() != null && "LOW".equalsIgnoreCase(item.getTrustLevel());
+    }
+
+    private PatientVisibleEvidence toPatientVisibleEvidence(StructuredEvidenceItem item) {
+        String summary = firstNonBlank(item.getSnippet(), item.getSummary());
+        String title = firstNonBlank(item.getTitle(), item.getSource());
+        if (summary == null && title == null) {
+            return null;
+        }
+        return PatientVisibleEvidence.builder()
+                .title(title)
+                .summary(summary)
+                .source(item.getSource())
+                .trustLevel(item.getTrustLevel())
+                .build();
+    }
+
+    private String firstNonBlank(String primary, String fallback) {
+        if (primary != null && !primary.isBlank()) {
+            return primary;
+        }
+        if (fallback != null && !fallback.isBlank()) {
+            return fallback;
+        }
+        return null;
     }
 }

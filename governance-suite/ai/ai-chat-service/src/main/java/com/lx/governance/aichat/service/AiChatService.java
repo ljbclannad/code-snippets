@@ -78,6 +78,7 @@ public class AiChatService {
     private final DegradationStrategyExecutor degradationStrategyExecutor;
     private final LayeredMemoryOrchestrator layeredMemoryOrchestrator;
     private final TaskTriggerRouter taskTriggerRouter;
+    private final MedicalKnowledgeQaService medicalKnowledgeQaService;
     private final DoctorAssistantTaskRequestFactory doctorAssistantTaskRequestFactory;
     private final DoctorAssistantAgentGateway doctorAssistantAgentGateway;
     private final AgentConversationRouteRuntime agentConversationRouteRuntime;
@@ -284,6 +285,29 @@ public class AiChatService {
                                 memories.getShortTermMemories().size(),
                                 memories.getLongTermMemories().size(),
                                 correlationId);
+                        if (medicalKnowledgeQaService.shouldUseKnowledgeQa(triggerDecision)) {
+                            MedicalKnowledgeQaService.QaResult qaResult =
+                                    medicalKnowledgeQaService.answer(request.getMessage(), triggerDecision);
+                            if (qaResult.escalateToAgent() && !visitorMode) {
+                                return invokeAgentOrFallback(
+                                        request,
+                                        sessionContext,
+                                        sessionId,
+                                        correlationId,
+                                        startTime,
+                                        toRiskEscalationDecision(triggerDecision, qaResult.escalationReason()),
+                                        profile,
+                                        memories);
+                            }
+                            if (!qaResult.escalateToAgent()) {
+                                return CompletableFuture.completedFuture(buildKnowledgeQaResponse(
+                                        request,
+                                        sessionId,
+                                        correlationId,
+                                        startTime,
+                                        qaResult));
+                            }
+                        }
                         if (visitorMode && triggerDecision != null && triggerDecision.shouldUpgradeToAgent()) {
                             log.info("visitor 模式跳过 Agent 升级，回退普通对话 - conversationId: {}, correlationId: {}",
                                     sessionId, correlationId);
@@ -377,7 +401,7 @@ public class AiChatService {
                     ROUTE_RESULT_PENDING_REVIEW_SHORT_CIRCUIT,
                     false,
                     System.currentTimeMillis() - startTime);
-            return CompletableFuture.completedFuture(ChatResponse.success(patientReply, sessionId));
+            return CompletableFuture.completedFuture(ChatResponse.success(patientReply, sessionId, null));
         }
 
         // 这里做的是“患者对话 -> 医生助手任务请求”的协议适配，
@@ -613,7 +637,7 @@ public class AiChatService {
         agentConversationResult.setMessageId(agentResponse.getTaskId());
         chatAsyncProcessingService.handleChatCompleted(request, agentConversationResult, correlationId);
 
-        return ChatResponse.success(patientReply, sessionId);
+        return ChatResponse.success(patientReply, sessionId, agentResponse.getPatientVisibleEvidence());
     }
 
     private CompletableFuture<ChatResponse> handleProfileCompletionIfNeeded(
@@ -805,6 +829,40 @@ public class AiChatService {
         cacheResponseIfNeeded(request, response);
 
         return response;
+    }
+
+    private ChatResponse buildKnowledgeQaResponse(
+            ChatRequest request,
+            String sessionId,
+            String correlationId,
+            long startTime,
+            MedicalKnowledgeQaService.QaResult qaResult) {
+        sessionContextService.updateContext(
+                sessionId,
+                request.getMessage(),
+                qaResult.answer(),
+                request.getRequestId(),
+                request.getMessageTimestamp());
+        ChatGenerationResult chatResult = new ChatGenerationResult();
+        chatResult.setAnswer(qaResult.answer());
+        chatResult.setConversationId(sessionId);
+        chatResult.setMessageId("kb-qa-" + java.util.UUID.randomUUID());
+        chatAsyncProcessingService.handleChatCompleted(request, chatResult, correlationId);
+        metrics.recordConversationPathLatency("kb_qa", System.currentTimeMillis() - startTime);
+        metrics.recordRouteResult("KB_QA", qaResult.uncertain(), System.currentTimeMillis() - startTime);
+        ChatResponse response = ChatResponse.success(qaResult.answer(), sessionId, qaResult.patientVisibleEvidence());
+        addDegradationNotice(response);
+        cacheResponseIfNeeded(request, response);
+        return response;
+    }
+
+    private TaskTriggerDecision toRiskEscalationDecision(TaskTriggerDecision original, String reason) {
+        return TaskTriggerDecision.builder()
+                .route(com.lx.governance.aichat.dto.TaskTriggerRoute.DOCTOR_ASSISTANT_AGENT)
+                .taskType(com.lx.governance.aichat.dto.TaskType.RISK_STRATIFICATION_AND_ESCALATION)
+                .reasons(java.util.List.of(com.lx.governance.aichat.dto.TaskTriggerReason.MEDICAL_SENSITIVE_FACT_QUERY))
+                .summary(reason != null ? reason : (original != null ? original.getSummary() : "knowledge_qa_escalation"))
+                .build();
     }
 
     /**

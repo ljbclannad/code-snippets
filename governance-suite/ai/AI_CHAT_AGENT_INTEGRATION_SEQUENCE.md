@@ -13,6 +13,65 @@
 - Agent 安全清洗、人工复核和回退普通对话
 - 对话完成后的异步历史落库与记忆提取
 
+## 最新版医疗搜推链路摘要
+
+当前医疗链路已经从原来的 `direct chat / agent` 二分流，扩展为更贴近生产的三级路径：
+
+1. `direct chat`
+   - 普通闲聊、画像补全追问、非医疗事实解释
+2. `KB QA`
+   - `TaskTriggerRouter` 命中 `medical_knowledge_qa`
+   - `ai-chat-service` 调 `knowledge-base-service`
+   - 走 `query normalize -> rewrite -> multi-recall -> rerank -> governance filter`
+   - 返回患者保守回复 + `patientVisibleEvidence`
+3. `Agent`
+   - 高风险关键词
+   - 医疗安全敏感事实问题（停药、加减量、急症等）
+   - 趋势分析 / 下一步建议 / 风险复核
+   - `doctor-assistant-agent` 可再调用：
+     - `search_medical_knowledge`
+     - `search_medication_guidance`
+     - `search_follow_up_protocol`
+     - `search_red_flag_guideline`
+
+新增的关键差异：
+
+- `ai-chat-service` 已支持 `direct chat -> KB QA -> Agent` 三级渐进式升级
+- `knowledge-base-service` 已支持 `vector + keyword + lexicon + FAQ exact` 多路召回
+- 检索结果默认带 `title / snippet / source / trustLevel / hitReason / score`
+- 患者可见证据卡片已贯通 `knowledge-base-service -> doctor-assistant-agent -> ai-chat-service`
+- 待审文档、失效文档、低 trust 文档会在患者链路默认抑制或降权
+- 患者侧 KB QA 统一追加 disclaimer，并对停药/处方/急症问题优先升级 Agent
+
+## 最新版医疗链路时序
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant C as ai-chat-service
+    participant R as TaskTriggerRouter
+    participant KB as knowledge-base-service
+    participant A as doctor-assistant-agent
+
+    U->>C: 医疗问题 / 随访问题
+    C->>R: route(message, sessionContext)
+    R-->>C: direct / kb_qa / agent
+
+    alt direct chat
+        C-->>U: 普通对话回复
+    else KB QA
+        C->>KB: /search (normalize + recall + rerank + governance filter)
+        KB-->>C: results + evidence fields
+        C-->>U: 保守回答 + patientVisibleEvidence
+    else Agent
+        C->>A: analyzePatientTask(request + context + memories + triggerDecision)
+        A->>KB: search medical knowledge tools
+        KB-->>A: evidence-rich results
+        A-->>C: patientSafeReply + structuredResult + patientVisibleEvidence
+        C-->>U: 患者安全回复 + patientVisibleEvidence
+    end
+```
+
 ## 参与组件
 
 - `AiChatController` / `AiChatService`

@@ -125,6 +125,30 @@ class TaskTriggerRouterTest {
     }
 
     @Test
+    void shouldRouteMedicalFactQueryToKnowledgeQaPath() {
+        TaskTriggerDecision decision = router.route(TaskTriggerContext.builder()
+                .message("高血压是什么，平时应该怎么理解")
+                .sessionContext(baseContext("simple", 1, "medical_knowledge_qa"))
+                .build());
+
+        assertFalse(decision.shouldUpgradeToAgent());
+        assertEquals(TaskTriggerRoute.DIRECT_CHAT, decision.getRoute());
+        assertTrue(decision.getReasons().contains(TaskTriggerReason.MEDICAL_KNOWLEDGE_QA));
+    }
+
+    @Test
+    void shouldEscalateSensitiveMedicationFactQueryToAgent() {
+        TaskTriggerDecision decision = router.route(TaskTriggerContext.builder()
+                .message("二甲双胍能不能直接停药")
+                .sessionContext(baseContext("simple", 1, "medical_knowledge_qa"))
+                .build());
+
+        assertTrue(decision.shouldUpgradeToAgent());
+        assertEquals(TaskType.RISK_STRATIFICATION_AND_ESCALATION, decision.getTaskType());
+        assertTrue(decision.getReasons().contains(TaskTriggerReason.MEDICAL_SENSITIVE_FACT_QUERY));
+    }
+
+    @Test
     void shouldExposePlatformRoutingLayersForRiskReviewRoute() {
         PlatformTaskRoutingDecision decision = router.route(PlatformRoutingContext.builder()
                 .customerId("C001")

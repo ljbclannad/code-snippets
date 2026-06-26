@@ -15,6 +15,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.SignalType;
 
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -33,6 +34,7 @@ public class AiChatStreamService {
     private final QuotaService quotaService;
     private final LayeredMemoryOrchestrator layeredMemoryOrchestrator;
     private final TaskTriggerRouter taskTriggerRouter;
+    private final MedicalKnowledgeQaService medicalKnowledgeQaService;
     private final DoctorAssistantTaskRequestFactory doctorAssistantTaskRequestFactory;
     private final DoctorAssistantAgentGateway doctorAssistantAgentGateway;
     private final AgentConversationRouteRuntime agentConversationRouteRuntime;
@@ -224,6 +226,32 @@ public class AiChatStreamService {
                         loadLayeredMemories(request, sessionContext, profile, correlationId)
                 )
                 .flatMapMany(memories -> {
+                    if (medicalKnowledgeQaService.shouldUseKnowledgeQa(triggerDecision)) {
+                        MedicalKnowledgeQaService.QaResult qaResult =
+                                medicalKnowledgeQaService.answer(request.getMessage(), triggerDecision);
+                        if (qaResult.escalateToAgent() && !visitorIdentityService.isVisitor(request.getCustomerId())) {
+                            return invokeAgentStream(
+                                    request,
+                                    sessionContext,
+                                    sessionId,
+                                    correlationId,
+                                    toRiskEscalationDecision(qaResult.escalationReason()),
+                                    profile,
+                                    memories);
+                        }
+                        if (!qaResult.escalateToAgent()) {
+                            return Flux.just(
+                                    StreamEvent.start(sessionId),
+                                    StreamEvent.status("kb_qa", "已命中医疗知识检索问答路径", java.util.Map.of(
+                                            "uncertain", qaResult.uncertain(),
+                                            "evidenceCount", qaResult.patientVisibleEvidence().size())),
+                                    StreamEvent.status("evidence", "已附带患者可见证据卡片", java.util.Map.of(
+                                            "count", qaResult.patientVisibleEvidence().size(),
+                                            "items", qaResult.patientVisibleEvidence())),
+                                    StreamEvent.content(qaResult.answer()),
+                                    StreamEvent.done(sessionId, null));
+                        }
+                    }
                     if (!visitorIdentityService.isVisitor(request.getCustomerId())
                             && triggerDecision != null
                             && triggerDecision.shouldUpgradeToAgent()) {
@@ -309,6 +337,15 @@ public class AiChatStreamService {
             log.warn("获取用户画像失败，使用空画像 - customerId: {}", customerId, e);
             return new UserProfileDTO();
         }
+    }
+
+    private TaskTriggerDecision toRiskEscalationDecision(String reason) {
+        return TaskTriggerDecision.builder()
+                .route(TaskTriggerRoute.DOCTOR_ASSISTANT_AGENT)
+                .taskType(TaskType.RISK_STRATIFICATION_AND_ESCALATION)
+                .reasons(List.of(com.lx.governance.aichat.dto.TaskTriggerReason.MEDICAL_SENSITIVE_FACT_QUERY))
+                .summary(reason != null ? reason : "knowledge_qa_escalation")
+                .build();
     }
 
     private com.lx.governance.aichat.dto.LayeredMemories loadLayeredMemories(

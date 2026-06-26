@@ -50,4 +50,7 @@ public class StructuredTaskResult {
 
     @Builder.Default
     private List<String> inferences = new ArrayList<>();
+
+    @Builder.Default
+    private List<StructuredEvidenceItem> evidenceDetails = new ArrayList<>();
 }

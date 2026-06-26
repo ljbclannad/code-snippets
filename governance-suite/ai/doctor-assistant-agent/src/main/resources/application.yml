@@ -94,6 +94,20 @@ agent:
 # 平台化后的 doctor agent 配置分层
 doctor:
   agent:
+    knowledge-base:
+      enabled: true
+      base-url: http://localhost:8103
+      kb-id: medical-default
+      top-k: 3
+      similarity-threshold: 0.2
+      use-rewrite: true
+      rerank: true
+      hybrid-search: true
+      business-domain: medical
+      applicable-scope: doctor_assistant
+      trust-level: HIGH
+      connect-timeout-seconds: 5
+      read-timeout-seconds: 10
     platform:
       workflow-id: doctor-patient-task-v1
       platform-agent-id: doctor-assistant-agent

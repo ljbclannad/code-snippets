@@ -110,6 +110,9 @@ knowledge-base:
     politeness-delay-millis: 400
     max-pages-per-job: 20
     max-content-length: 200000
+    respect-robots-txt: true
+    fetch-retry-count: 2
+    fetch-retry-backoff-millis: 300
     default-created-by: kb-crawler
     output-path: ${knowledge-base.storage.base-path}/crawler
 

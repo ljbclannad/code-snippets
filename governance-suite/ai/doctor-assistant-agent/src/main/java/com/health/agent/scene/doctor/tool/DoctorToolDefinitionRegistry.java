@@ -57,6 +57,18 @@ public class DoctorToolDefinitionRegistry extends InMemoryPlatformToolRegistry {
         register("get_health_knowledge", "查询减重管理相关健康知识", ToolRiskLevel.LOW, Map.of(
                 "topic", Map.of("type", "string", "required", true, "maxLength", 100)
         ));
+        register("search_medical_knowledge", "查询医疗知识库中的通用医学证据", ToolRiskLevel.LOW, Map.of(
+                "query", Map.of("type", "string", "required", true, "maxLength", 200)
+        ));
+        register("search_medication_guidance", "查询药品说明、禁忌和注意事项", ToolRiskLevel.LOW, Map.of(
+                "query", Map.of("type", "string", "required", true, "maxLength", 200)
+        ));
+        register("search_follow_up_protocol", "查询随访 SOP、院内流程和患教规范", ToolRiskLevel.LOW, Map.of(
+                "query", Map.of("type", "string", "required", true, "maxLength", 200)
+        ));
+        register("search_red_flag_guideline", "查询红旗症状、急症预警和转诊指引", ToolRiskLevel.LOW, Map.of(
+                "query", Map.of("type", "string", "required", true, "maxLength", 200)
+        ));
         register("triage_red_flags", "基于近期聊天内容识别红旗症状并给出分诊级别", ToolRiskLevel.LOW, Map.of(
                 "customerId", Map.of("type", "string", "required", true, "maxLength", 64),
                 "limit", Map.of("type", "integer", "default", 20, "min", 1, "max", 50)

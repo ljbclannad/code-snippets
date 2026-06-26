@@ -189,6 +189,11 @@ profile-completion:
   rules-config: classpath:profile-completion-rules.yml
 
 ai-chat:
+  kb:
+    enabled: true
+    base-url: ${KNOWLEDGE_BASE_SERVICE_BASE_URL:http://localhost:8103}
+    kb-id: ${AI_CHAT_KB_ID:}
+    timeout-ms: 10000
   async-backlog-alert:
     enabled: true
     check-interval-ms: 30000

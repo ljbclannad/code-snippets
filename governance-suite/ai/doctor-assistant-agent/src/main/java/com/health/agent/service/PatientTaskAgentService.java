@@ -12,6 +12,7 @@ import com.health.agent.dto.patient.MemorySnapshot;
 import com.health.agent.dto.patient.StructuredTaskResult;
 import com.health.agent.dto.patient.TaskType;
 import com.health.agent.engine.ReActAgentEngine;
+import com.health.agent.metrics.AgentMetrics;
 import com.health.agent.model.AgentContext;
 import com.health.agent.model.AgentResult;
 import com.health.agent.model.AgentSession;
@@ -21,6 +22,7 @@ import com.health.agent.model.Message;
 import com.health.agent.model.PendingTask;
 import com.health.agent.model.ResultStatus;
 import com.health.agent.model.Step;
+import com.health.agent.model.StructuredEvidenceItem;
 import com.health.agent.model.StructuredFinalAnswer;
 import com.health.agent.model.TaskStatus;
 import com.health.agent.safety.MedicalSafetyService;
@@ -52,9 +54,10 @@ public class PatientTaskAgentService {
     private final PendingTaskService pendingTaskService;
     private final DoctorPlatformRunPersistenceService platformRunPersistenceService;
     private final DoctorAgentPlatformProperties platformProperties;
+    private final AgentMetrics agentMetrics;
 
     public PatientTaskAgentService(PatientTaskSafetyService safetyService) {
-        this(safetyService, null, null, null, null, null, null, null, null, null);
+        this(safetyService, null, null, null, null, null, null, null, null, null, null);
     }
 
     @Autowired
@@ -68,7 +71,8 @@ public class PatientTaskAgentService {
         PatientReplyComposer patientReplyComposer,
         PendingTaskService pendingTaskService,
         DoctorPlatformRunPersistenceService platformRunPersistenceService,
-        DoctorAgentPlatformProperties platformProperties
+        DoctorAgentPlatformProperties platformProperties,
+        AgentMetrics agentMetrics
     ) {
         this.safetyService = safetyService;
         this.sessionService = sessionService;
@@ -80,6 +84,7 @@ public class PatientTaskAgentService {
         this.pendingTaskService = pendingTaskService;
         this.platformRunPersistenceService = platformRunPersistenceService;
         this.platformProperties = platformProperties;
+        this.agentMetrics = agentMetrics;
     }
 
     /**
@@ -283,6 +288,9 @@ public class PatientTaskAgentService {
             // allowed 分支下也要使用 sanitize 后的文案，因为它可能替换掉医生侧术语或附加保守提醒。
             patientReply = safetyResult.reply();
         }
+        List<com.health.agent.dto.patient.PatientVisibleEvidence> patientVisibleEvidence =
+                buildPatientVisibleEvidence(structuredResult, safetyResult.blocked());
+        recordEvidenceMetrics(command.getTaskType(), structuredResult, patientVisibleEvidence, safetyResult.blocked());
 
         // 下面这些对象主要用于审计、会话恢复和医生工作台展示，不会驱动模型继续推理。
         AgentContext context = buildContext(request, goal, structuredResult);
@@ -360,6 +368,7 @@ public class PatientTaskAgentService {
                 taskId,
                 agentSessionId,
                 structuredResult,
+                patientVisibleEvidence,
                 needsHumanReview,
                 pendingTaskPayload,
                 "TEMPLATE_FALLBACK",
@@ -398,6 +407,7 @@ public class PatientTaskAgentService {
                 .status(needsHumanReview ? DoctorAssistantTaskStatus.PENDING_APPROVAL : DoctorAssistantTaskStatus.SUCCESS)
                 .taskType(command.getTaskType())
                 .patientSafeReply(patientReply)
+                .patientVisibleEvidence(patientVisibleEvidence)
                 .structuredResult(structuredResult)
                 .doctorWorkbenchPayload(workbenchPayload)
                 .platformWorkbenchPayload(platformWorkbenchPayload)
@@ -438,6 +448,9 @@ public class PatientTaskAgentService {
         } else {
             patientReply = safetyResult.reply();
         }
+        List<com.health.agent.dto.patient.PatientVisibleEvidence> patientVisibleEvidence =
+                buildPatientVisibleEvidence(structuredResult, safetyResult.blocked());
+        recordEvidenceMetrics(command.getTaskType(), structuredResult, patientVisibleEvidence, safetyResult.blocked());
 
         String agentSessionId = defaultValue(agentResult.getSessionId(), "patient-agent-" + taskId);
         persistAgentExecutionRun(agentSessionId, request.getConversationId(), agentResult);
@@ -447,6 +460,7 @@ public class PatientTaskAgentService {
                 taskId,
                 agentSessionId,
                 structuredResult,
+                patientVisibleEvidence,
                 needsHumanReview,
                 pendingTaskPayload,
                 "AGENT",
@@ -482,6 +496,7 @@ public class PatientTaskAgentService {
                 .status(resultMapper.toTaskStatus(agentResult, needsHumanReview))
                 .taskType(command.getTaskType())
                 .patientSafeReply(patientReply)
+                .patientVisibleEvidence(patientVisibleEvidence)
                 .structuredResult(structuredResult)
                 .doctorWorkbenchPayload(workbenchPayload)
                 .platformWorkbenchPayload(platformWorkbenchPayload)
@@ -517,6 +532,24 @@ public class PatientTaskAgentService {
                 null);
     }
 
+    private void recordEvidenceMetrics(
+        TaskType taskType,
+        StructuredTaskResult structuredResult,
+        List<com.health.agent.dto.patient.PatientVisibleEvidence> patientVisibleEvidence,
+        boolean blocked
+    ) {
+        if (agentMetrics == null) {
+            return;
+        }
+        String taskTypeName = taskType != null ? taskType.name() : "UNKNOWN";
+        int structuredEvidenceCount = structuredResult != null && structuredResult.getEvidenceDetails() != null
+                ? structuredResult.getEvidenceDetails().size()
+                : 0;
+        int patientEvidenceCount = patientVisibleEvidence != null ? patientVisibleEvidence.size() : 0;
+        agentMetrics.recordEvidenceUsage("structured_result", taskTypeName, structuredEvidenceCount, blocked);
+        agentMetrics.recordEvidenceUsage("patient_visible", taskTypeName, patientEvidenceCount, blocked);
+    }
+
     private void persistPlatformRun(
         AgentSession session,
         List<PendingTask> pendingTasks,
@@ -546,6 +579,15 @@ public class PatientTaskAgentService {
             return fallbackCandidateReply(taskType, structuredResult, needsHumanReview);
         }
         return patientReplyComposer.composeCandidateReply(taskType, structuredResult, needsHumanReview);
+    }
+
+    private List<com.health.agent.dto.patient.PatientVisibleEvidence> buildPatientVisibleEvidence(
+            StructuredTaskResult structuredResult,
+            boolean blockedBySafety) {
+        if (patientReplyComposer == null || blockedBySafety) {
+            return List.of();
+        }
+        return patientReplyComposer.buildPatientVisibleEvidence(structuredResult);
     }
 
     private String fallbackCandidateReply(
@@ -623,6 +665,7 @@ public class PatientTaskAgentService {
                 .supportingEvidence(structuredResult.getSupportingEvidence())
                 .evidenceSources(structuredResult.getEvidenceSources())
                 .inferences(structuredResult.getInferences())
+                .evidenceDetails(structuredResult.getEvidenceDetails())
                 .build();
     }
 
@@ -641,6 +684,15 @@ public class PatientTaskAgentService {
                     .needsAttention(false)
                     .supportingEvidence(List.of("TASK_TYPE_NOT_SUPPORTED"))
                     .evidenceSources(List.of("PATIENT_TASK_AGENT"))
+                    .evidenceDetails(List.of(
+                            StructuredEvidenceItem.builder()
+                                    .summary("当前任务类型尚未支持")
+                                    .source("PATIENT_TASK_AGENT")
+                                    .evidenceType("TASK_TEMPLATE")
+                                    .upstream(false)
+                                    .title("患者任务分析模板")
+                                    .trustLevel("MEDIUM")
+                                    .build()))
                     .build();
         };
     }
@@ -666,6 +718,16 @@ public class PatientTaskAgentService {
                         "MEMORY_SNAPSHOT_ATTACHED"))
                 .evidenceSources(List.of("AI_CHAT_SESSION_CONTEXT", "AI_CHAT_MEMORY_SNAPSHOT"))
                 .inferences(List.of("适合进入结构化随访分析链路"))
+                .evidenceDetails(List.of(
+                        StructuredEvidenceItem.builder()
+                                .summary("已结合当前会话阶段与历史随访上下文进行分析。")
+                                .source("FOLLOW_UP_TEMPLATE")
+                                .evidenceType("TASK_TEMPLATE")
+                                .upstream(false)
+                                .title("患者随访分析模板")
+                                .snippet("当前会话阶段、画像快照和历史记忆已纳入分析。")
+                                .trustLevel("MEDIUM")
+                                .build()))
                 .build();
     }
 
@@ -688,6 +750,16 @@ public class PatientTaskAgentService {
                         "TASK_TYPE_RISK_STRATIFICATION"))
                 .evidenceSources(List.of("PATIENT_MESSAGE", "TRIGGER_DECISION"))
                 .inferences(List.of("当前任务应优先保障人工接管"))
+                .evidenceDetails(List.of(
+                        StructuredEvidenceItem.builder()
+                                .summary("当前任务已命中风险升级模板。")
+                                .source("RISK_TEMPLATE")
+                                .evidenceType("TASK_TEMPLATE")
+                                .upstream(false)
+                                .title("风险升级判断模板")
+                                .snippet("患者消息与升级规则共同触发人工复核。")
+                                .trustLevel("MEDIUM")
+                                .build()))
                 .build();
     }
 
@@ -710,6 +782,16 @@ public class PatientTaskAgentService {
                         "FOLLOW_UP_ACTION_TEMPLATE"))
                 .evidenceSources(List.of("AI_CHAT_SESSION_CONTEXT", "PATIENT_TASK_AGENT"))
                 .inferences(List.of("当前适合给出保守型下一步动作建议"))
+                .evidenceDetails(List.of(
+                        StructuredEvidenceItem.builder()
+                                .summary("当前建议来自随访动作模板与会话主题。")
+                                .source("FOLLOW_UP_ACTION_TEMPLATE")
+                                .evidenceType("TASK_TEMPLATE")
+                                .upstream(false)
+                                .title("下一步随访建议模板")
+                                .snippet("基于当前主题生成保守型随访动作建议。")
+                                .trustLevel("MEDIUM")
+                                .build()))
                 .build();
     }
 

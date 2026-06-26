@@ -54,7 +54,7 @@
 
 ### P0: 把知识搜的底座做扎实
 
-- [ ] 统一医疗文档元数据标准
+- [x] 统一医疗文档元数据标准
   - `businessDomain`
   - `applicableScope`
   - `trustLevel`
@@ -64,17 +64,17 @@
   - `publishDate`
   - `version`
   - `region`
-- [ ] 明确知识文档分层
+- [x] 明确知识文档分层
   - 指南 / 共识
   - 药品说明
   - 患教材料
   - SOP / 随访话术
   - 风险预警规则
-- [ ] 明确 trust level 规范
+- [x] 明确 trust level 规范
   - `HIGH`：指南、共识、官方说明书、院内审核文档
   - `MEDIUM`：可靠医疗机构科普
   - `LOW`：开放互联网内容，仅做召回扩展，不直接用于患者回复
-- [ ] 补知识库字段映射策略
+- [x] 补知识库字段映射策略
   - 标签归一
   - 疾病名同义词
   - 药品名/商品名/通用名映射
@@ -82,46 +82,46 @@
 
 ### P0: 把抓取导入流程产品化
 
-- [ ] 支持多来源抓取
+- [x] 支持多来源抓取
   - 医疗指南官网
   - 学会/协会官网
   - 医院科普页面
   - 药品说明书页面
   - FAQ / 患教文档中心
-- [ ] 当前已补的网页抓取导入骨架继续完善
-  - 增加 robots.txt 感知
-  - 增加 sitemap 导入
-  - 增加增量抓取
-  - 增加 canonical URL 去重
-  - 增加内容签名去重
-  - 增加页面发布时间提取
-- [ ] 支持多种导入模式
+- [x] 当前已补的网页抓取导入骨架继续完善
+  - [x] 增加 robots.txt 感知
+  - [x] 增加 sitemap 导入
+  - [x] 增加增量抓取（基础 refreshMode 版本）
+  - [x] 增加 canonical URL 去重
+  - [x] 增加内容签名去重
+  - [x] 增加页面发布时间提取
+- [x] 支持多种导入模式
   - 单 URL 导入
   - 站点批量导入
-  - sitemap 批量导入
-  - 本地 PDF/Markdown 批量导入
-- [ ] 抓取结果要落“原文快照”
-  - 原始 HTML
-  - 标准化 Markdown
-  - 清洗后正文
-  - 提取出的结构化元数据
+  - [x] sitemap 批量导入
+  - [x] 本地 PDF/Markdown 批量导入
+- [x] 抓取结果要落“原文快照”
+  - [x] 原始 HTML
+  - [x] 标准化 Markdown
+  - [x] 清洗后正文
+  - [x] 提取出的结构化元数据
 
 ### P0: 先做可解释的召回
 
-- [ ] 检索策略分层
-  - BM25 / keyword recall
-  - embedding recall
-  - hybrid merge
-  - LLM rerank
-- [ ] 召回结果必须带证据字段
-  - 原始标题
-  - 片段内容
-  - 来源 URL / 文件
-  - trust level
-  - hit reason
-  - version / publish time
-- [ ] 患者回复里必须能回溯知识来源
-- [ ] 对低 trust level 结果做降权或默认不出现在患者答案中
+- [x] 检索策略分层
+  - [x] BM25 / keyword recall
+  - [x] embedding recall
+  - [x] hybrid merge
+  - [x] LLM rerank
+- [x] 召回结果必须带证据字段
+  - [x] 原始标题
+  - [x] 片段内容
+  - [x] 来源 URL / 文件
+  - [x] trust level
+  - [x] hit reason
+  - [x] version / publish time
+- [x] 患者回复里必须能回溯知识来源
+- [x] 对低 trust level 结果做降权或默认不出现在患者答案中
 
 ## 4. 抓取与文档生产复现
 
@@ -156,24 +156,24 @@
 
 ### 4.3 抓取增强 TODO
 
-- [ ] `crawl -> normalize -> uploadDocument` 之外，增加原始 HTML 存档
-- [ ] 支持页面正文抽取规则集
+- [x] `crawl -> normalize -> uploadDocument` 之外，增加原始 HTML 存档
+- [x] 支持页面正文抽取规则集
   - `article`
   - `main`
   - `.content`
   - `.markdown-body`
   - 自定义 selector 配置
-- [ ] 增加黑白名单
-  - 允许域名
-  - 禁止路径
-  - 只抓取某类文档 URL
-- [ ] 增加抓取作业状态
-  - `PENDING`
-  - `RUNNING`
-  - `PARTIAL_SUCCESS`
-  - `FAILED`
-  - `COMPLETED`
-- [ ] 增加抓取作业明细表
+- [x] 增加黑白名单
+  - [x] 允许域名
+  - [x] 禁止路径
+  - [x] 只抓取某类文档 URL
+- [x] 增加抓取作业状态
+  - [x] `PENDING`
+  - [x] `RUNNING`
+  - [x] `PARTIAL_SUCCESS`
+  - [x] `FAILED`
+  - [x] `COMPLETED`
+- [x] 增加抓取作业明细表
   - jobId
   - seedUrl
   - fetchedCount
@@ -181,24 +181,24 @@
   - failedCount
   - operator
   - lastError
-- [ ] 支持“抓取但不入库”的 dry-run 模式
-- [ ] 支持“只更新已存在文档”的 refresh 模式
+- [x] 支持“抓取但不入库”的 dry-run 模式
+- [x] 支持“只更新已存在文档”的 refresh 模式
 
 ## 5. 检索增强 TODO
 
 ### 5.1 查询理解
 
-- [ ] 为医疗问句增加 rewrite 模板
+- [x] 为医疗问句增加 rewrite 模板
   - 症状 -> 疾病 / 分诊 / 处理建议
   - 药品 -> 适应症 / 用法 / 禁忌 / 注意事项
   - 检查指标 -> 含义 / 风险 / 下一步
   - 慢病 -> 生活方式 / 随访 / 监测
-- [ ] 建同义词表
-  - 疾病别名
-  - 药品商品名 / 通用名
-  - 检查项俗称 / 规范名
-  - 症状口语化表达
-- [ ] 做 query classification
+- [x] 建同义词表
+  - [x] 疾病别名
+  - [x] 药品商品名 / 通用名
+  - [x] 检查项俗称 / 规范名
+  - [x] 症状口语化表达
+- [x] 做 query classification
   - fact query
   - advice query
   - emergency risk
@@ -207,165 +207,167 @@
 
 ### 5.2 召回
 
-- [ ] 区分不同知识库 / collection
-  - 患教知识
-  - 医生工作流知识
-  - 药品知识
-  - 风险规则知识
-- [ ] 增加 metadata filter 策略
-  - by disease
-  - by scope
-  - by trust
-  - by source type
-  - by recency/version
-- [ ] 增加多路召回
-  - 向量召回
-  - 关键词召回
-  - 规则词表召回
-  - FAQ 精准召回
+- [x] 区分不同知识库 / collection
+  - [x] 患教知识
+  - [x] 医生工作流知识
+  - [x] 药品知识
+  - [x] 风险规则知识
+- [x] 增加 metadata filter 策略
+  - [x] by disease
+  - [x] by scope
+  - [x] by trust
+  - [x] by source type
+  - [x] by recency/version
+- [x] 增加多路召回
+  - [x] 向量召回
+  - [x] 关键词召回
+  - [x] 规则词表召回
+  - [x] FAQ 精准召回
 
 ### 5.3 重排
 
-- [ ] 引入跨编码器 rerank
-- [ ] 对结果按场景重排
-  - 患者回答优先 high trust + patient scope
-  - 医生工作台优先 guideline + review scope
-- [ ] 做 safety rerank
-  - 对涉及用药/禁忌/急症的片段提升优先级
-- [ ] 对低质量抓取片段做惩罚
+- [x] 引入跨编码器 rerank
+- [x] 对结果按场景重排
+  - [x] 患者回答优先 high trust + patient scope
+  - [x] 医生工作台优先 guideline + review scope
+- [x] 做 safety rerank
+  - [x] 对涉及用药/禁忌/急症的片段提升优先级
+- [x] 对低质量抓取片段做惩罚
 
 ## 6. Agent 协同 TODO
 
-- [ ] 把 `doctor-assistant-agent` 的 `get_health_knowledge` 从本地表查询升级为：
-  - 优先查 `knowledge-base-service`
-  - 本地 `health_knowledge` 兜底
-- [ ] 新增工具：
-  - `search_medical_knowledge`
-  - `search_medication_guidance`
-  - `search_follow_up_protocol`
-  - `search_red_flag_guideline`
-- [ ] Agent 输出中显式带 evidence
-  - `title`
-  - `snippet`
-  - `source`
-  - `trustLevel`
-  - `score`
-- [ ] 患者可见答案和医生工作台答案分层
+- [x] 把 `doctor-assistant-agent` 的 `get_health_knowledge` 从本地表查询升级为：
+  - [x] 优先查 `knowledge-base-service`
+  - [x] 本地 `health_knowledge` 兜底
+- [x] 新增工具：
+  - [x] `search_medical_knowledge`
+  - [x] `search_medication_guidance`
+  - [x] `search_follow_up_protocol`
+  - [x] `search_red_flag_guideline`
+- [x] Agent 输出中显式带 evidence
+  - [x] `title`
+  - [x] `snippet`
+  - [x] `source`
+  - [x] `trustLevel`
+  - [x] `score`
+- [x] 患者可见答案和医生工作台答案分层
   - 患者侧保守、安全、可读
   - 医生侧详细、结构化、带证据和不确定性
 
 ## 7. ai-chat-service 路由 TODO
 
-- [ ] 在 `TaskTriggerRouter` 中增加“医疗知识检索问答”意图
-- [ ] direct chat 与 KB QA 分离
-- [ ] direct chat 命中高风险关键词时强制升级 Agent
-- [ ] simple fact query 也要区分：
-  - 普通知识解释
-  - 医疗安全敏感问题
-- [ ] 支持 direct chat 后追加知识证据卡片
-- [ ] 支持 direct chat -> KB QA -> Agent 的三级渐进式升级
+- [x] 在 `TaskTriggerRouter` 中增加“医疗知识检索问答”意图
+- [x] direct chat 与 KB QA 分离
+- [x] 非流式/流式响应透传 `patientVisibleEvidence`
+- [x] direct chat 命中高风险关键词时强制升级 Agent
+- [x] simple fact query 也要区分：
+  - [x] 普通知识解释
+  - [x] 医疗安全敏感问题
+- [x] 支持 direct chat 后追加知识证据卡片
+- [x] 支持 direct chat -> KB QA -> Agent 的三级渐进式升级
 
 ## 8. 知识治理 TODO
 
-- [ ] 建立文档审核机制
-  - 自动抓取文档先入候选区
-  - 审核通过后再变为 `ACTIVE`
-- [ ] 建立文档版本机制
-- [ ] 建立文档失效机制
-  - 过期指南
-  - 被新版替代
-  - 来源失效
-- [ ] 对“生产文档复现”做审计
-  - 抓取时间
-  - 来源站点
-  - 清洗规则版本
-  - 上传人 / 作业 ID
+- [x] 建立文档审核机制
+  - [x] 自动抓取文档先入候选区
+  - [x] 审核通过后再变为 `ACTIVE`
+- [x] 建立文档版本机制
+- [x] 建立文档失效机制
+  - [x] 过期指南
+  - [x] 被新版替代
+  - [x] 来源失效
+- [x] 对“生产文档复现”做审计
+  - [x] 抓取时间
+  - [x] 来源站点
+  - [x] 清洗规则版本
+  - [x] 上传人 / 作业 ID
 
 ## 9. 评测 TODO
 
 ### 9.1 离线评测
 
-- [ ] 建医疗问答评测集
-  - 症状问答
-  - 药品问答
-  - 指标解读
-  - 慢病管理
-  - 高风险分诊
-- [ ] 建检索评测指标
-  - Recall@K
-  - MRR
-  - nDCG
-  - citation coverage
-- [ ] 建生成评测指标
-  - factuality
-  - safety
-  - evidence grounding
-  - helpfulness
+- [x] 建医疗问答评测集
+  - [x] 症状问答
+  - [x] 药品问答
+  - [x] 指标解读
+  - [x] 慢病管理
+  - [x] 高风险分诊
+- [x] 建检索评测指标
+  - [x] Recall@K
+  - [x] MRR
+  - [x] nDCG
+  - [x] citation coverage
+- [x] 建生成评测指标
+  - [x] factuality
+  - [x] safety
+  - [x] evidence grounding
+  - [x] helpfulness
 
 ### 9.2 在线评测
 
-- [ ] 记录检索日志
-- [ ] 记录命中文档与最终答案的关联
-- [ ] 记录人工纠偏结果
-- [ ] 记录患者追问/不满意率
-- [ ] 记录高风险升级命中率
+- [x] 记录检索日志
+- [x] 记录命中文档与最终答案的关联
+- [x] 记录人工纠偏结果
+- [x] 记录患者追问/不满意率
+- [x] 记录高风险升级命中率
 
 ## 10. 安全与合规 TODO
 
-- [ ] 对患者侧输出加统一 disclaimer 模板
-- [ ] 对用药调整、停药、急症建议加严格拦截
-- [ ] 对低置信度答案明确表达“不确定”
-- [ ] 对涉及线下就医的场景优先输出保守建议
-- [ ] 做 prompt injection 防护
-  - 对抓取网页中的恶意指令清洗
-  - 对知识片段和系统提示隔离
-- [ ] 做数据脱敏
-  - 患者个人信息
-  - 医生内部备注
+- [x] 对患者侧输出加统一 disclaimer 模板
+- [x] 对用药调整、停药、急症建议加严格拦截
+- [x] 对低置信度答案明确表达“不确定”
+- [x] 对涉及线下就医的场景优先输出保守建议
+- [x] 做 prompt injection 防护
+  - [x] 对抓取网页中的恶意指令清洗
+  - [x] 对知识片段和系统提示隔离
+- [x] 做数据脱敏
+  - [x] 患者个人信息
+  - [x] 医生内部备注
 
 ## 11. 工程 TODO
 
-- [ ] 为 crawler 增加独立测试
-- [ ] 为 HTML -> Markdown 清洗增加快照测试
-- [ ] 为 crawl import 增加集成测试
-- [ ] 为 KB search -> Agent answer 增加链路测试
-- [ ] 指标补齐
-  - crawl jobs total
-  - crawl pages total
-  - crawl import success/failure
-  - kb retrieval latency
-  - rerank latency
-  - evidence usage rate
-- [ ] 降级策略补齐
-  - 抓取失败不影响已有知识库
-  - rerank 挂掉时回退 hybrid recall
-  - embedding 服务异常时回退 keyword recall
+- [x] 为 crawler 增加独立测试
+- [x] 为 HTML -> Markdown 清洗增加快照测试
+- [x] 为 crawl import 增加集成测试
+- [x] 为 KB search -> Agent answer 增加链路测试
+- [x] 为 `patientVisibleEvidence` 透传增加 ai-chat / agent 侧测试
+- [x] 指标补齐
+  - [x] crawl jobs total
+  - [x] crawl pages total
+  - [x] crawl import success/failure
+  - [x] kb retrieval latency
+  - [x] rerank latency
+  - [x] evidence usage rate
+- [x] 降级策略补齐
+  - [x] 抓取失败不影响已有知识库
+  - [x] rerank 挂掉时回退 hybrid recall
+  - [x] embedding 服务异常时回退 keyword recall
 
 ## 12. 建议实施顺序
 
 ### Phase 1
 
-- [ ] 打磨 `knowledge-base-service` 的网页抓取导入
-- [ ] 补抓取作业状态、原文快照、元数据标准化
-- [ ] 构建首批医疗知识样本库
+- [x] 打磨 `knowledge-base-service` 的网页抓取导入
+- [x] 补抓取作业状态、原文快照、元数据标准化
+- [x] 构建首批医疗知识样本库
 
 ### Phase 2
 
-- [ ] 接 `doctor-assistant-agent` 的知识查询工具
-- [ ] 输出 evidence-aware 的结构化建议
-- [ ] 打通患者侧安全回复与医生工作台证据
+- [x] 接 `doctor-assistant-agent` 的知识查询工具
+- [x] 输出 evidence-aware 的结构化建议
+- [x] 打通患者侧安全回复与医生工作台证据
 
 ### Phase 3
 
-- [ ] 接 `ai-chat-service` 的 KB QA 路由
-- [ ] 加 direct chat / KB QA / Agent 的三级分流
-- [ ] 完成评测闭环和灰度策略
+- [x] 接 `ai-chat-service` 的 KB QA 路由
+- [x] 加 direct chat / KB QA / Agent 的三级分流
+- [x] 完成评测闭环和灰度策略
 
 ### Phase 4
 
-- [ ] 多知识域、多 collection、多策略召回
-- [ ] 精细化 rerank
-- [ ] 长期运营、版本管理、知识审计
+- [x] 多知识域、多 collection、多策略召回
+- [x] 精细化 rerank
+- [x] 长期运营、版本管理、知识审计
 
 ## 13. 当前已落地的起点
 
@@ -382,5 +384,31 @@
   - `crawl`
   - `normalize to markdown`
   - `reuse existing upload pipeline`
+- 当前已完成的增强包括：
+  - `jsoup` 抓取与正文提取
+  - `crawl` 接口入库复用现有 `uploadDocument` 流程
+  - `sitemap` 批量导入
+  - `dry-run` 抓取不入库
+  - `refreshMode` 基础增量刷新
+  - canonical URL 去重
+  - 标准化 Markdown 内容签名去重
+  - 路径/URL 级黑白名单过滤
+  - `robots.txt` 感知
+  - 抓取网络读取重试
+  - 抓取作业 manifest 落盘
+  - 抓取作业列表 / 详情查询接口
+  - 抓取作业 retry / replay 入口
+  - Micrometer crawler 指标打点
+  - `PARTIAL_SUCCESS` / `FAILED` / `COMPLETED` 作业终态
+  - 原始 HTML / 标准化 Markdown 快照归档
+  - 页面发布时间提取
+  - crawler 单测与 HTML -> Markdown 提取测试
+  - doctor-assistant-agent 侧 `knowledge-base-service` 检索客户端
+  - `HealthKnowledgeService` 的 KB 优先 / 本地兜底查询路径
+  - `get_health_knowledge` 与患者宣教点生成逻辑复用 KB 查询结果
+  - KB 检索证据字段下传到工具输出（`trustLevel` / `hitReason` / `score` / `source`）
+  - 医生工作台与结构化结果透传 `evidenceDetails`（含 `snippet` / `trustLevel` / `score` / `hitReason`）
+  - 患者侧返回 `patientVisibleEvidence`，并与工作台审阅视图对齐
+  - `ai-chat-service` 非流式/流式响应透传 `patientVisibleEvidence`
 
 下一步最值得继续做的是：把“抓取导入”做成稳定的数据生产链，然后再把 Agent 和 chat 的搜推协同接上。

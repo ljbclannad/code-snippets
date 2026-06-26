@@ -88,6 +88,8 @@ class AiChatServiceConcurrencyTest {
     @Mock
     private TaskTriggerRouter taskTriggerRouter;
     @Mock
+    private MedicalKnowledgeQaService medicalKnowledgeQaService;
+    @Mock
     private DoctorAssistantTaskRequestFactory doctorAssistantTaskRequestFactory;
     @Mock
     private DoctorAssistantAgentGateway doctorAssistantAgentGateway;
@@ -133,6 +135,7 @@ class AiChatServiceConcurrencyTest {
                 degradationStrategyExecutor,
                 layeredMemoryOrchestrator,
                 taskTriggerRouter,
+                medicalKnowledgeQaService,
                 doctorAssistantTaskRequestFactory,
                 doctorAssistantAgentGateway,
                 routeRuntime,
@@ -158,6 +161,7 @@ class AiChatServiceConcurrencyTest {
                 .taskType(TaskType.NONE)
                 .summary("test_default")
                 .build());
+        when(medicalKnowledgeQaService.shouldUseKnowledgeQa(any())).thenReturn(false);
         when(visitorIdentityService.ensureCustomerId(any())).thenAnswer(invocation ->
                 invocation.<ChatRequest>getArgument(0).getCustomerId());
         when(visitorIdentityService.isVisitor(any())).thenReturn(false);
@@ -177,6 +181,13 @@ class AiChatServiceConcurrencyTest {
                         .status(com.lx.governance.aichat.dto.DoctorAssistantTaskStatus.SUCCESS)
                         .taskType(TaskType.PATIENT_FOLLOW_UP_ANALYSIS)
                         .patientSafeReply("建议继续观察并补充近一周血糖记录。")
+                        .patientVisibleEvidence(List.of(
+                                com.lx.governance.aichat.dto.PatientVisibleEvidence.builder()
+                                        .title("血糖复盘建议")
+                                        .summary("建议继续记录近 3 天血糖变化。")
+                                        .source("HEALTH_KNOWLEDGE")
+                                        .trustLevel("HIGH")
+                                        .build()))
                         .needsHumanReview(Boolean.FALSE)
                         .build());
         when(agentDispatchPolicy.evaluate(
@@ -385,6 +396,8 @@ class AiChatServiceConcurrencyTest {
 
         assertTrue(response.getSuccess());
         assertEquals("建议继续观察并补充近一周血糖记录。", response.getMessage());
+        assertEquals(1, response.getPatientVisibleEvidence().size());
+        assertEquals("血糖复盘建议", response.getPatientVisibleEvidence().get(0).getTitle());
         verify(sessionContextService).updateContext(
                 eq("conv-5"),
                 eq("请帮我分析一下最近一周的体重变化"),

@@ -25,8 +25,10 @@ import com.health.agent.dto.patient.DoctorAssistantTaskStatus;
 import com.health.agent.dto.patient.MemorySnapshot;
 import com.health.agent.dto.patient.TaskType;
 import com.health.agent.engine.ReActAgentEngine;
+import com.health.agent.metrics.AgentMetrics;
 import com.health.agent.model.AgentResult;
 import com.health.agent.model.PendingTask;
+import com.health.agent.model.StructuredEvidenceItem;
 import com.health.agent.model.StructuredFinalAnswer;
 import com.health.agent.config.DoctorAgentPlatformProperties;
 import com.lx.governance.agentplatform.model.PlatformTraceContext;
@@ -37,6 +39,8 @@ import com.lx.governance.agentplatform.model.PlatformContextVisibility;
 import com.lx.governance.agentplatform.model.WorkbenchActionType;
 import com.lx.governance.agentplatform.model.WorkbenchViewType;
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+
 @ExtendWith(MockitoExtension.class)
 class PatientTaskAgentServiceTest {
 
@@ -44,9 +48,11 @@ class PatientTaskAgentServiceTest {
     private ReActAgentEngine agentEngine;
 
     private PatientTaskAgentService service;
+    private SimpleMeterRegistry meterRegistry;
 
     @BeforeEach
     void setUp() {
+        meterRegistry = new SimpleMeterRegistry();
         service = new PatientTaskAgentService(
                 new PatientTaskSafetyService(),
                 null,
@@ -57,7 +63,8 @@ class PatientTaskAgentServiceTest {
                 new PatientReplyComposer(),
                 null,
                 null,
-                new DoctorAgentPlatformProperties());
+                new DoctorAgentPlatformProperties(),
+                new AgentMetrics(meterRegistry));
     }
 
     @Test
@@ -74,6 +81,14 @@ class PatientTaskAgentServiceTest {
                         .evidenceSources(List.of("AI_CHAT_MEMORY_SNAPSHOT", "AI_CHAT_SESSION_CONTEXT"))
                         .uncertainties(List.of("缺少完整饮食记录"))
                         .inferences(List.of("当前适合继续随访分析"))
+                        .evidenceDetails(List.of(
+                                StructuredEvidenceItem.builder()
+                                        .title("减重停滞期管理建议")
+                                        .summary("近两周体重变化较小，建议补充饮食和体重记录。")
+                                        .snippet("建议补充近3天饮食和体重记录。")
+                                        .source("HEALTH_KNOWLEDGE")
+                                        .trustLevel("HIGH")
+                                        .build()))
                         .build(),
                 List.of(),
                 2));
@@ -85,6 +100,10 @@ class PatientTaskAgentServiceTest {
         assertTrue(response.getPatientSafeReply().contains("补充近3天饮食和体重记录"));
         assertEquals("MEDIUM", response.getStructuredResult().getRiskLevel());
         assertEquals("AUTO_COMPLETED", response.getDoctorWorkbenchPayload().getReviewStatus());
+        assertTrue(response.getPatientVisibleEvidence().size() >= 1);
+        assertTrue(response.getPatientVisibleEvidence().stream()
+                .anyMatch(item -> "减重停滞期管理建议".equals(item.getTitle())));
+        assertTrue(response.getDoctorWorkbenchPayload().getPatientVisibleEvidence().size() >= 1);
         assertNotNull(response.getPlatformWorkbenchPayload());
         assertEquals(WorkbenchViewType.SUMMARY, response.getPlatformWorkbenchPayload().getViewType());
         assertEquals(1, response.getPlatformWorkbenchPayload().getAvailableActions().size());
@@ -92,6 +111,20 @@ class PatientTaskAgentServiceTest {
                 response.getPlatformWorkbenchPayload().getAvailableActions().get(0).getActionType());
         assertEquals("trace-1", response.getTraceContext().getTraceId());
         assertEquals("agent-session-1", response.getTraceContext().getRunId());
+        assertEquals(1.0, meterRegistry.get("agent.evidence.usage.total")
+                .tag("stage", "structured_result")
+                .tag("task_type", TaskType.PATIENT_FOLLOW_UP_ANALYSIS.name())
+                .tag("evidence_state", "present")
+                .tag("blocked", "false")
+                .counter()
+                .count());
+        assertEquals(1.0, meterRegistry.get("agent.evidence.usage.total")
+                .tag("stage", "patient_visible")
+                .tag("task_type", TaskType.PATIENT_FOLLOW_UP_ANALYSIS.name())
+                .tag("evidence_state", "present")
+                .tag("blocked", "false")
+                .counter()
+                .count());
     }
 
     @Test
@@ -133,6 +166,14 @@ class PatientTaskAgentServiceTest {
                         .evidenceSources(List.of("PATIENT_MESSAGE", "AI_CHAT_SESSION_CONTEXT"))
                         .uncertainties(List.of("仍需人工复核"))
                         .inferences(List.of("存在诊断性表述"))
+                        .evidenceDetails(List.of(
+                                StructuredEvidenceItem.builder()
+                                        .title("药物不良反应知识")
+                                        .summary("症状与近期用药存在时间相关性。")
+                                        .snippet("需要结合线下评估确认是否为药物相关不适。")
+                                        .source("HEALTH_KNOWLEDGE")
+                                        .trustLevel("HIGH")
+                                        .build()))
                         .build(),
                 List.of(),
                 1));
@@ -143,6 +184,14 @@ class PatientTaskAgentServiceTest {
         assertTrue(response.getNeedsHumanReview());
         assertTrue(response.getPatientSafeReply().contains("不适合在线直接给出处方、药物调整或诊断结论"));
         assertEquals("HIGH", response.getStructuredResult().getRiskLevel());
+        assertTrue(response.getPatientVisibleEvidence().isEmpty());
+        assertEquals(1.0, meterRegistry.get("agent.evidence.usage.total")
+                .tag("stage", "patient_visible")
+                .tag("task_type", TaskType.PATIENT_FOLLOW_UP_ANALYSIS.name())
+                .tag("evidence_state", "missing")
+                .tag("blocked", "true")
+                .counter()
+                .count());
     }
 
     @Test
@@ -183,6 +232,7 @@ class PatientTaskAgentServiceTest {
         assertEquals(DoctorAssistantTaskStatus.SUCCESS, response.getStatus());
         assertTrue(response.getPatientSafeReply().contains("整理了这次随访"));
         assertEquals(2, response.getStructuredResult().getSupportingEvidence().size());
+        assertTrue(response.getPatientVisibleEvidence().size() >= 1);
         assertEquals("AUTO_COMPLETED", response.getDoctorWorkbenchPayload().getReviewStatus());
     }
 
@@ -200,7 +250,8 @@ class PatientTaskAgentServiceTest {
                 new PatientReplyComposer(),
                 null,
                 null,
-                properties);
+                properties,
+                new AgentMetrics(meterRegistry));
         when(agentEngine.executeStream(any(), any())).thenReturn(
                 AgentResult.error("agent-session-5", "engine failure", List.of(), 1));
 

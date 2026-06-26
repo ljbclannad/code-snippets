@@ -136,6 +136,18 @@ public class DoctorWorkbenchPayload {
     private List<String> uncertainties = new ArrayList<>();
 
     /**
+     * 医生工作台可直接展示的结构化证据明细。
+     */
+    @Builder.Default
+    private List<EvidenceDetail> evidenceDetails = new ArrayList<>();
+
+    /**
+     * 患者侧实际可见的证据卡片，便于工作台审阅“患者看到了什么依据”。
+     */
+    @Builder.Default
+    private List<PatientVisibleEvidence> patientVisibleEvidence = new ArrayList<>();
+
+    /**
      * 如需审批或人工接管，这里挂待处理任务摘要。
      */
     private DoctorAssistantPendingTaskPayload pendingTask;

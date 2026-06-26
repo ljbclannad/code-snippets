@@ -119,6 +119,10 @@ public class ToolRegistry implements AgentToolCatalog {
             case "detect_weight_plateau" -> this::detectWeightPlateau;
             case "analyze_adherence_signals" -> this::analyzeAdherenceSignals;
             case "get_health_knowledge" -> this::getHealthKnowledge;
+            case "search_medical_knowledge" -> this::searchMedicalKnowledge;
+            case "search_medication_guidance" -> this::searchMedicationGuidance;
+            case "search_follow_up_protocol" -> this::searchFollowUpProtocol;
+            case "search_red_flag_guideline" -> this::searchRedFlagGuideline;
             case "triage_red_flags" -> this::triageRedFlags;
             case "analyze_medication_adherence" -> this::analyzeMedicationAdherence;
             case "summarize_symptom_timeline" -> this::summarizeSymptomTimeline;
@@ -428,48 +432,47 @@ public class ToolRegistry implements AgentToolCatalog {
             knowledgeList = healthKnowledgeService.searchByKeyword(topic, 3);
         }
 
-        if (knowledgeList.isEmpty()) {
-            Map<String, Object> data = Map.of(
-                "topic", topic,
-                "found", false,
-                "message", "未找到相关健康知识，建议咨询专业医生"
-            );
-            return ToolExecutionOutput.builder()
-                .data(data)
-                .summary("未找到相关健康知识")
-                .stateUpdates(Map.of("health_knowledge", data))
-                .evidence(List.of(
-                    ToolEvidence.builder()
-                        .source("HEALTH_KNOWLEDGE")
-                        .summary("未找到相关健康知识")
-                        .payload(data)
-                        .build()
-                ))
-                .build();
-        }
+        return buildKnowledgeToolOutput("health_knowledge", topic, knowledgeList, "相关健康知识");
+    }
 
-        List<Map<String, Object>> data = knowledgeList.stream()
-            .map(k -> {
-                Map<String, Object> row = new LinkedHashMap<>();
-                row.put("title", k.getTitle());
-                row.put("category", k.getCategory());
-                row.put("content", k.getContent());
-                row.put("source", k.getSource() != null ? k.getSource() : "");
-                return row;
-            })
-            .collect(Collectors.toList());
-        return ToolExecutionOutput.builder()
-            .data(data)
-            .summary("已检索到相关健康知识")
-            .stateUpdates(Map.of("health_knowledge", data))
-            .evidence(List.of(
-                ToolEvidence.builder()
-                    .source("HEALTH_KNOWLEDGE")
-                    .summary("已检索到相关健康知识")
-                    .payload(data)
-                    .build()
-            ))
-            .build();
+    private Object searchMedicalKnowledge(Map<String, Object> input) {
+        String query = (String) input.get("query");
+        log.info("查询医疗知识: query={}", query);
+        return buildKnowledgeToolOutput(
+                "medical_knowledge",
+                query,
+                healthKnowledgeService.searchMedicalKnowledge(query, 5),
+                "医疗知识");
+    }
+
+    private Object searchMedicationGuidance(Map<String, Object> input) {
+        String query = (String) input.get("query");
+        log.info("查询用药指导: query={}", query);
+        return buildKnowledgeToolOutput(
+                "medication_guidance",
+                query,
+                healthKnowledgeService.searchMedicationGuidance(query, 5),
+                "用药指导");
+    }
+
+    private Object searchFollowUpProtocol(Map<String, Object> input) {
+        String query = (String) input.get("query");
+        log.info("查询随访规范: query={}", query);
+        return buildKnowledgeToolOutput(
+                "follow_up_protocol",
+                query,
+                healthKnowledgeService.searchFollowUpProtocol(query, 5),
+                "随访规范");
+    }
+
+    private Object searchRedFlagGuideline(Map<String, Object> input) {
+        String query = (String) input.get("query");
+        log.info("查询红旗症状指引: query={}", query);
+        return buildKnowledgeToolOutput(
+                "red_flag_guideline",
+                query,
+                healthKnowledgeService.searchRedFlagGuideline(query, 5),
+                "红旗症状指引");
     }
 
     private Object sendReminder(Map<String, Object> input) {
@@ -491,6 +494,56 @@ public class ToolRegistry implements AgentToolCatalog {
                     .build()
             ))
             .build();
+    }
+
+    private Object buildKnowledgeToolOutput(
+            String stateSlot,
+            String query,
+            List<HealthKnowledge> knowledgeList,
+            String knowledgeType) {
+        if (knowledgeList == null || knowledgeList.isEmpty()) {
+            Map<String, Object> data = Map.of(
+                    "query", query,
+                    "found", false,
+                    "message", "未找到相关" + knowledgeType + "，建议结合患者情况进一步确认");
+            return ToolExecutionOutput.builder()
+                    .data(data)
+                    .summary("未找到相关" + knowledgeType)
+                    .stateUpdates(Map.of(stateSlot, data))
+                    .evidence(List.of(
+                            ToolEvidence.builder()
+                                    .source("HEALTH_KNOWLEDGE")
+                                    .summary("未找到相关" + knowledgeType)
+                                    .payload(data)
+                                    .build()))
+                    .build();
+        }
+
+        List<Map<String, Object>> data = knowledgeList.stream()
+                .map(k -> {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("title", k.getTitle());
+                    row.put("category", k.getCategory());
+                    row.put("content", k.getContent());
+                    row.put("source", k.getSource() != null ? k.getSource() : "");
+                    row.put("trustLevel", k.getTrustLevel() != null ? k.getTrustLevel() : "");
+                    row.put("hitReason", k.getHitReason() != null ? k.getHitReason() : "");
+                    row.put("score", k.getScore());
+                    row.put("applicableScope", k.getApplicableScope() != null ? k.getApplicableScope() : "");
+                    return row;
+                })
+                .collect(Collectors.toList());
+        return ToolExecutionOutput.builder()
+                .data(data)
+                .summary("已检索到相关" + knowledgeType)
+                .stateUpdates(Map.of(stateSlot, data))
+                .evidence(List.of(
+                        ToolEvidence.builder()
+                                .source("HEALTH_KNOWLEDGE")
+                                .summary("已检索到相关" + knowledgeType)
+                                .payload(data)
+                                .build()))
+                .build();
     }
 
     private Object createFollowUpTask(Map<String, Object> input) {
@@ -730,6 +783,18 @@ public class ToolRegistry implements AgentToolCatalog {
         data.put("riskLevel", riskLevel);
         data.put("educationPoints", points.stream().limit(5).toList());
         data.put("evidenceSources", List.of("HEALTH_KNOWLEDGE"));
+        data.put("evidence", knowledgeList.stream()
+                .limit(3)
+                .map(k -> {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("title", k.getTitle());
+                    row.put("source", k.getSource() != null ? k.getSource() : "");
+                    row.put("trustLevel", k.getTrustLevel() != null ? k.getTrustLevel() : "");
+                    row.put("hitReason", k.getHitReason() != null ? k.getHitReason() : "");
+                    row.put("score", k.getScore());
+                    return row;
+                })
+                .toList());
         return toolOutput("patient_education_points", data, "已生成患者教育要点", "HEALTH_KNOWLEDGE");
     }
 
