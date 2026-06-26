@@ -59,10 +59,10 @@ ai/
 
 ### 模块与端口
 
-| 服务 | 端口 | 说明 |
-|-----|------|-----|
-| ai-chat-service | 8100 | AI对话服务 |
-| user-profile-service | 8101 | 用户画像服务 |
+| 服务                  | 端口 | 说明         |
+| --------------------- | ---- | ------------ |
+| ai-chat-service       | 8100 | AI对话服务   |
+| user-profile-service  | 8101 | 用户画像服务 |
 | vector-memory-service | 8102 | 向量记忆服务 |
 
 ### 基础设施依赖
@@ -78,24 +78,25 @@ ai/
 从项目根目录执行：
 
 ```bash
-# 方式 1: 使用脚本（推荐）
-bash sh/run/start-ai-services.sh
-
-# 方式 2: 手动启动主链路服务
+# 主链路 4 个服务
 mvn -q -pl ai/user-profile-service spring-boot:run
 mvn -q -pl ai/vector-memory-service spring-boot:run
 mvn -q -pl ai/ai-chat-service spring-boot:run
 mvn -q -pl ai/doctor-assistant-agent spring-boot:run
+
+# 如需启用 KB QA / 知识检索链路，再单独启动知识库服务
+mvn -q -pl ai/knowledge-base-service spring-boot:run
 ```
 
 说明：
 
-- `start-ai-services.sh` 当前会启动 AI 主链路依赖的 4 个服务：
+- 当前仓库内未包含统一启动脚本，以上命令以各模块 `pom.xml` 和 `application.yml` 为准
+- 默认对话主链路依赖：
   - `user-profile-service`
   - `vector-memory-service`
   - `ai-chat-service`
   - `doctor-assistant-agent`
-- `knowledge-base-service` 仍然保持独立启动，避免把知识库任务耦合进默认对话链路
+- `knowledge-base-service` 可独立启动，按需支撑 KB QA 和 Agent 证据检索
 
 ### 环境变量
 
@@ -109,10 +110,20 @@ export DIFY_API_KEY=your-key
 
 ### 快速验证
 
+当前仓库内未包含统一验证脚本，建议按模块执行最小验证：
+
 ```bash
-bash sh/test/test-01-user-profile.sh
-bash sh/test/test-02-vector-memory.sh
-bash sh/test/test-03-ai-chat.sh
+# 编译单模块
+mvn -f ai/user-profile-service/pom.xml test
+mvn -f ai/vector-memory-service/pom.xml test
+mvn -f ai/ai-chat-service/pom.xml test
+mvn -f ai/doctor-assistant-agent/pom.xml test
+
+# 健康检查
+curl http://localhost:8101/actuator/health
+curl http://localhost:8102/actuator/health
+curl http://localhost:8100/actuator/health
+curl http://localhost:8088/actuator/health
 ```
 
 ### 主链路说明
@@ -172,10 +183,10 @@ bash sh/test/test-03-ai-chat.sh
 
 ### 模块与端口
 
-| 服务 | 端口 | 说明 |
-|-----|------|-----|
+| 服务                   | 端口 | 说明          |
+| ---------------------- | ---- | ------------- |
 | doctor-assistant-agent | 8088 | 医生助理Agent |
-| knowledge-base-service | 8103 | 知识库服务 |
+| knowledge-base-service | 8103 | 知识库服务    |
 
 ### 首批场景
 
@@ -198,6 +209,7 @@ mvn -q -pl ai/knowledge-base-service spring-boot:run
 - [患者对话 Agent 协同系统](../docs/patient-dialog-agent/README.md)
 - [演进计划完整文档](../docs/patient-dialog-agent/evolution-plan.md)
 - [Doctor Assistant Agent 说明](doctor-assistant-agent/README.md)
+- [Agent Platform 完整监控与步骤质量判断说明书](AGENT-PLATFORM-STEP-QUALITY-MANUAL.md)
 
 ## 监控与可观测性
 

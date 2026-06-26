@@ -57,7 +57,7 @@
 - 平台目标不是把所有场景都强行改成 doctor workflow，而是建立统一的 `run / agent / tool / context / approval` 协议，让 doctor、knowledge、risk 等场景都能复用
 - 平台后续所有新增能力都围绕统一 `run` 建模，避免继续出现“对话链路一套状态、Agent 链路一套状态”的分裂模型
 - 所有平台化改造默认保留降级、安全和人工复核边界，患者侧稳定性优先于抽象完整性
-- 当前分支 `codex/ai-multi-agent-platform` 作为本次平台化改造主线分支
+- 当前平台化改造以仓库内现有实现和配置为准，不依赖固定分支名作为文档前提
 
 ---
 
@@ -1191,8 +1191,7 @@
     - `doctor.agent.runtime.*`
     - `doctor.agent.safety.*`
     - `ai-chat.agent.*`
-  - 已补充本地配置 / Nacos 配置边界文档：
-    - [MULTI-AGENT-CONFIG-GOVERNANCE.md](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/MULTI-AGENT-CONFIG-GOVERNANCE.md)
+  - 本地配置 / Nacos 配置边界需要继续收敛；当前以各模块 `application.yml` 与 Nacos 接入状态为准
   - `Nacos` 接入暂未落地，当前仍以本地 Spring Boot 配置为主，但远端化优先级已经明确
 
 ---

@@ -18,10 +18,10 @@
     <module>distributed/inventory-service</module>
     <module>distributed/outbox-consumer</module>
     <module>distributed/appointment-service</module>
+    <module>distributed/nacos-simulator</module>
 
     <!-- AI Services -->
     <module>ai/ai-chat-service</module>
-    <module>ai/stream-markdown-demo</module>
     <module>ai/agent-platform-common</module>
     <module>ai/user-profile-service</module>
     <module>ai/vector-memory-service</module>

@@ -29,7 +29,7 @@
 - [ActionExecutor.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/doctor-assistant-agent/src/main/java/com/health/agent/engine/ActionExecutor.java)
 - [PlatformMetricsService.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/agent-platform-common/src/main/java/com/lx/governance/agentplatform/runtime/PlatformMetricsService.java)
 - [RunReplayService.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/agent-platform-common/src/main/java/com/lx/governance/agentplatform/runtime/RunReplayService.java)
-- [MemoryRetrievalService.java](/Users/lejinbo/LLM/code-snippets/governance-suite/vector-memory-service/src/main/java/com/lx/governance/vectormemory/service/MemoryRetrievalService.java)
+- [MemoryRetrievalService.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/vector-memory-service/src/main/java/com/lx/governance/vectormemory/service/MemoryRetrievalService.java)
 - [LayeredMemoryOrchestrator.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/ai-chat-service/src/main/java/com/lx/governance/aichat/service/LayeredMemoryOrchestrator.java)
 
 ---
@@ -297,8 +297,8 @@
 
 当前代码位置：
 
-- [MemoryRetrievalService.java](/Users/lejinbo/LLM/code-snippets/governance-suite/vector-memory-service/src/main/java/com/lx/governance/vectormemory/service/MemoryRetrievalService.java)
-- [MemoryRerankService.java](/Users/lejinbo/LLM/code-snippets/governance-suite/vector-memory-service/src/main/java/com/lx/governance/vectormemory/service/MemoryRerankService.java)
+- [MemoryRetrievalService.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/vector-memory-service/src/main/java/com/lx/governance/vectormemory/service/MemoryRetrievalService.java)
+- [MemoryRerankService.java](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/vector-memory-service/src/main/java/com/lx/governance/vectormemory/service/MemoryRerankService.java)
 - [memory-retrieval-rerank.md](/Users/lejinbo/LLM/code-snippets/governance-suite/docs/analysis/memory-retrieval-rerank.md)
 
 当前能监控的内容：
@@ -774,4 +774,3 @@
 可以直接这样总结：
 
 `我把这套 Agent 平台拆成了入口、上下文、记忆检索、路由、分发、selector、推理、工具、审批、收敛、回放和审计等多个步骤。每个步骤我都能说明目标、输入输出、当前可观测信号、质量判断方式和常见异常模式。这样系统就不只是“能跑通”，而是“可解释、可追踪、可回放、可治理”。`
-

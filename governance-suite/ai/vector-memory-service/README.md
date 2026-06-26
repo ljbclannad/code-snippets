@@ -378,7 +378,7 @@
 配置文件：
 
 - [application.yml](src/main/resources/application.yml)
-- [Memory Lifecycle TODO](TODO-MEMORY-LIFECYCLE.md)
+- [Memory Lifecycle](MEMORY-LIFECYCLE.md)
 
 重点配置项：
 
