@@ -1,6 +1,8 @@
 package com.health.agent.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.health.agent.learning.model.AgentRunOutcome;
+import com.health.agent.learning.service.AgentOutcomeRecorder;
 import com.health.agent.mapper.PendingTaskMapper;
 import com.health.agent.model.PendingTask;
 import com.health.agent.model.TaskStatus;
@@ -27,6 +29,9 @@ public class PendingTaskService implements ApprovalRepository<PendingTask> {
 
     @Autowired(required = false)
     private DoctorPlatformRunPersistenceService platformRunPersistenceService;
+
+    @Autowired(required = false)
+    private AgentOutcomeRecorder outcomeRecorder;
 
     /**
      * 保存待确认任务
@@ -96,6 +101,7 @@ public class PendingTaskService implements ApprovalRepository<PendingTask> {
 
         taskMapper.updateById(task);
         syncPlatformApprovalStatus(task);
+        syncOutcomeReviewStatus(task, true, false);
         agentAuditService.recordTaskReview(taskId, TaskStatus.APPROVED.name(), reviewComment);
         log.info("批准任务: taskId={}, tool={}", taskId, task.getToolName());
         return task;
@@ -117,6 +123,7 @@ public class PendingTaskService implements ApprovalRepository<PendingTask> {
 
         taskMapper.updateById(task);
         syncPlatformApprovalStatus(task);
+        syncOutcomeReviewStatus(task, false, true);
         agentAuditService.recordTaskReview(taskId, TaskStatus.REJECTED.name(), reviewComment);
         log.info("拒绝任务: taskId={}, tool={}", taskId, task.getToolName());
         return task;
@@ -145,5 +152,21 @@ public class PendingTaskService implements ApprovalRepository<PendingTask> {
         if (platformRunPersistenceService != null && task != null) {
             platformRunPersistenceService.syncApprovalStatus(task);
         }
+    }
+
+    private void syncOutcomeReviewStatus(PendingTask task, boolean doctorAccepted, boolean doctorRejected) {
+        if (outcomeRecorder == null || task == null || task.getAgentSessionId() == null) {
+            return;
+        }
+        outcomeRecorder.createOrUpdate(AgentRunOutcome.builder()
+                .runId(task.getAgentSessionId())
+                .sessionId(task.getAgentSessionId())
+                .doctorId(task.getDoctorId())
+                .customerId(task.getCustomerId())
+                .manualReviewRequired(Boolean.TRUE)
+                .doctorAccepted(doctorAccepted)
+                .doctorRejected(doctorRejected)
+                .manualOverride(doctorRejected ? Boolean.TRUE : Boolean.FALSE)
+                .build());
     }
 }

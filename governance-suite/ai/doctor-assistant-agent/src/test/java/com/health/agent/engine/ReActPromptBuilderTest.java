@@ -101,6 +101,34 @@ class ReActPromptBuilderTest {
     }
 
     @Test
+    void shouldExposeDescriptorVersionInRenderedPrompt() {
+        InMemoryPromptRegistry registry = new InMemoryPromptRegistry(List.of(new PromptTemplateRenderer() {
+            @Override
+            public PromptTemplateDescriptor descriptor() {
+                return PromptTemplateDescriptor.builder()
+                    .scene(ReActPromptBuilder.DOCTOR_SCENE)
+                    .agentId(ReActPromptBuilder.DOCTOR_AGENT)
+                    .version("doctor-react-prompt-v3")
+                    .type(PromptTemplateType.SUB_AGENT_SYSTEM)
+                    .description("test sub-agent prompt")
+                    .build();
+            }
+
+            @Override
+            public String render(PromptRenderRequest request) {
+                return "registry-sub-agent-prompt-v3";
+            }
+        }));
+        org.springframework.test.util.ReflectionTestUtils.setField(promptBuilder, "promptRegistry", registry);
+
+        RenderedPrompt renderedPrompt = promptBuilder.renderSubAgentSystemPromptFromCatalog(null, List.of());
+
+        assertEquals("registry-sub-agent-prompt-v3", renderedPrompt.getContent());
+        assertEquals("doctor-react-prompt-v3", renderedPrompt.getDescriptor().getVersion());
+        assertEquals(PromptTemplateType.SUB_AGENT_SYSTEM, renderedPrompt.getDescriptor().getType());
+    }
+
+    @Test
     void shouldRenderSnapshotSummariesWithStructuredTemplate() {
         AgentExecutionCommand command = AgentExecutionCommand.builder()
                 .goal("分析患者本轮随访风险")

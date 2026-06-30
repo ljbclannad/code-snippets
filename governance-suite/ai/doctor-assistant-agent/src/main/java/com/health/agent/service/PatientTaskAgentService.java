@@ -12,6 +12,9 @@ import com.health.agent.dto.patient.MemorySnapshot;
 import com.health.agent.dto.patient.StructuredTaskResult;
 import com.health.agent.dto.patient.TaskType;
 import com.health.agent.engine.ReActAgentEngine;
+import com.health.agent.learning.enums.AgentOutcomeLabel;
+import com.health.agent.learning.model.AgentRunOutcome;
+import com.health.agent.learning.service.AgentOutcomeRecorder;
 import com.health.agent.metrics.AgentMetrics;
 import com.health.agent.model.AgentContext;
 import com.health.agent.model.AgentResult;
@@ -55,9 +58,10 @@ public class PatientTaskAgentService {
     private final DoctorPlatformRunPersistenceService platformRunPersistenceService;
     private final DoctorAgentPlatformProperties platformProperties;
     private final AgentMetrics agentMetrics;
+    private final AgentOutcomeRecorder outcomeRecorder;
 
     public PatientTaskAgentService(PatientTaskSafetyService safetyService) {
-        this(safetyService, null, null, null, null, null, null, null, null, null, null);
+        this(safetyService, null, null, null, null, null, null, null, null, null, null, null);
     }
 
     @Autowired
@@ -74,6 +78,25 @@ public class PatientTaskAgentService {
         DoctorAgentPlatformProperties platformProperties,
         AgentMetrics agentMetrics
     ) {
+        this(safetyService, sessionService, workflowService, medicalSafetyService, agentEngine, resultMapper,
+                patientReplyComposer, pendingTaskService, platformRunPersistenceService, platformProperties,
+                agentMetrics, null);
+    }
+
+    public PatientTaskAgentService(
+        PatientTaskSafetyService safetyService,
+        AgentSessionService sessionService,
+        AgentSessionWorkflowService workflowService,
+        MedicalSafetyService medicalSafetyService,
+        ReActAgentEngine agentEngine,
+        PatientTaskAgentResultMapper resultMapper,
+        PatientReplyComposer patientReplyComposer,
+        PendingTaskService pendingTaskService,
+        DoctorPlatformRunPersistenceService platformRunPersistenceService,
+        DoctorAgentPlatformProperties platformProperties,
+        AgentMetrics agentMetrics,
+        AgentOutcomeRecorder outcomeRecorder
+    ) {
         this.safetyService = safetyService;
         this.sessionService = sessionService;
         this.workflowService = workflowService;
@@ -85,6 +108,7 @@ public class PatientTaskAgentService {
         this.platformRunPersistenceService = platformRunPersistenceService;
         this.platformProperties = platformProperties;
         this.agentMetrics = agentMetrics;
+        this.outcomeRecorder = outcomeRecorder;
     }
 
     /**
@@ -175,6 +199,7 @@ public class PatientTaskAgentService {
                             "AGENT_STATUS_" + agentResult.getStatus().name(),
                             "真实 Agent 未稳定收敛，且当前关闭模板兜底");
                 }
+                markFallbackUsed(agentResult, command);
                 return analyzeWithTemplateFallback(request, command, "AGENT_STATUS_" + agentResult.getStatus().name());
             }
             return buildAgentBackedResponse(request, command, agentResult);
@@ -530,6 +555,22 @@ public class PatientTaskAgentService {
                 outcomeMode,
                 "PATIENT_TASK_AGENT",
                 null);
+    }
+
+    private void markFallbackUsed(AgentResult agentResult, AgentExecutionCommand command) {
+        if (outcomeRecorder == null || agentResult == null || agentResult.getSessionId() == null) {
+            return;
+        }
+        outcomeRecorder.createOrUpdate(AgentRunOutcome.builder()
+                .runId(agentResult.getSessionId())
+                .sessionId(agentResult.getSessionId())
+                .scene(com.health.agent.engine.ReActPromptBuilder.DOCTOR_SCENE)
+                .taskType(command != null && command.getTaskType() != null ? command.getTaskType().name() : null)
+                .customerId(command != null ? command.getCustomerId() : null)
+                .doctorId(command != null ? command.getDoctorId() : null)
+                .outcomeLabel(AgentOutcomeLabel.SUCCESS_WITH_FALLBACK)
+                .fallbackUsed(Boolean.TRUE)
+                .build());
     }
 
     private void recordEvidenceMetrics(

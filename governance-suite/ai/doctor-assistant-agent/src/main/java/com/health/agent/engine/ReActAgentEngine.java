@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -16,6 +17,11 @@ import com.health.agent.dto.agent.AgentExecutionCommand;
 import com.health.agent.engine.subagent.AgentSubAgent;
 import com.health.agent.engine.subagent.SubAgentCoordinator;
 import com.health.agent.exception.AgentException;
+import com.health.agent.learning.enums.AgentOutcomeLabel;
+import com.health.agent.learning.model.AgentRunOutcome;
+import com.health.agent.learning.model.AgentRunStrategySnapshot;
+import com.health.agent.learning.service.AgentOutcomeRecorder;
+import com.health.agent.learning.service.AgentRunStrategySnapshotRecorder;
 import com.health.agent.metrics.AgentMetrics;
 import com.health.agent.model.ActionDecision;
 import com.health.agent.model.ActionResult;
@@ -28,6 +34,7 @@ import com.health.agent.model.ContextEntry;
 import com.health.agent.model.EvidenceRecord;
 import com.health.agent.model.Message;
 import com.health.agent.model.PendingTask;
+import com.health.agent.model.ResultStatus;
 import com.health.agent.model.SessionStatus;
 import com.health.agent.model.Step;
 import com.health.agent.model.StructuredFinalAnswer;
@@ -56,6 +63,7 @@ import com.lx.governance.agentplatform.model.PlatformContextField;
 import com.lx.governance.agentplatform.model.RunStatus;
 import com.lx.governance.agentplatform.model.PlatformContextVisibility;
 import com.lx.governance.agentplatform.model.PlatformHandoffItemType;
+import com.lx.governance.agentplatform.model.PromptTemplateType;
 import com.lx.governance.agentplatform.runtime.AbstractPlatformLoopExecutor;
 import com.lx.governance.agentplatform.runtime.LoopStepDecision;
 import com.lx.governance.agentplatform.runtime.PlatformLoopExecutor;
@@ -72,6 +80,8 @@ public class ReActAgentEngine {
     private static final String SLOT_SUB_AGENT_SELECTION_DECISION = "sub_agent_selection_decision";
     private static final String SLOT_SUB_AGENT_PENDING_PLAN = "sub_agent_pending_plan";
     private static final String SLOT_SUB_AGENT_EXECUTED_PLAN = "sub_agent_executed_plan";
+    private static final String SELECTOR_VERSION = "sub-agent-coordinator-v1";
+    private static final String TOOL_CATALOG_VERSION = "doctor-tool-catalog-v1";
 
     private final PlatformLoopExecutor<ReActLoopState, AgentResult> loopExecutor = new ReActPlatformLoopExecutor();
 
@@ -117,6 +127,12 @@ public class ReActAgentEngine {
     @Autowired(required = false)
     private DoctorAgentRuntimeProperties runtimeProperties;
 
+    @Autowired(required = false)
+    private AgentRunStrategySnapshotRecorder strategySnapshotRecorder;
+
+    @Autowired(required = false)
+    private AgentOutcomeRecorder outcomeRecorder;
+
     private int maxSteps = 15;
 
     private boolean useMock = false;
@@ -143,6 +159,7 @@ public class ReActAgentEngine {
 
         // 通过关键词处理边界与安全
         SafetyAssessment goalAssessment = medicalSafetyService.assessGoal(goal);
+        recordInitialStrategySnapshot(sessionId, context, null);
         if (goalAssessment.isBlocked()) {
             context.addEvidence("goal_assessment", "SAFETY_RULE", goalAssessment.message(), Map.of("goal", goal));
             recordSafetyBlock(sessionId, customerId, doctorId, goal, goalAssessment, Map.of("goal", goal));
@@ -152,6 +169,8 @@ public class ReActAgentEngine {
                     medicalSafetyService.buildSafetyStructuredAnswer(goalAssessment.message()),
                     history,
                     0);
+            recordOutcome(sessionId, context, result, System.currentTimeMillis() - startTime,
+                    AgentOutcomeLabel.FAILED_SAFETY_BLOCK, null, goalAssessment.message());
             agentAuditService.recordSessionResult(sessionId, customerId, doctorId, goal, result, 0,
                     System.currentTimeMillis() - startTime);
             return result;
@@ -201,6 +220,7 @@ public class ReActAgentEngine {
         List<Step> history = new ArrayList<>();
         List<Message> messages = new ArrayList<>();
         AgentContext context = createInitialContext(command);
+        recordInitialStrategySnapshot(sessionId, context, command);
 
         // 先做目标级安全预检，命中高危规则时直接返回安全结果，不进入模型循环。
         SafetyAssessment goalAssessment = medicalSafetyService.assessGoal(goal);
@@ -213,6 +233,8 @@ public class ReActAgentEngine {
                     medicalSafetyService.buildSafetyStructuredAnswer(goalAssessment.message()),
                     history,
                     0);
+            recordOutcome(sessionId, context, result, System.currentTimeMillis() - startTime,
+                    AgentOutcomeLabel.FAILED_SAFETY_BLOCK, null, goalAssessment.message());
             emitEvent(eventSink, sessionId, 0, AgentStreamEventType.FINAL_ANSWER, result.getStructuredFinalAnswer());
             emitDone(eventSink, sessionId, 0, result.getStatus().name());
             agentAuditService.recordSessionResult(sessionId, customerId, doctorId, goal, result, 0,
@@ -220,7 +242,7 @@ public class ReActAgentEngine {
             return result;
         }
 
-        AgentSubAgent initialSubAgent = selectSubAgent(goal, context);
+        AgentSubAgent initialSubAgent = selectSubAgent(sessionId, goal, context);
         AgentContext initialVisibleContext = projectContextForSubAgent(context, initialSubAgent);
         messages.add(Message.user(promptBuilder.buildUserPrompt(
                 commandForPrompt(command, initialVisibleContext))));
@@ -447,7 +469,10 @@ public class ReActAgentEngine {
                     "恢复执行失败",
                     List.of("请人工复核当前待审批任务和会话状态", "必要时重新发起新的减重分析会话"),
                     List.of("自动恢复链路已中断", e.getMessage()));
-            return AgentResult.error(sessionId, e.getMessage(), degraded, new ArrayList<>(), 0);
+            AgentResult result = AgentResult.error(sessionId, e.getMessage(), degraded, new ArrayList<>(), 0);
+            recordOutcome(sessionId, null, result, System.currentTimeMillis() - startTime,
+                    AgentOutcomeLabel.FAILED_RUNTIME, e.getClass().getSimpleName(), e.getMessage());
+            return result;
         }
     }
 
@@ -497,6 +522,8 @@ public class ReActAgentEngine {
                     List.of("请人工复核当前待审批任务和会话状态", "必要时重新发起新的减重分析会话"),
                     List.of("自动恢复链路已中断", e.getMessage()));
             AgentResult result = AgentResult.error(sessionId, e.getMessage(), degraded, new ArrayList<>(), 0);
+            recordOutcome(sessionId, null, result, System.currentTimeMillis() - startTime,
+                    AgentOutcomeLabel.FAILED_RUNTIME, e.getClass().getSimpleName(), e.getMessage());
             emitEvent(eventSink, sessionId, 0, AgentStreamEventType.ERROR,
                     Map.of("message", e.getMessage(), "structuredFinalAnswer", degraded));
             emitDone(eventSink, sessionId, 0, result.getStatus().name());
@@ -637,6 +664,9 @@ public class ReActAgentEngine {
         emitDone(loopState(execution).getEventSink(), execution.getRunId(), stepNumber, result.getStatus().name());
         agentAuditService.recordSessionResult(execution.getRunId(), loopState(execution).getCustomerId(),
                 loopState(execution).getDoctorId(), execution.getGoal(), result, stepNumber, duration);
+        recordOutcome(execution.getRunId(), loopState(execution).getContext(), result, duration,
+                finalAnswerAssessment.isBlocked() ? AgentOutcomeLabel.FAILED_SAFETY_BLOCK : AgentOutcomeLabel.SUCCESS,
+                null, finalAnswerAssessment.isBlocked() ? finalAnswerAssessment.message() : null);
         return buildLoopOutcome(execution, LoopTerminationReason.FINISHED, RunStatus.COMPLETED, stepNumber, result,
                 null);
     }
@@ -664,6 +694,9 @@ public class ReActAgentEngine {
         agentAuditService.recordSessionResult(execution.getRunId(), loopState(execution).getCustomerId(),
                 loopState(execution).getDoctorId(), execution.getGoal(), result, stepNumber,
                 System.currentTimeMillis() - execution.getStartedAt());
+        recordOutcome(execution.getRunId(), loopState(execution).getContext(), result,
+                System.currentTimeMillis() - execution.getStartedAt(),
+                AgentOutcomeLabel.MANUAL_REVIEW_REQUIRED, null, null);
         return buildLoopOutcome(execution, LoopTerminationReason.WAITING_APPROVAL, RunStatus.WAITING_APPROVAL,
                 stepNumber, result, null);
     }
@@ -693,6 +726,8 @@ public class ReActAgentEngine {
         emitDone(loopState(execution).getEventSink(), execution.getRunId(), stepNumber, result.getStatus().name());
         agentAuditService.recordSessionResult(execution.getRunId(), loopState(execution).getCustomerId(),
                 loopState(execution).getDoctorId(), execution.getGoal(), result, stepNumber, duration);
+        recordOutcome(execution.getRunId(), loopState(execution).getContext(), result, duration,
+                classifyFailureOutcomeLabel(e), e.getClass().getSimpleName(), e.getMessage());
         return buildLoopOutcome(execution, LoopTerminationReason.FAILED, RunStatus.FAILED, stepNumber, result,
                 e.getMessage());
     }
@@ -719,6 +754,8 @@ public class ReActAgentEngine {
                 result.getStatus().name());
         agentAuditService.recordSessionResult(execution.getRunId(), loopState(execution).getCustomerId(),
                 loopState(execution).getDoctorId(), execution.getGoal(), result, execution.getMaxSteps(), duration);
+        recordOutcome(execution.getRunId(), loopState(execution).getContext(), result, duration,
+                AgentOutcomeLabel.FAILED_RUNTIME, "MAX_STEPS", "达到最大步数限制");
         return buildLoopOutcome(execution, LoopTerminationReason.MAX_STEPS, RunStatus.DEGRADED,
                 execution.getMaxSteps(), result, "达到最大步数限制");
     }
@@ -782,14 +819,15 @@ public class ReActAgentEngine {
                 LoopContext<ReActLoopState> execution,
                 int step,
                 int stepNumber) {
-            AgentSubAgent subAgent = selectSubAgent(execution.getGoal(), loopState(execution).getContext());
+            AgentSubAgent subAgent = selectSubAgent(execution.getRunId(), execution.getGoal(), loopState(execution).getContext());
             switchSubAgent(execution.getRunId(), stepNumber, loopState(execution).getContext(), subAgent,
                     loopState(execution).getEventSink());
             AgentContext visibleContext = projectContextForSubAgent(loopState(execution).getContext(), subAgent);
-            String systemPrompt = promptBuilder.buildSubAgentSystemPromptFromCatalog(
+            RenderedPrompt renderedSystemPrompt = promptBuilder.renderSubAgentSystemPromptFromCatalog(
                     subAgent,
                     toolRegistry.listToolDescriptors());
-            ParsedThought parsedThought = requestThought(execution, systemPrompt, step, stepNumber, visibleContext);
+            recordRenderedPromptSnapshot(execution.getRunId(), visibleContext, renderedSystemPrompt);
+            ParsedThought parsedThought = requestThought(execution, renderedSystemPrompt.getContent(), step, stepNumber, visibleContext);
             log.info("Agent响应: {}", parsedThought.responseText());
 
             ThoughtResult thought = parsedThought.thoughtResult();
@@ -836,6 +874,7 @@ public class ReActAgentEngine {
                     loopState(execution).getDoctorId(),
                     execution.getRunId(),
                     buildToolAccessContext(loopState(execution).getContext()));
+            recordToolExecution(execution.getRunId(), action.getToolName());
 
             if (actionResult.isNeedsApproval()) {
                 return LoopStepDecision.terminate(finalizePendingApproval(execution, stepNumber, action, actionResult));
@@ -912,7 +951,7 @@ public class ReActAgentEngine {
             log.warn("Agent响应协议不合法，准备纠偏重试: {}", parseException.getMessage());
             List<Message> repairMessages = new ArrayList<>(messages);
             repairMessages.add(Message.assistant(responseText));
-            repairMessages.add(Message.user(promptBuilder.buildProtocolRepairPrompt(parseException.getMessage())));
+            repairMessages.add(Message.user(promptBuilder.renderProtocolRepairPrompt(parseException.getMessage()).getContent()));
 
             AgentException lastException = parseException;
             for (int attempt = 0; attempt < protocolRepairAttempts; attempt++) {
@@ -923,7 +962,7 @@ public class ReActAgentEngine {
                     lastException = repairException;
                     repairMessages.add(Message.assistant(repairedResponse));
                     repairMessages
-                            .add(Message.user(promptBuilder.buildProtocolRepairPrompt(repairException.getMessage())));
+                            .add(Message.user(promptBuilder.renderProtocolRepairPrompt(repairException.getMessage()).getContent()));
                 }
             }
             throw lastException;
@@ -955,7 +994,7 @@ public class ReActAgentEngine {
             log.warn("Agent响应协议不合法，准备纠偏重试: {}", parseException.getMessage());
             List<Message> repairMessages = new ArrayList<>(messages);
             repairMessages.add(Message.assistant(responseText));
-            repairMessages.add(Message.user(promptBuilder.buildProtocolRepairPrompt(parseException.getMessage())));
+            repairMessages.add(Message.user(promptBuilder.renderProtocolRepairPrompt(parseException.getMessage()).getContent()));
 
             AgentException lastException = parseException;
             for (int attempt = 0; attempt < protocolRepairAttempts; attempt++) {
@@ -968,7 +1007,7 @@ public class ReActAgentEngine {
                     lastException = repairException;
                     repairMessages.add(Message.assistant(repairedResponse));
                     repairMessages
-                            .add(Message.user(promptBuilder.buildProtocolRepairPrompt(repairException.getMessage())));
+                            .add(Message.user(promptBuilder.renderProtocolRepairPrompt(repairException.getMessage()).getContent()));
                 }
             }
             throw lastException;
@@ -990,7 +1029,7 @@ public class ReActAgentEngine {
                 """.formatted(contextSection);
     }
 
-    private AgentSubAgent selectSubAgent(String goal, AgentContext context) {
+    private AgentSubAgent selectSubAgent(String runId, String goal, AgentContext context) {
         if (subAgentCoordinator == null) {
             return new AgentSubAgent() {
                 @Override
@@ -1010,16 +1049,17 @@ public class ReActAgentEngine {
         }
 
         AgentSelectionDecision decision = subAgentCoordinator.selectDecision(goal, context);
-        return applySelectionDecision(context, decision);
+        return applySelectionDecision(runId, context, decision);
     }
 
-    private AgentSubAgent applySelectionDecision(AgentContext context, AgentSelectionDecision decision) {
+    private AgentSubAgent applySelectionDecision(String runId, AgentContext context, AgentSelectionDecision decision) {
         if (decision == null || decision.getSelectedAgentIds() == null || decision.getSelectedAgentIds().isEmpty()) {
             throw new IllegalStateException("Selector returned empty agent decision");
         }
 
         List<String> selectedAgentIds = new ArrayList<>(decision.getSelectedAgentIds());
         recordSelectionDecision(context, decision, selectedAgentIds);
+        recordSelectionSnapshot(runId, context, decision, selectedAgentIds);
         String primaryAgentId = selectedAgentIds.get(0);
         List<String> pendingAgentIds = selectedAgentIds.size() > 1
                 ? new ArrayList<>(selectedAgentIds.subList(1, selectedAgentIds.size()))
@@ -1137,6 +1177,229 @@ public class ReActAgentEngine {
                 "reason", reason,
                 "slots", context.getSlots().keySet()
         ));
+    }
+
+    private void recordInitialStrategySnapshot(String runId, AgentContext context, AgentExecutionCommand command) {
+        if (strategySnapshotRecorder == null || runId == null) {
+            return;
+        }
+        strategySnapshotRecorder.createOrUpdate(AgentRunStrategySnapshot.builder()
+                .runId(runId)
+                .sessionId(runId)
+                .scene(ReActPromptBuilder.DOCTOR_SCENE)
+                .taskType(resolveTaskTypeName(context, command))
+                .promptVersion(promptBuilder.currentPromptVersion(PromptTemplateType.SUB_AGENT_SYSTEM))
+                .selectorVersion(SELECTOR_VERSION)
+                .toolCatalogVersion(TOOL_CATALOG_VERSION)
+                .memoryProfile(buildMemoryProfile(context, command))
+                .memoryRetrievalCount(resolveMemoryRetrievalCount(context, command))
+                .memoryRerankApplied(Boolean.FALSE)
+                .parallelEnabled(Boolean.FALSE)
+                .fallbackAllowed(resolveFallbackAllowed(command))
+                .timeoutMillis(resolveTimeoutMillis(command))
+                .patientVisibleOnly(resolvePatientVisibleOnly(command))
+                .build());
+    }
+
+    private void recordSelectionSnapshot(
+            String runId,
+            AgentContext context,
+            AgentSelectionDecision decision,
+            List<String> selectedAgentIds) {
+        if (strategySnapshotRecorder == null || runId == null || decision == null) {
+            return;
+        }
+        strategySnapshotRecorder.createOrUpdate(AgentRunStrategySnapshot.builder()
+                .runId(runId)
+                .sessionId(runId)
+                .scene(ReActPromptBuilder.DOCTOR_SCENE)
+                .taskType(resolveTaskTypeName(context, null))
+                .selectorVersion(SELECTOR_VERSION)
+                .selectedAgentIds(selectedAgentIds)
+                .selectionMode(decision.getMode() != null ? decision.getMode().name() : null)
+                .parallelEnabled(decision.getMode() == AgentSelectionMode.PARALLEL)
+                .build());
+    }
+
+    private void recordRenderedPromptSnapshot(String runId, AgentContext context, RenderedPrompt renderedPrompt) {
+        if (strategySnapshotRecorder == null || runId == null || renderedPrompt == null || renderedPrompt.getDescriptor() == null) {
+            return;
+        }
+        strategySnapshotRecorder.createOrUpdate(AgentRunStrategySnapshot.builder()
+                .runId(runId)
+                .sessionId(runId)
+                .scene(renderedPrompt.getDescriptor().getScene() != null
+                        ? renderedPrompt.getDescriptor().getScene()
+                        : ReActPromptBuilder.DOCTOR_SCENE)
+                .taskType(resolveTaskTypeName(context, null))
+                .promptVersion(renderedPrompt.getDescriptor().getVersion())
+                .build());
+    }
+
+    private void recordToolExecution(String runId, String toolName) {
+        if (strategySnapshotRecorder == null || runId == null || toolName == null || toolName.isBlank()) {
+            return;
+        }
+        List<String> toolSequence = new ArrayList<>(strategySnapshotRecorder.findByRunId(runId)
+                .map(snapshot -> snapshot.getToolSequence() != null ? snapshot.getToolSequence() : List.<String>of())
+                .orElse(List.of()));
+        toolSequence.add(toolName);
+        strategySnapshotRecorder.createOrUpdate(AgentRunStrategySnapshot.builder()
+                .runId(runId)
+                .sessionId(runId)
+                .toolSequence(toolSequence)
+                .build());
+    }
+
+    private void recordOutcome(
+            String runId,
+            AgentContext context,
+            AgentResult result,
+            long durationMs,
+            AgentOutcomeLabel outcomeLabel,
+            String errorCode,
+            String errorMessage) {
+        if (outcomeRecorder == null || runId == null || result == null) {
+            return;
+        }
+        outcomeRecorder.createOrUpdate(AgentRunOutcome.builder()
+                .runId(runId)
+                .sessionId(runId)
+                .scene(ReActPromptBuilder.DOCTOR_SCENE)
+                .taskType(resolveTaskTypeName(context, null))
+                .customerId(context != null ? context.getCustomerId() : null)
+                .doctorId(context != null ? context.getDoctorId() : null)
+                .finalStatus(result.getStatus() != null ? result.getStatus().name() : "UNKNOWN")
+                .outcomeLabel(outcomeLabel != null ? outcomeLabel : AgentOutcomeLabel.FAILED_RUNTIME)
+                .fallbackUsed(Boolean.FALSE)
+                .manualReviewRequired(result.getStatus() == ResultStatus.PENDING_APPROVAL)
+                .manualOverride(Boolean.FALSE)
+                .doctorAccepted(null)
+                .doctorRejected(null)
+                .evidenceSufficient(null)
+                .toolErrorCount(0)
+                .retryCount(0)
+                .durationMs(durationMs)
+                .errorCode(errorCode)
+                .errorMessage(errorMessage != null ? errorMessage : result.getErrorMessage())
+                .build());
+    }
+
+    private AgentOutcomeLabel classifyFailureOutcomeLabel(Exception exception) {
+        if (exception == null) {
+            return AgentOutcomeLabel.FAILED_RUNTIME;
+        }
+        String message = exception.getMessage() != null ? exception.getMessage().toLowerCase() : "";
+        if (message.contains("timeout")) {
+            return AgentOutcomeLabel.FAILED_TIMEOUT;
+        }
+        if (exception instanceof AgentException) {
+            return AgentOutcomeLabel.FAILED_PROTOCOL_ERROR;
+        }
+        return AgentOutcomeLabel.FAILED_RUNTIME;
+    }
+
+    private String resolveTaskTypeName(AgentContext context, AgentExecutionCommand command) {
+        if (command != null && command.getTaskType() != null) {
+            return command.getTaskType().name();
+        }
+        Map<String, Object> patientTaskRequest = slotMapValue(context, "patient_task_request");
+        if (patientTaskRequest != null && patientTaskRequest.get("taskType") != null) {
+            return String.valueOf(patientTaskRequest.get("taskType"));
+        }
+        return null;
+    }
+
+    private Map<String, Object> buildMemoryProfile(AgentContext context, AgentExecutionCommand command) {
+        Map<String, Object> profile = new LinkedHashMap<>();
+        com.health.agent.dto.patient.MemorySnapshot snapshot = command != null
+                ? command.getMemorySnapshot()
+                : slotMemorySnapshot(context, "memory_snapshot");
+        profile.put("hasMemorySnapshot", snapshot != null);
+        profile.put("hasShortTermMemories", snapshot != null && snapshot.getShortTermMemories() != null
+                && !snapshot.getShortTermMemories().isEmpty());
+        profile.put("hasLongTermMemories", snapshot != null && snapshot.getLongTermMemories() != null
+                && !snapshot.getLongTermMemories().isEmpty());
+        profile.put("hasChatHistory", hasSlot(context, "chat_history"));
+        profile.put("hasProfileSnapshot", hasSlot(context, "profile_snapshot") || hasSlot(context, "patient_profile"));
+        profile.put("shortTermSummary", summarizeList(snapshot != null ? snapshot.getShortTermMemories() : null, 3, 80));
+        profile.put("longTermSummary", summarizeList(snapshot != null ? snapshot.getLongTermMemories() : null, 3, 80));
+        profile.put("recentFollowUpSignalsSummary",
+                summarizeList(slotListValue(context, "recent_follow_up_signals"), 3, 80));
+        return profile;
+    }
+
+    private Integer resolveMemoryRetrievalCount(AgentContext context, AgentExecutionCommand command) {
+        com.health.agent.dto.patient.MemorySnapshot snapshot = command != null
+                ? command.getMemorySnapshot()
+                : slotMemorySnapshot(context, "memory_snapshot");
+        if (snapshot == null) {
+            return null;
+        }
+        int shortTerm = snapshot.getShortTermMemories() != null ? snapshot.getShortTermMemories().size() : 0;
+        int longTerm = snapshot.getLongTermMemories() != null ? snapshot.getLongTermMemories().size() : 0;
+        return shortTerm + longTerm;
+    }
+
+    private Boolean resolveFallbackAllowed(AgentExecutionCommand command) {
+        if (command == null || command.getConstraints() == null) {
+            return null;
+        }
+        return command.getConstraints().getFallbackToDirectChatOnFailure();
+    }
+
+    private Integer resolveTimeoutMillis(AgentExecutionCommand command) {
+        if (command == null || command.getConstraints() == null) {
+            return null;
+        }
+        return command.getConstraints().getTimeoutMillis();
+    }
+
+    private Boolean resolvePatientVisibleOnly(AgentExecutionCommand command) {
+        if (command == null || command.getConstraints() == null) {
+            return null;
+        }
+        return command.getConstraints().getPatientVisibleResponseOnly();
+    }
+
+    private boolean hasSlot(AgentContext context, String slotKey) {
+        return context != null && context.getSlots() != null && context.getSlots().containsKey(slotKey);
+    }
+
+    private List<Object> slotListValue(AgentContext context, String slotKey) {
+        if (context == null || context.getSlots() == null || slotKey == null) {
+            return null;
+        }
+        ContextEntry entry = context.getSlots().get(slotKey);
+        if (entry == null || entry.getValue() == null) {
+            return null;
+        }
+        Object value = entry.getValue();
+        if (value instanceof List<?> list) {
+            return new ArrayList<>(list);
+        }
+        return List.of(value);
+    }
+
+    private String summarizeList(List<?> values, int maxItems, int maxItemChars) {
+        if (values == null || values.isEmpty()) {
+            return null;
+        }
+        return values.stream()
+                .limit(Math.max(1, maxItems))
+                .map(value -> "- " + abbreviate(String.valueOf(value), maxItemChars))
+                .collect(Collectors.joining("\n"));
+    }
+
+    private String abbreviate(String text, int maxChars) {
+        if (text == null) {
+            return "";
+        }
+        int safeMax = Math.max(16, maxChars);
+        if (text.length() <= safeMax) {
+            return text;
+        }
+        return text.substring(0, safeMax) + "...";
     }
 
     private String currentSubAgentName(AgentContext context) {

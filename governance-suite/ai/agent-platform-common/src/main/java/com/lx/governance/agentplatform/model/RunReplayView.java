@@ -1,6 +1,7 @@
 package com.lx.governance.agentplatform.model;
 
 import java.util.List;
+import java.util.Map;
 
 import lombok.Builder;
 import lombok.Singular;
@@ -46,6 +47,12 @@ public class RunReplayView {
     /** 回放视角下的工具调用。 */
     @Singular("toolCall")
     List<ReplayToolCall> toolCalls;
+
+    /** Agent 运行策略快照。 */
+    Map<String, Object> strategySnapshot;
+
+    /** Agent 运行结果。 */
+    Map<String, Object> outcome;
 
     /** 遗留 run 表名。 */
     String legacyRunTable;

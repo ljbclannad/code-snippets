@@ -12,6 +12,7 @@ import com.health.agent.model.Step;
 import com.health.agent.scene.doctor.prompt.DoctorScenePromptTemplate;
 import com.health.agent.tool.Tool;
 import com.lx.governance.agentplatform.model.PromptRenderRequest;
+import com.lx.governance.agentplatform.model.PromptRenderResult;
 import com.lx.governance.agentplatform.model.PromptTemplateType;
 import com.lx.governance.agentplatform.model.ToolDescriptor;
 import com.lx.governance.agentplatform.runtime.PromptRegistry;
@@ -56,18 +57,29 @@ public class ReActPromptBuilder implements AgentPromptProvider {
 
     @Override
     public String buildSubAgentSystemPromptFromCatalog(AgentSubAgent subAgent, List<ToolDescriptor> availableTools) {
+        return renderSubAgentSystemPromptFromCatalog(subAgent, availableTools).getContent();
+    }
+
+    @Override
+    public RenderedPrompt renderSubAgentSystemPromptFromCatalog(AgentSubAgent subAgent, List<ToolDescriptor> availableTools) {
         if (promptRegistry != null) {
-            return promptRegistry.renderActive(
+            PromptRenderResult result = promptRegistry.renderActive(
                     DOCTOR_SCENE,
                     DOCTOR_AGENT,
                     PromptTemplateType.SUB_AGENT_SYSTEM,
                     PromptRenderRequest.builder()
                             .variable("subAgent", subAgent)
                             .variable("availableTools", availableTools)
-                            .build())
-                    .getContent();
+                            .build());
+            return RenderedPrompt.builder()
+                    .descriptor(result.getDescriptor())
+                    .content(result.getContent())
+                    .build();
         }
-        return doctorScenePromptTemplate.buildSubAgentSystemPrompt(subAgent, availableTools);
+        return RenderedPrompt.builder()
+                .descriptor(currentPromptDescriptor(PromptTemplateType.SUB_AGENT_SYSTEM))
+                .content(doctorScenePromptTemplate.buildSubAgentSystemPrompt(subAgent, availableTools))
+                .build();
     }
 
     public String buildSystemPromptFromCatalog(List<ToolDescriptor> availableTools) {
@@ -159,25 +171,36 @@ public class ReActPromptBuilder implements AgentPromptProvider {
     }
 
     public String buildProtocolRepairPrompt(String errorMessage) {
+        return renderProtocolRepairPrompt(errorMessage).getContent();
+    }
+
+    @Override
+    public RenderedPrompt renderProtocolRepairPrompt(String errorMessage) {
         if (promptRegistry != null) {
-            return promptRegistry.renderActive(
+            PromptRenderResult result = promptRegistry.renderActive(
                     DOCTOR_SCENE,
                     DOCTOR_AGENT,
                     PromptTemplateType.PROTOCOL_REPAIR,
                     PromptRenderRequest.builder()
                             .variable("errorMessage", errorMessage)
-                            .build())
-                    .getContent();
+                            .build());
+            return RenderedPrompt.builder()
+                    .descriptor(result.getDescriptor())
+                    .content(result.getContent())
+                    .build();
         }
-        return """
-            你刚才的响应不符合协议，错误是：%s
+        return RenderedPrompt.builder()
+                .descriptor(currentPromptDescriptor(PromptTemplateType.PROTOCOL_REPAIR))
+                .content("""
+                    你刚才的响应不符合协议，错误是：%s
 
-            请立即重新输出，并且：
-            1. 只输出一个合法 JSON 对象
-            2. protocolVersion 必须为 "v1"
-            3. 不要输出 Markdown 代码块
-            4. 不要解释错误，不要附加多余文本
-            """.formatted(errorMessage);
+                    请立即重新输出，并且：
+                    1. 只输出一个合法 JSON 对象
+                    2. protocolVersion 必须为 "v1"
+                    3. 不要输出 Markdown 代码块
+                    4. 不要解释错误，不要附加多余文本
+                    """.formatted(errorMessage))
+                .build();
     }
 
     /**
@@ -272,6 +295,17 @@ public class ReActPromptBuilder implements AgentPromptProvider {
         }
         return promptRegistry.findActiveVersion(DOCTOR_SCENE, DOCTOR_AGENT, type)
                 .orElse(DEFAULT_PROMPT_VERSION);
+    }
+
+    @Override
+    public com.lx.governance.agentplatform.model.PromptTemplateDescriptor currentPromptDescriptor(PromptTemplateType type) {
+        return com.lx.governance.agentplatform.model.PromptTemplateDescriptor.builder()
+                .scene(DOCTOR_SCENE)
+                .agentId(DOCTOR_AGENT)
+                .type(type)
+                .version(currentPromptVersion(type))
+                .description("Doctor prompt template")
+                .build();
     }
 
     private void appendSection(StringBuilder builder, String title, String content) {

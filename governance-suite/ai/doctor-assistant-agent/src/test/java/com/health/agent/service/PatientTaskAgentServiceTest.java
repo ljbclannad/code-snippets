@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -25,6 +26,8 @@ import com.health.agent.dto.patient.DoctorAssistantTaskStatus;
 import com.health.agent.dto.patient.MemorySnapshot;
 import com.health.agent.dto.patient.TaskType;
 import com.health.agent.engine.ReActAgentEngine;
+import com.health.agent.learning.model.AgentRunOutcome;
+import com.health.agent.learning.service.AgentOutcomeRecorder;
 import com.health.agent.metrics.AgentMetrics;
 import com.health.agent.model.AgentResult;
 import com.health.agent.model.PendingTask;
@@ -234,6 +237,34 @@ class PatientTaskAgentServiceTest {
         assertEquals(2, response.getStructuredResult().getSupportingEvidence().size());
         assertTrue(response.getPatientVisibleEvidence().size() >= 1);
         assertEquals("AUTO_COMPLETED", response.getDoctorWorkbenchPayload().getReviewStatus());
+    }
+
+    @Test
+    void shouldMarkOutcomeFallbackUsedWhenAgentFallsBackToTemplate() {
+        AgentOutcomeRecorder outcomeRecorder = mock(AgentOutcomeRecorder.class);
+        service = new PatientTaskAgentService(
+                new PatientTaskSafetyService(),
+                null,
+                null,
+                null,
+                agentEngine,
+                new PatientTaskAgentResultMapper(),
+                new PatientReplyComposer(),
+                null,
+                null,
+                new DoctorAgentPlatformProperties(),
+                new AgentMetrics(meterRegistry),
+                outcomeRecorder);
+        when(agentEngine.executeStream(any(), any())).thenReturn(
+                AgentResult.error("agent-session-fallback", "engine failure", List.of(), 1));
+
+        DoctorAssistantTaskResponse response = service.analyze(baseRequest(TaskType.PATIENT_FOLLOW_UP_ANALYSIS));
+
+        assertEquals(DoctorAssistantTaskStatus.SUCCESS, response.getStatus());
+        ArgumentCaptor<AgentRunOutcome> captor = ArgumentCaptor.forClass(AgentRunOutcome.class);
+        verify(outcomeRecorder).createOrUpdate(captor.capture());
+        assertEquals("agent-session-fallback", captor.getValue().getRunId());
+        assertEquals(Boolean.TRUE, captor.getValue().getFallbackUsed());
     }
 
     @Test

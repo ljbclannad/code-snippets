@@ -2,6 +2,10 @@ package com.health.agent.engine;
 
 import com.health.agent.client.DeepSeekClient;
 import com.health.agent.exception.AgentException;
+import com.health.agent.learning.enums.AgentOutcomeLabel;
+import com.health.agent.learning.model.AgentRunOutcome;
+import com.health.agent.learning.service.AgentOutcomeRecorder;
+import com.health.agent.learning.service.AgentRunStrategySnapshotRecorder;
 import com.health.agent.metrics.AgentMetrics;
 import com.health.agent.model.ActionDecision;
 import com.health.agent.model.ActionResult;
@@ -30,7 +34,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
 
 @ExtendWith(MockitoExtension.class)
 class ReActAgentEngineDegradationTest {
@@ -59,6 +65,12 @@ class ReActAgentEngineDegradationTest {
     @Mock
     private AgentAuditService agentAuditService;
 
+    @Mock
+    private AgentRunStrategySnapshotRecorder strategySnapshotRecorder;
+
+    @Mock
+    private AgentOutcomeRecorder outcomeRecorder;
+
     private ReActAgentEngine engine;
 
     @BeforeEach
@@ -75,6 +87,8 @@ class ReActAgentEngineDegradationTest {
         ReflectionTestUtils.setField(engine, "agentMetrics", new AgentMetrics(new SimpleMeterRegistry()));
         ReflectionTestUtils.setField(engine, "medicalSafetyService", new MedicalSafetyService());
         ReflectionTestUtils.setField(engine, "agentAuditService", agentAuditService);
+        ReflectionTestUtils.setField(engine, "strategySnapshotRecorder", strategySnapshotRecorder);
+        ReflectionTestUtils.setField(engine, "outcomeRecorder", outcomeRecorder);
         ReflectionTestUtils.setField(engine, "useMock", false);
         ReflectionTestUtils.setField(engine, "protocolRepairAttempts", 1);
     }
@@ -86,7 +100,8 @@ class ReActAgentEngineDegradationTest {
         when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
         when(toolRegistry.listToolDescriptors()).thenReturn(List.of());
         when(promptBuilder.buildUserPrompt(anyString(), anyString())).thenReturn("user");
-        when(promptBuilder.buildSubAgentSystemPromptFromCatalog(any(), any())).thenReturn("system");
+        when(promptBuilder.renderSubAgentSystemPromptFromCatalog(any(), any()))
+                .thenReturn(RenderedPrompt.builder().content("system").build());
         when(deepSeekClient.chat(anyString(), anyList())).thenThrow(new RuntimeException("DeepSeek API 调用超时: PT5S"));
 
         AgentResult result = engine.execute("分析患者减重进展", "C001", "D001");
@@ -95,6 +110,8 @@ class ReActAgentEngineDegradationTest {
         assertEquals("MEDIUM", result.getStructuredFinalAnswer().getRiskLevel());
         assertTrue(result.getStructuredFinalAnswer().getSupportingEvidence().contains("模型调用超时或重试耗尽"));
         assertTrue(result.getStructuredFinalAnswer().getEvidenceSources().contains("SYSTEM_RUNTIME"));
+        verify(outcomeRecorder).createOrUpdate(argThat(outcome ->
+                outcome != null && outcome.getOutcomeLabel() == AgentOutcomeLabel.FAILED_RUNTIME));
     }
 
     @Test
@@ -104,8 +121,10 @@ class ReActAgentEngineDegradationTest {
         when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
         when(toolRegistry.listToolDescriptors()).thenReturn(List.of());
         when(promptBuilder.buildUserPrompt(anyString(), anyString())).thenReturn("user");
-        when(promptBuilder.buildSubAgentSystemPromptFromCatalog(any(), any())).thenReturn("system");
-        when(promptBuilder.buildProtocolRepairPrompt(anyString())).thenReturn("repair");
+        when(promptBuilder.renderSubAgentSystemPromptFromCatalog(any(), any()))
+                .thenReturn(RenderedPrompt.builder().content("system").build());
+        when(promptBuilder.renderProtocolRepairPrompt(anyString()))
+                .thenReturn(RenderedPrompt.builder().content("repair").build());
 
         DeepSeekClient.DeepSeekResponse invalid = new DeepSeekClient.DeepSeekResponse();
         invalid.setContent("invalid");
@@ -120,6 +139,8 @@ class ReActAgentEngineDegradationTest {
         assertEquals("ERROR", result.getStatus().name());
         assertTrue(result.getStructuredFinalAnswer().getSummary().contains("模型返回不符合协议"));
         assertTrue(result.getStructuredFinalAnswer().getSupportingEvidence().contains("模型响应协议校验失败"));
+        verify(outcomeRecorder).createOrUpdate(argThat(outcome ->
+                outcome != null && outcome.getOutcomeLabel() == AgentOutcomeLabel.FAILED_PROTOCOL_ERROR));
     }
 
     @Test
@@ -129,7 +150,8 @@ class ReActAgentEngineDegradationTest {
         when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
         when(toolRegistry.listToolDescriptors()).thenReturn(List.of());
         when(promptBuilder.buildUserPrompt(anyString(), anyString())).thenReturn("user");
-        when(promptBuilder.buildSubAgentSystemPromptFromCatalog(any(), any())).thenReturn("system");
+        when(promptBuilder.renderSubAgentSystemPromptFromCatalog(any(), any()))
+                .thenReturn(RenderedPrompt.builder().content("system").build());
 
         DeepSeekClient.DeepSeekResponse step1 = new DeepSeekClient.DeepSeekResponse();
         step1.setContent("step1");
@@ -142,13 +164,16 @@ class ReActAgentEngineDegradationTest {
                 .reason("获取基础资料")
                 .build()
         ));
-        when(actionExecutor.execute(any(), anyString(), anyString(), anyString())).thenReturn(ActionResult.success(Map.of("ok", true)));
+        when(actionExecutor.execute(any(), anyString(), anyString(), anyString(), any()))
+                .thenReturn(ActionResult.success(Map.of("ok", true)));
 
         AgentResult result = engine.execute("分析患者减重进展", "C001", "D001");
 
         assertEquals("MAX_STEPS", result.getStatus().name());
         assertEquals("MEDIUM", result.getStructuredFinalAnswer().getRiskLevel());
         assertTrue(result.getStructuredFinalAnswer().getSupportingEvidence().contains("达到最大步数限制"));
+        verify(outcomeRecorder).createOrUpdate(argThat(outcome ->
+                outcome != null && outcome.getOutcomeLabel() == AgentOutcomeLabel.FAILED_RUNTIME));
     }
 
     @Test

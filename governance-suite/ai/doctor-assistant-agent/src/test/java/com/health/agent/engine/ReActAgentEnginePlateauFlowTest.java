@@ -1,6 +1,11 @@
 package com.health.agent.engine;
 
 import com.health.agent.client.DeepSeekClient;
+import com.health.agent.learning.enums.AgentOutcomeLabel;
+import com.health.agent.learning.model.AgentRunOutcome;
+import com.health.agent.learning.model.AgentRunStrategySnapshot;
+import com.health.agent.learning.service.AgentOutcomeRecorder;
+import com.health.agent.learning.service.AgentRunStrategySnapshotRecorder;
 import com.health.agent.metrics.AgentMetrics;
 import com.health.agent.engine.subagent.CarePlanningSubAgent;
 import com.health.agent.engine.subagent.DataCollectionSubAgent;
@@ -45,6 +50,7 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.atLeastOnce;
 
 @ExtendWith(MockitoExtension.class)
 class ReActAgentEnginePlateauFlowTest {
@@ -64,6 +70,12 @@ class ReActAgentEnginePlateauFlowTest {
     @Mock
     private AgentAuditService agentAuditService;
 
+    @Mock
+    private AgentRunStrategySnapshotRecorder strategySnapshotRecorder;
+
+    @Mock
+    private AgentOutcomeRecorder outcomeRecorder;
+
     private ReActAgentEngine engine;
 
     @BeforeEach
@@ -79,6 +91,8 @@ class ReActAgentEnginePlateauFlowTest {
         ReflectionTestUtils.setField(engine, "agentMetrics", new AgentMetrics(new SimpleMeterRegistry()));
         ReflectionTestUtils.setField(engine, "medicalSafetyService", new MedicalSafetyService());
         ReflectionTestUtils.setField(engine, "agentAuditService", agentAuditService);
+        ReflectionTestUtils.setField(engine, "strategySnapshotRecorder", strategySnapshotRecorder);
+        ReflectionTestUtils.setField(engine, "outcomeRecorder", outcomeRecorder);
         InMemoryAgentRegistry agentRegistry = new InMemoryAgentRegistry();
         List<com.health.agent.engine.subagent.AgentSubAgent> subAgents = List.of(
                 new DataCollectionSubAgent(),
@@ -185,7 +199,7 @@ class ReActAgentEnginePlateauFlowTest {
             }
             """);
         when(deepSeekClient.chat(anyString(), anyList())).thenReturn(first, second);
-        when(actionExecutor.execute(any(), anyString(), anyString(), anyString())).thenReturn(
+        when(actionExecutor.execute(any(), anyString(), anyString(), anyString(), any())).thenReturn(
             ActionResult.success(ToolExecutionOutput.builder()
                 .data(Map.of(
                     "isPlateau", true,
@@ -216,7 +230,7 @@ class ReActAgentEnginePlateauFlowTest {
 
         ArgumentCaptor<com.health.agent.model.ActionDecision> actionCaptor =
             ArgumentCaptor.forClass(com.health.agent.model.ActionDecision.class);
-        verify(actionExecutor).execute(actionCaptor.capture(), anyString(), anyString(), anyString());
+        verify(actionExecutor).execute(actionCaptor.capture(), anyString(), anyString(), anyString(), any());
         assertEquals("detect_weight_plateau", actionCaptor.getValue().getToolName());
 
         ArgumentCaptor<AgentContext> contextCaptor = ArgumentCaptor.forClass(AgentContext.class);
@@ -227,5 +241,18 @@ class ReActAgentEnginePlateauFlowTest {
         verify(deepSeekClient, org.mockito.Mockito.times(2)).chat(promptCaptor.capture(), anyList());
         assertTrue(promptCaptor.getAllValues().get(0).contains("DataCollectionAgent"));
         assertTrue(promptCaptor.getAllValues().get(1).contains("CarePlanningAgent"));
+        ArgumentCaptor<AgentRunOutcome> outcomeCaptor = ArgumentCaptor.forClass(AgentRunOutcome.class);
+        verify(outcomeRecorder).createOrUpdate(outcomeCaptor.capture());
+        assertEquals(AgentOutcomeLabel.SUCCESS, outcomeCaptor.getValue().getOutcomeLabel());
+        ArgumentCaptor<AgentRunStrategySnapshot> snapshotCaptor = ArgumentCaptor.forClass(AgentRunStrategySnapshot.class);
+        verify(strategySnapshotRecorder, atLeastOnce()).createOrUpdate(snapshotCaptor.capture());
+        assertTrue(snapshotCaptor.getAllValues().stream()
+                .anyMatch(snapshot -> snapshot.getSelectedAgentIds() != null
+                        && snapshot.getSelectedAgentIds().contains("doctor.DataCollectionAgent")));
+        assertTrue(snapshotCaptor.getAllValues().stream()
+                .anyMatch(snapshot -> snapshot.getToolSequence() != null
+                        && snapshot.getToolSequence().contains("detect_weight_plateau")));
+        assertTrue(snapshotCaptor.getAllValues().stream()
+                .anyMatch(snapshot -> "doctor-react-prompt-v1".equals(snapshot.getPromptVersion())));
     }
 }
