@@ -67,7 +67,9 @@ class PatientTaskAgentServiceTest {
                 null,
                 null,
                 new DoctorAgentPlatformProperties(),
-                new AgentMetrics(meterRegistry));
+                new AgentMetrics(meterRegistry),
+                null,
+                null);
     }
 
     @Test
@@ -254,7 +256,8 @@ class PatientTaskAgentServiceTest {
                 null,
                 new DoctorAgentPlatformProperties(),
                 new AgentMetrics(meterRegistry),
-                outcomeRecorder);
+                outcomeRecorder,
+                null);
         when(agentEngine.executeStream(any(), any())).thenReturn(
                 AgentResult.error("agent-session-fallback", "engine failure", List.of(), 1));
 
@@ -282,7 +285,9 @@ class PatientTaskAgentServiceTest {
                 null,
                 null,
                 properties,
-                new AgentMetrics(meterRegistry));
+                new AgentMetrics(meterRegistry),
+                null,
+                null);
         when(agentEngine.executeStream(any(), any())).thenReturn(
                 AgentResult.error("agent-session-5", "engine failure", List.of(), 1));
 

@@ -20,6 +20,7 @@ import com.health.agent.exception.AgentException;
 import com.health.agent.learning.enums.AgentOutcomeLabel;
 import com.health.agent.learning.model.AgentRunOutcome;
 import com.health.agent.learning.model.AgentRunStrategySnapshot;
+import com.health.agent.learning.service.AgentOutcomeAttributionService;
 import com.health.agent.learning.service.AgentOutcomeRecorder;
 import com.health.agent.learning.service.AgentRunStrategySnapshotRecorder;
 import com.health.agent.metrics.AgentMetrics;
@@ -132,6 +133,9 @@ public class ReActAgentEngine {
 
     @Autowired(required = false)
     private AgentOutcomeRecorder outcomeRecorder;
+
+    @Autowired(required = false)
+    private AgentOutcomeAttributionService attributionService;
 
     private int maxSteps = 15;
 
@@ -1283,6 +1287,9 @@ public class ReActAgentEngine {
                 .errorCode(errorCode)
                 .errorMessage(errorMessage != null ? errorMessage : result.getErrorMessage())
                 .build());
+        if (attributionService != null) {
+            attributionService.recompute(runId);
+        }
     }
 
     private AgentOutcomeLabel classifyFailureOutcomeLabel(Exception exception) {

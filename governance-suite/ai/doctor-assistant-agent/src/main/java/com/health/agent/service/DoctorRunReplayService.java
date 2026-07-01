@@ -3,8 +3,10 @@ package com.health.agent.service;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import com.health.agent.learning.model.AgentOutcomeAttribution;
 import com.health.agent.learning.model.AgentRunOutcome;
 import com.health.agent.learning.model.AgentRunStrategySnapshot;
+import com.health.agent.learning.service.AgentOutcomeAttributionService;
 import com.health.agent.learning.service.AgentOutcomeRecorder;
 import com.health.agent.learning.service.AgentRunStrategySnapshotRecorder;
 import org.springframework.stereotype.Service;
@@ -21,14 +23,17 @@ public class DoctorRunReplayService {
     private final RunReplayService runReplayService;
     private final AgentRunStrategySnapshotRecorder strategySnapshotRecorder;
     private final AgentOutcomeRecorder outcomeRecorder;
+    private final AgentOutcomeAttributionService attributionService;
 
     public DoctorRunReplayService(
             RunReplayService runReplayService,
             AgentRunStrategySnapshotRecorder strategySnapshotRecorder,
-            AgentOutcomeRecorder outcomeRecorder) {
+            AgentOutcomeRecorder outcomeRecorder,
+            AgentOutcomeAttributionService attributionService) {
         this.runReplayService = runReplayService;
         this.strategySnapshotRecorder = strategySnapshotRecorder;
         this.outcomeRecorder = outcomeRecorder;
+        this.attributionService = attributionService;
     }
 
     public RunReplayView getReplayByRunId(String runId) {
@@ -37,6 +42,7 @@ public class DoctorRunReplayService {
         return replayView.toBuilder()
                 .strategySnapshot(strategySnapshotRecorder.findByRunId(runId).map(this::snapshotToMap).orElse(null))
                 .outcome(outcomeRecorder.findByRunId(runId).map(this::outcomeToMap).orElse(null))
+                .attribution(attributionService.findByRunId(runId).map(this::attributionToMap).orElse(null))
                 .build();
     }
 
@@ -84,6 +90,19 @@ public class DoctorRunReplayService {
         payload.put("durationMs", outcome.getDurationMs());
         payload.put("errorCode", outcome.getErrorCode());
         payload.put("errorMessage", outcome.getErrorMessage());
+        return payload;
+    }
+
+    private Map<String, Object> attributionToMap(AgentOutcomeAttribution attribution) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("runId", attribution.getRunId());
+        payload.put("sessionId", attribution.getSessionId());
+        payload.put("scene", attribution.getScene());
+        payload.put("taskType", attribution.getTaskType());
+        payload.put("primaryCause", attribution.getPrimaryCause() != null ? attribution.getPrimaryCause().name() : null);
+        payload.put("secondaryCauses", attribution.getSecondaryCauses());
+        payload.put("confidence", attribution.getConfidence());
+        payload.put("evidenceSummary", attribution.getEvidenceSummary());
         return payload;
     }
 }

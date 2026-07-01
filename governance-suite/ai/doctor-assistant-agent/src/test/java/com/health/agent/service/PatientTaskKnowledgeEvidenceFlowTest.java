@@ -157,7 +157,9 @@ class PatientTaskKnowledgeEvidenceFlowTest {
                 null,
                 null,
                 new DoctorAgentPlatformProperties(),
-                new AgentMetrics(new SimpleMeterRegistry()));
+                new AgentMetrics(new SimpleMeterRegistry()),
+                null,
+                null);
     }
 
     @Test

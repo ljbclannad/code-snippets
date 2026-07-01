@@ -9,4 +9,6 @@ public interface AgentOutcomeAttributionService {
     void createOrUpdate(AgentOutcomeAttribution attribution);
 
     Optional<AgentOutcomeAttribution> findByRunId(String runId);
+
+    Optional<AgentOutcomeAttribution> recompute(String runId);
 }

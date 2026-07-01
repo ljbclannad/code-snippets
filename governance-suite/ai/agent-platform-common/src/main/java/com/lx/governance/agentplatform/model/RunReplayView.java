@@ -54,6 +54,9 @@ public class RunReplayView {
     /** Agent 运行结果。 */
     Map<String, Object> outcome;
 
+    /** Agent 结果归因。 */
+    Map<String, Object> attribution;
+
     /** 遗留 run 表名。 */
     String legacyRunTable;
 

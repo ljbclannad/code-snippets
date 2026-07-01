@@ -2,6 +2,7 @@ package com.health.agent.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.health.agent.learning.model.AgentRunOutcome;
+import com.health.agent.learning.service.AgentOutcomeAttributionService;
 import com.health.agent.learning.service.AgentOutcomeRecorder;
 import com.health.agent.mapper.PendingTaskMapper;
 import com.health.agent.model.PendingTask;
@@ -32,6 +33,9 @@ public class PendingTaskService implements ApprovalRepository<PendingTask> {
 
     @Autowired(required = false)
     private AgentOutcomeRecorder outcomeRecorder;
+
+    @Autowired(required = false)
+    private AgentOutcomeAttributionService attributionService;
 
     /**
      * 保存待确认任务
@@ -168,5 +172,8 @@ public class PendingTaskService implements ApprovalRepository<PendingTask> {
                 .doctorRejected(doctorRejected)
                 .manualOverride(doctorRejected ? Boolean.TRUE : Boolean.FALSE)
                 .build());
+        if (attributionService != null) {
+            attributionService.recompute(task.getAgentSessionId());
+        }
     }
 }

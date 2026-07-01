@@ -14,6 +14,7 @@ import com.health.agent.dto.patient.TaskType;
 import com.health.agent.engine.ReActAgentEngine;
 import com.health.agent.learning.enums.AgentOutcomeLabel;
 import com.health.agent.learning.model.AgentRunOutcome;
+import com.health.agent.learning.service.AgentOutcomeAttributionService;
 import com.health.agent.learning.service.AgentOutcomeRecorder;
 import com.health.agent.metrics.AgentMetrics;
 import com.health.agent.model.AgentContext;
@@ -59,9 +60,10 @@ public class PatientTaskAgentService {
     private final DoctorAgentPlatformProperties platformProperties;
     private final AgentMetrics agentMetrics;
     private final AgentOutcomeRecorder outcomeRecorder;
+    private final AgentOutcomeAttributionService attributionService;
 
     public PatientTaskAgentService(PatientTaskSafetyService safetyService) {
-        this(safetyService, null, null, null, null, null, null, null, null, null, null, null);
+        this(safetyService, null, null, null, null, null, null, null, null, null, null, null, null);
     }
 
     @Autowired
@@ -80,7 +82,7 @@ public class PatientTaskAgentService {
     ) {
         this(safetyService, sessionService, workflowService, medicalSafetyService, agentEngine, resultMapper,
                 patientReplyComposer, pendingTaskService, platformRunPersistenceService, platformProperties,
-                agentMetrics, null);
+                agentMetrics, null, null);
     }
 
     public PatientTaskAgentService(
@@ -95,7 +97,8 @@ public class PatientTaskAgentService {
         DoctorPlatformRunPersistenceService platformRunPersistenceService,
         DoctorAgentPlatformProperties platformProperties,
         AgentMetrics agentMetrics,
-        AgentOutcomeRecorder outcomeRecorder
+        AgentOutcomeRecorder outcomeRecorder,
+        AgentOutcomeAttributionService attributionService
     ) {
         this.safetyService = safetyService;
         this.sessionService = sessionService;
@@ -109,6 +112,7 @@ public class PatientTaskAgentService {
         this.platformProperties = platformProperties;
         this.agentMetrics = agentMetrics;
         this.outcomeRecorder = outcomeRecorder;
+        this.attributionService = attributionService;
     }
 
     /**
@@ -571,6 +575,9 @@ public class PatientTaskAgentService {
                 .outcomeLabel(AgentOutcomeLabel.SUCCESS_WITH_FALLBACK)
                 .fallbackUsed(Boolean.TRUE)
                 .build());
+        if (attributionService != null) {
+            attributionService.recompute(agentResult.getSessionId());
+        }
     }
 
     private void recordEvidenceMetrics(
