@@ -2,9 +2,9 @@ package com.lx.governance.vectormemory.migration;
 
 import com.lx.governance.vectormemory.entity.AiGroupMemoryEntity;
 import com.lx.governance.vectormemory.mapper.AiGroupMemoryMapper;
-import com.lx.governance.vectormemory.service.EmbeddingService;
-import com.lx.governance.vectormemory.service.RedisMemoryIndexService;
-import com.lx.governance.vectormemory.service.VectorStoreService;
+import com.lx.governance.vectormemory.integration.ai.EmbeddingService;
+import com.lx.governance.vectormemory.integration.storage.RedisMemoryIndexService;
+import com.lx.governance.vectormemory.integration.storage.VectorStoreService;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

@@ -1,6 +1,7 @@
 package com.lx.governance.aichat.service;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -8,6 +9,8 @@ import java.util.concurrent.CompletableFuture;
 
 import org.springframework.stereotype.Service;
 
+import com.lx.governance.aichat.context.PromptBudgetPolicy;
+import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.LayeredMemories;
 import com.lx.governance.aichat.dto.MessageSummary;
 import com.lx.governance.aichat.dto.RetrievalQuery;
@@ -28,6 +31,7 @@ public class LayeredMemoryOrchestrator {
     private final RetrievalQueryRewriteService retrievalQueryRewriteService;
     private final IntentMemoryFilterStrategy intentMemoryFilterStrategy;
     private final MemorySelfQueryPlanner memorySelfQueryPlanner;
+    private final PromptBudgetPolicy promptBudgetPolicy;
 
     public CompletableFuture<LayeredMemories> loadMemories(
             String groupId,
@@ -88,7 +92,7 @@ public class LayeredMemoryOrchestrator {
                         structuredQuery.toBuilder().semanticQuery(retrievalText).build())
                 .thenApply(longTermMemories -> LayeredMemories.builder()
                         .shortTermMemories(shortTermMemories)
-                        .longTermMemories(longTermMemories)
+                        .longTermMemories(trimLongTermMemories(longTermMemories, sessionContext, structuredQuery, retrievalCount))
                         .build());
     }
 
@@ -211,5 +215,98 @@ public class LayeredMemoryOrchestrator {
         }
 
         return shortTermMemories;
+    }
+
+    List<MemoryItemDTO> trimLongTermMemories(
+            List<MemoryItemDTO> longTermMemories,
+            SessionContext sessionContext,
+            StructuredMemoryQuery structuredQuery,
+            int retrievalCount) {
+        if (longTermMemories == null || longTermMemories.isEmpty()) {
+            return List.of();
+        }
+
+        Set<String> preferredTypes = structuredQuery != null && structuredQuery.getFilter() != null
+                ? structuredQuery.getFilter().getMemoryTypes()
+                : Set.of();
+        int longTermBudget = promptBudgetPolicy.resolve(
+                sessionContext != null ? sessionContext.getComplexity() : null).getLongTermMemoryBudget();
+
+        List<MemoryItemDTO> sorted = longTermMemories.stream()
+                .sorted(memoryComparator(preferredTypes))
+                .toList();
+
+        List<MemoryItemDTO> selected = new ArrayList<>();
+        int usedTokens = 0;
+        for (MemoryItemDTO memory : sorted) {
+            if (memory == null || memory.getContent() == null || memory.getContent().isBlank()) {
+                continue;
+            }
+            if (selected.size() >= retrievalCount) {
+                break;
+            }
+            int estimatedTokens = estimateTokens(memory.getContent());
+            if (!selected.isEmpty() && usedTokens + estimatedTokens > longTermBudget) {
+                break;
+            }
+            selected.add(memory);
+            usedTokens += estimatedTokens;
+        }
+
+        log.info("长期记忆二次裁剪完成 - before: {}, after: {}, preferredTypes: {}, budget: {}, usedTokens: {}",
+                longTermMemories.size(),
+                selected.size(),
+                preferredTypes,
+                longTermBudget,
+                usedTokens);
+        return selected;
+    }
+
+    private Comparator<MemoryItemDTO> memoryComparator(Set<String> preferredTypes) {
+        return Comparator
+                .comparingInt((MemoryItemDTO memory) -> sourcePriority(memory, preferredTypes))
+                .thenComparing((MemoryItemDTO memory) -> memory.getSimilarity() != null ? memory.getSimilarity() : 0D,
+                        Comparator.reverseOrder())
+                .thenComparing((MemoryItemDTO memory) -> memory.getConfidenceScore() != null ? memory.getConfidenceScore() : 0D,
+                        Comparator.reverseOrder());
+    }
+
+    private int sourcePriority(MemoryItemDTO memory, Set<String> preferredTypes) {
+        String source = normalize(memory != null ? memory.getSource() : null);
+        if (preferredTypes != null && !preferredTypes.isEmpty() && preferredTypes.stream()
+                .map(this::normalize)
+                .anyMatch(type -> type.equals(source))) {
+            return 0;
+        }
+        if (Set.of("DIET", "PREFERENCE", "MEDICATION", "ALLERGY", "SYMPTOM", "OTHER").contains(source)) {
+            return 1;
+        }
+        if ("RECENT_CACHE".equals(source)) {
+            return 2;
+        }
+        if ("KEYWORD".equals(source)) {
+            return 3;
+        }
+        return 4;
+    }
+
+    private String normalize(String value) {
+        return value == null ? "" : value.trim().toUpperCase();
+    }
+
+    private int estimateTokens(String text) {
+        if (text == null || text.isBlank()) {
+            return 0;
+        }
+        int chineseChars = 0;
+        int otherChars = 0;
+        for (char c : text.toCharArray()) {
+            if (c >= 0x4E00 && c <= 0x9FA5) {
+                chineseChars++;
+            } else {
+                otherChars++;
+            }
+        }
+        return (int) (chineseChars * 1.5 + otherChars * 0.25);
     }
 }

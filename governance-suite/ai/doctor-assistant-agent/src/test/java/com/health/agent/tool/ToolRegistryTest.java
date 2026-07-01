@@ -2,6 +2,7 @@ package com.health.agent.tool;
 
 import com.health.agent.model.ChatMessage;
 import com.health.agent.model.FollowUpTask;
+import com.health.agent.model.HealthKnowledge;
 import com.health.agent.model.PatientProfile;
 import com.health.agent.model.PrescriptionRecord;
 import com.health.agent.model.ToolExecutionOutput;
@@ -11,6 +12,7 @@ import com.health.agent.service.HealthKnowledgeService;
 import com.health.agent.service.PatientService;
 import com.health.agent.service.AdherenceAnalysisService;
 import com.health.agent.service.WeightPlateauService;
+import com.health.agent.scene.doctor.tool.DoctorToolDefinitionRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -26,7 +28,9 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.when;
@@ -60,7 +64,7 @@ class ToolRegistryTest {
         ReflectionTestUtils.setField(adherenceAnalysisService, "analysisWindowDays", 14);
         ReflectionTestUtils.setField(adherenceAnalysisService, "minWeightRecords", 3);
 
-        toolRegistry = new ToolRegistry();
+        toolRegistry = new ToolRegistry(new DoctorToolDefinitionRegistry());
         ReflectionTestUtils.setField(toolRegistry, "patientService", patientService);
         ReflectionTestUtils.setField(toolRegistry, "followUpTaskService", followUpTaskService);
         ReflectionTestUtils.setField(toolRegistry, "healthKnowledgeService", healthKnowledgeService);
@@ -84,6 +88,10 @@ class ToolRegistryTest {
         assertTrue(toolNames.contains("detect_weight_plateau"));
         assertTrue(toolNames.contains("analyze_adherence_signals"));
         assertTrue(toolNames.contains("get_health_knowledge"));
+        assertTrue(toolNames.contains("search_medical_knowledge"));
+        assertTrue(toolNames.contains("search_medication_guidance"));
+        assertTrue(toolNames.contains("search_follow_up_protocol"));
+        assertTrue(toolNames.contains("search_red_flag_guideline"));
         assertTrue(toolNames.contains("triage_red_flags"));
         assertTrue(toolNames.contains("analyze_medication_adherence"));
         assertTrue(toolNames.contains("summarize_symptom_timeline"));
@@ -147,6 +155,22 @@ class ToolRegistryTest {
             .createdAt(LocalDateTime.now())
             .build();
         when(patientService.getPrescriptionHistory("C001", 10)).thenReturn(List.of(prescription));
+        HealthKnowledge kbKnowledge = HealthKnowledge.builder()
+            .title("高血压运动建议")
+            .category("EXERCISE")
+            .content("建议每周进行中等强度有氧运动。")
+            .source("kb")
+            .trustLevel("HIGH")
+            .hitReason("hybrid")
+            .score(0.91)
+            .applicableScope("doctor_assistant")
+            .build();
+        when(healthKnowledgeService.getByTopic("高血压运动", 3)).thenReturn(List.of(kbKnowledge));
+        when(healthKnowledgeService.getByTopic("高血压", 3)).thenReturn(List.of(kbKnowledge));
+        when(healthKnowledgeService.searchMedicalKnowledge("高血压运动建议", 5)).thenReturn(List.of(kbKnowledge));
+        when(healthKnowledgeService.searchMedicationGuidance("二甲双胍 禁忌", 5)).thenReturn(List.of(kbKnowledge));
+        when(healthKnowledgeService.searchFollowUpProtocol("高血压 随访", 5)).thenReturn(List.of(kbKnowledge));
+        when(healthKnowledgeService.searchRedFlagGuideline("胸痛 红旗", 5)).thenReturn(List.of(kbKnowledge));
 
         ToolExecutionOutput profileOutput = assertInstanceOf(
             ToolExecutionOutput.class,
@@ -199,5 +223,46 @@ class ToolRegistryTest {
             toolRegistry.getTool("recommend_follow_up_data_requests").getExecutor().execute(Map.of("customerId", "C001"))
         );
         assertTrue(followUpDataOutput.getStateUpdates().containsKey("follow_up_data_requests"));
+
+        ToolExecutionOutput knowledgeOutput = assertInstanceOf(
+            ToolExecutionOutput.class,
+            toolRegistry.getTool("get_health_knowledge").getExecutor().execute(Map.of("topic", "高血压运动"))
+        );
+        List<?> knowledgeRows = assertInstanceOf(List.class, knowledgeOutput.getData());
+        Map<?, ?> firstKnowledge = assertInstanceOf(Map.class, knowledgeRows.get(0));
+        assertEquals("HIGH", firstKnowledge.get("trustLevel"));
+        assertEquals("hybrid", firstKnowledge.get("hitReason"));
+        assertNotNull(firstKnowledge.get("score"));
+
+        ToolExecutionOutput educationOutput = assertInstanceOf(
+            ToolExecutionOutput.class,
+            toolRegistry.getTool("generate_patient_education_points").getExecutor().execute(Map.of("topic", "高血压"))
+        );
+        Map<?, ?> educationData = assertInstanceOf(Map.class, educationOutput.getData());
+        assertTrue(educationData.containsKey("evidence"));
+
+        ToolExecutionOutput medicalKnowledgeOutput = assertInstanceOf(
+            ToolExecutionOutput.class,
+            toolRegistry.getTool("search_medical_knowledge").getExecutor().execute(Map.of("query", "高血压运动建议"))
+        );
+        assertTrue(medicalKnowledgeOutput.getStateUpdates().containsKey("medical_knowledge"));
+
+        ToolExecutionOutput medicationGuidanceOutput = assertInstanceOf(
+            ToolExecutionOutput.class,
+            toolRegistry.getTool("search_medication_guidance").getExecutor().execute(Map.of("query", "二甲双胍 禁忌"))
+        );
+        assertTrue(medicationGuidanceOutput.getStateUpdates().containsKey("medication_guidance"));
+
+        ToolExecutionOutput followUpProtocolOutput = assertInstanceOf(
+            ToolExecutionOutput.class,
+            toolRegistry.getTool("search_follow_up_protocol").getExecutor().execute(Map.of("query", "高血压 随访"))
+        );
+        assertTrue(followUpProtocolOutput.getStateUpdates().containsKey("follow_up_protocol"));
+
+        ToolExecutionOutput redFlagGuidelineOutput = assertInstanceOf(
+            ToolExecutionOutput.class,
+            toolRegistry.getTool("search_red_flag_guideline").getExecutor().execute(Map.of("query", "胸痛 红旗"))
+        );
+        assertTrue(redFlagGuidelineOutput.getStateUpdates().containsKey("red_flag_guideline"));
     }
 }

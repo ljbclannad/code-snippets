@@ -34,6 +34,9 @@ public class CoreProfileSectionBuilder implements PromptSectionBuilder {
                 .title("## 用户核心信息")
                 .content(content)
                 .usedTokens(usedTokens)
+                .allocatedTokens(sectionBudget)
+                .originalTokens(estimatedTokens)
+                .compressed(estimatedTokens > sectionBudget)
                 .build();
     }
 }

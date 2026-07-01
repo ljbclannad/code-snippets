@@ -35,11 +35,11 @@ public class DegradationScheduler {
             // 记录指标日志（仅在降级时或每分钟记录一次）
             if (degradationManager.isDegraded() || System.currentTimeMillis() % 60000 < 10000) {
                 log.info("系统指标 - CPU: {}%, Memory: {}%, Concurrent: {}, ErrorRate: {}%, AvgRT: {}ms",
-                        String.format("%.1f", metrics.getCpuUsage()),
-                        String.format("%.1f", metrics.getMemoryUsage()),
+                        formatDecimal(metrics.getCpuUsage()),
+                        formatDecimal(metrics.getMemoryUsage()),
                         metrics.getConcurrentRequests(),
-                        String.format("%.1f", metrics.getErrorRate()),
-                        String.format("%.1f", metrics.getAvgResponseTime()));
+                        formatDecimal(metrics.getErrorRate()),
+                        metrics.getAvgResponseTime());
             }
 
             // 执行降级决策
@@ -58,5 +58,9 @@ public class DegradationScheduler {
     public void resetStatistics() {
         metricsCollector.resetStatistics();
         log.debug("统计数据已重置");
+    }
+
+    private String formatDecimal(Number value) {
+        return String.format("%.1f", value != null ? value.doubleValue() : 0.0);
     }
 }

@@ -12,6 +12,7 @@
         <result column="result_status" property="resultStatus"/>
         <result column="reviewer" property="reviewer"/>
         <result column="resolution_reason" property="resolutionReason"/>
+        <result column="decision_reason_code" property="decisionReasonCode"/>
         <result column="remarks" property="remarks"/>
         <result column="related_formal_id" property="relatedFormalId"/>
         <result column="create_time" property="createTime"/>
@@ -20,10 +21,10 @@
     <insert id="insert" parameterType="com.lx.governance.vectormemory.entity.AiGroupMemoryReviewAuditEntity" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO b_ai_group_memory_review_audit (
             candidate_id, customer_id, group_id, action_type, result_status,
-            reviewer, resolution_reason, remarks, related_formal_id
+            reviewer, resolution_reason, decision_reason_code, remarks, related_formal_id
         ) VALUES (
             #{candidateId}, #{customerId}, #{groupId}, #{actionType}, #{resultStatus},
-            #{reviewer}, #{resolutionReason}, #{remarks}, #{relatedFormalId}
+            #{reviewer}, #{resolutionReason}, #{decisionReasonCode}, #{remarks}, #{relatedFormalId}
         )
     </insert>
 

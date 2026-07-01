@@ -5,7 +5,7 @@ services:
         image: example/mysql:8.0.30
         pull_policy: never
         container_name: gov-mysql
-        restart: unless-stopped
+        restart: "no"
         environment:
             MYSQL_ROOT_PASSWORD: root
             TZ: Asia/Shanghai
@@ -19,12 +19,18 @@ services:
             - "--character-set-server=utf8mb4"
             - "--collation-server=utf8mb4_unicode_ci"
             - "--default-time-zone=+08:00"
+        healthcheck:
+            test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -proot || exit 1"]
+            interval: 15s
+            timeout: 5s
+            retries: 8
 
     mysql-slave1:
+        profiles: ["replica"]
         image: example/mysql:8.0.30
         pull_policy: never
         container_name: gov-mysql-slave1
-        restart: unless-stopped
+        restart: "no"
         environment:
             MYSQL_ROOT_PASSWORD: root
             TZ: Asia/Shanghai
@@ -41,10 +47,11 @@ services:
             - mysql
 
     mysql-slave2:
+        profiles: ["replica"]
         image: example/mysql:8.0.30
         pull_policy: never
         container_name: gov-mysql-slave2
-        restart: unless-stopped
+        restart: "no"
         environment:
             MYSQL_ROOT_PASSWORD: root
             TZ: Asia/Shanghai
@@ -64,27 +71,37 @@ services:
         image: redis:latest
         pull_policy: never
         container_name: gov-redis
-        restart: unless-stopped
+        restart: "no"
         ports:
             - "36379:6379"
         volumes:
             - gov_redis_data:/data
+        healthcheck:
+            test: ["CMD", "redis-cli", "ping"]
+            interval: 15s
+            timeout: 5s
+            retries: 8
 
     rabbitmq:
         image: rabbitmq:3.13-management
         container_name: gov-rabbitmq
-        restart: unless-stopped
+        restart: "no"
         ports:
             - "5672:5672"
             - "15672:15672"
         volumes:
             - gov_rabbitmq_data:/var/lib/rabbitmq
+        healthcheck:
+            test: ["CMD", "rabbitmq-diagnostics", "ping"]
+            interval: 15s
+            timeout: 10s
+            retries: 8
 
     nacos:
         image: nacos/nacos-server:v2.5.1
         pull_policy: never
         container_name: gov-nacos
-        restart: unless-stopped
+        restart: "no"
         environment:
             MODE: standalone
             PREFER_HOST_MODE: hostname
@@ -102,11 +119,17 @@ services:
             - "9849:9849"
         depends_on:
             - mysql
+        healthcheck:
+            test: ["CMD-SHELL", "curl -fsS http://localhost:8848/nacos/v1/console/health/readiness || exit 1"]
+            interval: 20s
+            timeout: 10s
+            retries: 10
 
     seata-server:
+        profiles: ["replica"]
         image: seataio/seata-server:1.7.1
         container_name: gov-seata
-        restart: unless-stopped
+        restart: "no"
         ports:
             - "8091:8091"
         environment:
@@ -116,10 +139,11 @@ services:
             - mysql
 
     sentinel:
+        profiles: ["replica"]
         image: bladex/sentinel-dashboard:1.8.6
         platform: linux/amd64
         container_name: gov-sentinel
-        restart: unless-stopped
+        restart: "no"
         ports:
             - "8858:8858"
         environment:
@@ -129,7 +153,7 @@ services:
     etcd:
         image: quay.io/coreos/etcd:v3.5.5
         container_name: gov-etcd
-        restart: unless-stopped
+        restart: "no"
         environment:
             - ETCD_AUTO_COMPACTION_MODE=revision
             - ETCD_AUTO_COMPACTION_RETENTION=1000
@@ -148,7 +172,7 @@ services:
     minio:
         image: minio/minio:RELEASE.2023-03-20T20-16-18Z
         container_name: gov-minio
-        restart: unless-stopped
+        restart: "no"
         environment:
             MINIO_ROOT_USER: minioadmin
             MINIO_ROOT_PASSWORD: minioadmin
@@ -168,7 +192,7 @@ services:
     milvus:
         image: milvusdb/milvus:v2.3.4
         container_name: gov-milvus
-        restart: unless-stopped
+        restart: "no"
         environment:
             ETCD_ENDPOINTS: etcd:2379
             MINIO_ADDRESS: minio:9000
@@ -192,9 +216,10 @@ services:
             retries: 3
 
     attu:
+        profiles: ["tools"]
         image: zilliz/attu:latest
         container_name: gov-attu
-        restart: unless-stopped
+        restart: "no"
         ports:
             - "8000:3000"
         depends_on:
@@ -209,7 +234,7 @@ services:
         build:
             context: ./docker/rerank-service
         container_name: gov-bge-rerank
-        restart: unless-stopped
+        restart: "no"
         environment:
             RERANK_MODEL_NAME: BAAI/bge-reranker-v2-m3
             RERANK_DEVICE: ${RERANK_DEVICE:-cpu}
@@ -229,11 +254,11 @@ services:
     elasticsearch:
         image: elasticsearch:8.11.0
         container_name: gov-elasticsearch
-        restart: unless-stopped
+        restart: "no"
         environment:
             - discovery.type=single-node
             - xpack.security.enabled=false
-            - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+            - "ES_JAVA_OPTS=-Xms384m -Xmx384m"
             - TZ=Asia/Shanghai
         ports:
             - "9200:9200"
@@ -247,9 +272,10 @@ services:
             retries: 3
 
     kibana:
+        profiles: ["observability"]
         image: kibana:8.11.0
         container_name: gov-kibana
-        restart: unless-stopped
+        restart: "no"
         environment:
             - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
             - TZ=Asia/Shanghai
@@ -260,9 +286,10 @@ services:
                 condition: service_healthy
 
     logstash:
+        profiles: ["observability"]
         image: logstash:8.11.0
         container_name: gov-logstash
-        restart: unless-stopped
+        restart: "no"
         environment:
             - "LS_JAVA_OPTS=-Xms256m -Xmx256m"
             - TZ=Asia/Shanghai
@@ -277,9 +304,10 @@ services:
                 condition: service_healthy
 
     prometheus:
+        profiles: ["observability"]
         image: prom/prometheus:latest
         container_name: gov-prometheus
-        restart: unless-stopped
+        restart: "no"
         ports:
             - "9090:9090"
         volumes:
@@ -300,9 +328,10 @@ services:
             retries: 3
 
     grafana:
+        profiles: ["observability"]
         image: grafana/grafana:latest
         container_name: gov-grafana
-        restart: unless-stopped
+        restart: "no"
         depends_on:
             - prometheus
         ports:
@@ -323,9 +352,10 @@ services:
             retries: 3
 
     jaeger:
+        profiles: ["observability"]
         image: jaegertracing/all-in-one:1.55
         container_name: gov-jaeger
-        restart: unless-stopped
+        restart: "no"
         environment:
             - COLLECTOR_OTLP_ENABLED=true
             - SPAN_STORAGE_TYPE=memory

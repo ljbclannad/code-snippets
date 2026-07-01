@@ -44,9 +44,9 @@
 
 ### 必需服务
 
-1. **Redis**（端口 6379）
+1. **Redis**（默认端口 36379；如需隔离测试环境也可临时映射到 6379）
    ```bash
-   docker run -d --name redis-test -p 6379:6379 redis:7-alpine
+   docker run -d --name redis-test -p 36379:6379 redis:7-alpine
    ```
 
 2. **Milvus**（端口 19530）
@@ -77,14 +77,14 @@
 ```yaml
 spring:
   datasource:
-    url: jdbc:mysql://localhost:3306/governance_db?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    url: jdbc:mysql://localhost:3306/governance?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
     username: root
-    password: root123
+    password: root
 
   data:
     redis:
       host: localhost
-      port: 6379
+      port: 36379
 
   ai:
     dashscope:
@@ -202,7 +202,7 @@ class VectorMemoryEndToEndTest {
 docker ps | grep redis
 
 # 启动 Redis
-docker run -d --name redis-test -p 6379:6379 redis:7-alpine
+docker run -d --name redis-test -p 36379:6379 redis:7-alpine
 
 # 测试连接
 redis-cli ping
@@ -273,7 +273,7 @@ redis-cli
 
 # 手动清理 MySQL
 mysql -u root -p
-> USE governance_db;
+> USE governance;
 > DELETE FROM b_ai_group_memory WHERE group_id = 'test-group-e2e-001';
 ```
 

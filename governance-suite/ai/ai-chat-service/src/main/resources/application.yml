@@ -189,11 +189,27 @@ profile-completion:
   rules-config: classpath:profile-completion-rules.yml
 
 ai-chat:
+  kb:
+    enabled: true
+    base-url: ${KNOWLEDGE_BASE_SERVICE_BASE_URL:http://localhost:8103}
+    kb-id: ${AI_CHAT_KB_ID:}
+    timeout-ms: 10000
+  async-backlog-alert:
+    enabled: true
+    check-interval-ms: 30000
+    repeat-alert-interval-ms: 300000
+    queue-thresholds:
+      memory-extraction-ready-threshold: 100
+      chat-history-sync-ready-threshold: 100
+    rpc-thresholds:
+      user-profile-pending-threshold: 50
+      vector-memory-pending-threshold: 50
   agent:
     enabled: false
     base-url: ${DOCTOR_ASSISTANT_AGENT_BASE_URL:http://localhost:8088}
     timeout-ms: 15000
     auto-fallback-to-direct-chat: true
+    pending-review-short-circuit-window-ms: 600000
     doctor-pilot-mode: true
     patient-conservative-readonly-mode: true
     enabled-task-types:
@@ -202,6 +218,13 @@ ai-chat:
       - NEXT_FOLLOW_UP_ACTION_RECOMMENDATION
     enabled-group-ids: []
     circuit-breaker-open: false
+    task:
+      patient-visible-response-only: true
+      require-human-review-for-high-risk: true
+      require-evidence: true
+      require-audit-trail: true
+      fallback-to-direct-chat-on-failure: true
+      timeout-millis: 8000
   concurrency:
     conversation-lock-timeout-ms: 0
 

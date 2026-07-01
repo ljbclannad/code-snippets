@@ -8,6 +8,7 @@ import com.lx.governance.common.trace.Trace;
 import com.lx.governance.order.domain.CreateOrderRequest;
 import com.lx.governance.order.domain.OrderDto;
 import com.lx.governance.order.service.OrderAppService;
+import com.lx.governance.order.service.OrderTccAppService;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -17,9 +18,11 @@ import java.util.Map;
 public class OrderController {
 
     private final OrderAppService appService;
+    private final OrderTccAppService orderTccAppService;
 
-    public OrderController(OrderAppService appService) {
+    public OrderController(OrderAppService appService, OrderTccAppService orderTccAppService) {
         this.appService = appService;
+        this.orderTccAppService = orderTccAppService;
     }
 
     @SentinelResource(value = "order:create", blockHandler = "handleCreateBlocked")
@@ -68,5 +71,15 @@ public class OrderController {
     @PostMapping("/order/payment/callback/{orderNo}")
     public ApiResponse<Map<String, String>> paymentCallback(@PathVariable String orderNo) {
         return ApiResponse.ok(appService.paymentCallbackPass(orderNo), Trace.getOrCreate());
+    }
+
+    @PostMapping("/order/tcc")
+    public ApiResponse<OrderDto> createByTcc(@RequestBody CreateOrderRequest req,
+                                             @RequestHeader(value = AuthHeaders.USER_ID, required = false) Long authenticatedUserId,
+                                             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+        if (authenticatedUserId != null) {
+            req.setCustomerId(String.valueOf(authenticatedUserId));
+        }
+        return ApiResponse.ok(orderTccAppService.create(req, idempotencyKey), Trace.getOrCreate());
     }
 }

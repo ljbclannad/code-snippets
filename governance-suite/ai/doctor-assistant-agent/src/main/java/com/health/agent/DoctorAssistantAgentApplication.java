@@ -8,7 +8,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * 医生助手 ReAct Agent 应用启动类
  */
 @SpringBootApplication
-@MapperScan("com.health.agent.mapper")
+@MapperScan("com.health.agent")
 public class DoctorAssistantAgentApplication {
 
     public static void main(String[] args) {

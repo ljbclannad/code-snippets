@@ -2,6 +2,7 @@ package com.lx.governance.aichat.context;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.springframework.stereotype.Component;
 
@@ -69,6 +70,30 @@ public class PromptSectionSupport {
         if (context.getMentionedEntities() != null && !context.getMentionedEntities().isEmpty()) {
             sb.append("提及实体：").append(String.join("、", context.getMentionedEntities())).append("\n");
         }
+
+        return sb.toString();
+    }
+
+    public String buildPrioritizedSessionContext(SessionContext context, int budget) {
+        if (context == null || budget <= 0) {
+            return "";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        AtomicInteger usedTokens = new AtomicInteger();
+
+        // 第一层：决定本轮回答方向的核心信号，优先保留。
+        appendLineWithBudget(sb, "当前话题：", context.getCurrentTopic(), budget, usedTokens, false);
+        appendLineWithBudget(sb, "用户意图：", context.getUserIntent(), budget, usedTokens, false);
+        appendLineWithBudget(sb, "对话阶段：", context.getConversationPhase(), budget, usedTokens, false);
+
+        // 第二层：影响下一步回答或追问的状态字段。
+        appendStringListWithBudget(sb, "待确认问题", context.getPendingQuestions(), budget, usedTokens, 2);
+        appendStringListWithBudget(sb, "提及实体", context.getMentionedEntities(), budget, usedTokens, 6);
+        appendMapWithBudget(sb, "已提取数据", context.getExtractedData(), budget, usedTokens, 3);
+
+        // 第三层：最近上下文摘要，预算紧张时优先牺牲。
+        appendRecentSummariesWithBudget(sb, context.getRecentSummaries(), budget, usedTokens, 2);
 
         return sb.toString();
     }
@@ -287,6 +312,132 @@ public class PromptSectionSupport {
             return text;
         }
         return text.substring(0, targetLength) + "...";
+    }
+
+    private void appendLineWithBudget(
+            StringBuilder sb,
+            String label,
+            String value,
+            int budget,
+            AtomicInteger usedTokens,
+            boolean allowSkipWhenTight) {
+        if (value == null || value.isBlank() || usedTokens.get() >= budget) {
+            return;
+        }
+
+        int remainingBudget = budget - usedTokens.get();
+        String candidate = label + value + "\n";
+        int candidateTokens = estimateTokens(candidate);
+
+        if (candidateTokens <= remainingBudget) {
+            sb.append(candidate);
+            usedTokens.addAndGet(candidateTokens);
+            return;
+        }
+
+        String compressedValue = compressText(value, Math.max(remainingBudget - estimateTokens(label + "\n"), 1));
+        String compressedCandidate = label + compressedValue + "\n";
+        int compressedTokens = estimateTokens(compressedCandidate);
+        if (compressedTokens <= remainingBudget) {
+            sb.append(compressedCandidate);
+            usedTokens.addAndGet(compressedTokens);
+            return;
+        }
+
+        if (!allowSkipWhenTight && remainingBudget > estimateTokens(label + "...\n")) {
+            String fallback = label + "...\n";
+            sb.append(fallback);
+            usedTokens.addAndGet(estimateTokens(fallback));
+        }
+    }
+
+    private void appendStringListWithBudget(
+            StringBuilder sb,
+            String label,
+            List<String> items,
+            int budget,
+            AtomicInteger usedTokens,
+            int maxItems) {
+        if (items == null || items.isEmpty() || usedTokens.get() >= budget) {
+            return;
+        }
+
+        String joined = String.join("、", items.stream()
+                .filter(item -> item != null && !item.isBlank())
+                .limit(maxItems)
+                .toList());
+        appendLineWithBudget(sb, label + "：", joined, budget, usedTokens, true);
+    }
+
+    private void appendMapWithBudget(
+            StringBuilder sb,
+            String label,
+            Map<String, Object> data,
+            int budget,
+            AtomicInteger usedTokens,
+            int maxEntries) {
+        if (data == null || data.isEmpty() || usedTokens.get() >= budget) {
+            return;
+        }
+
+        String joined = data.entrySet().stream()
+                .filter(entry -> entry.getKey() != null && entry.getValue() != null)
+                .limit(maxEntries)
+                .map(entry -> entry.getKey() + "=" + entry.getValue())
+                .reduce((left, right) -> left + "；" + right)
+                .orElse("");
+        appendLineWithBudget(sb, label + "：", joined, budget, usedTokens, true);
+    }
+
+    private void appendRecentSummariesWithBudget(
+            StringBuilder sb,
+            List<com.lx.governance.aichat.dto.MessageSummary> summaries,
+            int budget,
+            AtomicInteger usedTokens,
+            int maxItems) {
+        if (summaries == null || summaries.isEmpty() || usedTokens.get() >= budget) {
+            return;
+        }
+
+        int remainingBudget = budget - usedTokens.get();
+        String header = "最近对话：\n";
+        int headerTokens = estimateTokens(header);
+        if (headerTokens >= remainingBudget) {
+            return;
+        }
+
+        StringBuilder summaryBuilder = new StringBuilder(header);
+        int localUsed = headerTokens;
+        int appendedCount = 0;
+        for (var summary : summaries) {
+            if (summary == null || summary.getUserMessage() == null || summary.getUserMessage().isBlank()) {
+                continue;
+            }
+            String line = "  - " + summary.getUserMessage() + "\n";
+            int lineTokens = estimateTokens(line);
+            if (localUsed + lineTokens > remainingBudget) {
+                String compressed = "  - " + compressText(summary.getUserMessage(),
+                        Math.max(remainingBudget - localUsed - estimateTokens("  - \n"), 1)) + "\n";
+                int compressedTokens = estimateTokens(compressed);
+                if (localUsed + compressedTokens <= remainingBudget) {
+                    summaryBuilder.append(compressed);
+                    localUsed += compressedTokens;
+                    appendedCount++;
+                }
+                break;
+            }
+            summaryBuilder.append(line);
+            localUsed += lineTokens;
+            appendedCount++;
+            if (appendedCount >= maxItems) {
+                break;
+            }
+        }
+
+        if (appendedCount > 0) {
+            sb.append(summaryBuilder);
+            usedTokens.addAndGet(localUsed);
+        }
     }
 
     private QuestionType classifyQuestion(String question) {

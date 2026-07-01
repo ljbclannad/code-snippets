@@ -1,6 +1,7 @@
 package com.health.agent.model;
 
 import com.alibaba.fastjson2.JSON;
+import com.lx.governance.agentplatform.model.PlatformContextVisibility;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -109,6 +110,10 @@ public class AgentContext {
      * 目的是让后续推理和工具调用可以稳定引用。
      */
     public void putSlot(String key, Object value, String source) {
+        putSlot(key, value, source, PlatformContextVisibility.AGENT_INTERNAL);
+    }
+
+    public void putSlot(String key, Object value, String source, PlatformContextVisibility visibility) {
         if (key == null || key.isBlank()) {
             return;
         }
@@ -116,6 +121,7 @@ public class AgentContext {
             .key(key)
             .value(value)
             .source(source)
+            .visibility(visibility != null ? visibility : PlatformContextVisibility.AGENT_INTERNAL)
             .updatedAt(LocalDateTime.now())
             .build());
     }
@@ -130,11 +136,21 @@ public class AgentContext {
      * - 是否足以支撑高风险建议
      */
     public void addEvidence(String toolName, String source, String summary, Object payload) {
+        addEvidence(toolName, source, summary, payload, PlatformContextVisibility.AGENT_INTERNAL);
+    }
+
+    public void addEvidence(
+            String toolName,
+            String source,
+            String summary,
+            Object payload,
+            PlatformContextVisibility visibility) {
         evidenceRecords.add(EvidenceRecord.builder()
             .toolName(toolName)
             .source(source)
             .summary(summary)
             .payload(payload)
+            .visibility(visibility != null ? visibility : PlatformContextVisibility.AGENT_INTERNAL)
             .recordedAt(LocalDateTime.now())
             .build());
     }

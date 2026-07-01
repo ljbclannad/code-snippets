@@ -9,7 +9,14 @@ import com.health.agent.model.AgentContext;
 import com.health.agent.model.ContextEntry;
 import com.health.agent.model.Message;
 import com.health.agent.model.Step;
+import com.health.agent.scene.doctor.prompt.DoctorScenePromptTemplate;
 import com.health.agent.tool.Tool;
+import com.lx.governance.agentplatform.model.PromptRenderRequest;
+import com.lx.governance.agentplatform.model.PromptRenderResult;
+import com.lx.governance.agentplatform.model.PromptTemplateType;
+import com.lx.governance.agentplatform.model.ToolDescriptor;
+import com.lx.governance.agentplatform.runtime.PromptRegistry;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -23,134 +30,73 @@ import java.util.stream.Collectors;
  * ReAct Prompt 构建器
  */
 @Component
-public class ReActPromptBuilder {
+public class ReActPromptBuilder implements AgentPromptProvider {
+
+    public static final String DOCTOR_SCENE = "doctor-weight-management";
+    public static final String DOCTOR_AGENT = "doctor-assistant-agent";
+    public static final String DEFAULT_PROMPT_VERSION = "doctor-react-prompt-v1";
+
+    @Autowired
+    private DoctorScenePromptTemplate doctorScenePromptTemplate = new DoctorScenePromptTemplate();
+
+    @Autowired(required = false)
+    private PromptRegistry promptRegistry;
 
     /**
      * 构建 ReAct 循环的 System Prompt
      */
     public String buildSystemPrompt(List<Tool> availableTools) {
-        return String.format("""
-            你是一位资深健康管理医生的AI助手Agent。你的任务是通过多步推理和工具调用，帮助医生分析患者情况。
-
-            ## 输出协议
-
-            你只能输出一个合法 JSON 对象，不能输出 Markdown、代码块说明、前后缀解释。
-            协议版本固定为 `v1`。
-
-            当你还需要继续调用工具时，输出：
-            {
-              "protocolVersion": "v1",
-              "thinking": "你对当前情况的分析和下一步计划",
-              "finished": false,
-              "action": {
-                "toolName": "工具名",
-                "input": {
-                  "字段": "值"
-                },
-                "reason": "执行该工具的原因"
-              }
-            }
-
-            当你已经可以给出最终结论时，输出：
-            {
-              "protocolVersion": "v1",
-              "thinking": "最终分析",
-              "finished": true,
-              "finalAnswer": {
-                "summary": "给医生的简要结论",
-                "keyFindings": ["关键发现1", "关键发现2"],
-                "riskLevel": "LOW | MEDIUM | HIGH",
-                "recommendedActions": ["建议动作1", "建议动作2"],
-                "needsAttention": true,
-                "uncertainties": ["待补充信息1"],
-                "supportingEvidence": ["证据1", "证据2"],
-                "evidenceSources": ["WEIGHT_HISTORY", "CHAT_HISTORY"],
-                "inferences": ["归纳判断1"]
-              }
-            }
-
-            约束：
-            1. 每次只能调用一个工具
-            2. 只能使用下方列出的工具名和字段
-            3. finished=true 时禁止输出 action
-            4. finished=false 时禁止输出 finalAnswer
-            5. 不得伪造 Observation，不得跳过工具直接声称已获取事实
-            6. 涉及诊断或处方建议时，必须通过高风险工具触发审批链路
-
-            ## 可用工具
-
-            %s
-
-            ## 重要原则
-
-            1. **循序渐进**：先查询基础信息，再根据发现决定下一步
-            2. **有的放矢**：只调用真正需要的工具，不要盲目查询所有数据
-            3. **关注异常**：重点关注风险信号（体重异常、负面情绪、长期未打卡）
-            4. **停滞期优先识别**：当目标与减重停滞、平台期、近期不下降相关时，优先考虑调用 `detect_weight_plateau`
-            5. **依从性优先分析**：当目标涉及饮食执行差、运动中断、打卡不足、计划难以坚持时，优先考虑调用 `analyze_adherence_signals`
-            6. **医疗谨慎**：涉及诊断和处方时，必须基于充分证据
-            7. **结构化输出**：最终结论必须拆成摘要、关键发现、风险等级、建议动作、是否重点关注、不确定项
-            8. **解释推理**：thinking 中保留必要推理，但不要输出无关废话
-
-            ## 示例：调用工具
-
-            {
-              "protocolVersion": "v1",
-              "thinking": "我需要先获取患者的基础资料。",
-              "finished": false,
-              "action": {
-                "toolName": "get_patient_profile",
-                "input": {
-                  "customerId": "1001"
-                },
-                "reason": "先获取患者档案"
-              }
-            }
-
-            ## 示例：结束任务
-
-            {
-              "protocolVersion": "v1",
-              "thinking": "已经收集到足够的患者信息。",
-              "finished": true,
-              "finalAnswer": {
-                "summary": "这里输出给医生的简要分析结论。",
-                "keyFindings": ["体重整体下降", "近期有情绪波动"],
-                "riskLevel": "MEDIUM",
-                "recommendedActions": ["继续记录饮食", "增加一次随访"],
-                "needsAttention": true,
-                "uncertainties": ["缺少完整运动记录"],
-                "supportingEvidence": ["近30天体重整体下降", "聊天中提到近期焦虑"],
-                "evidenceSources": ["WEIGHT_HISTORY", "CHAT_HISTORY"],
-                "inferences": ["情绪因素可能影响减重执行"]
-              }
-            }
-
-            现在开始执行任务。
-            """, formatToolDescriptions(availableTools));
+        return doctorScenePromptTemplate.buildSystemPrompt(doctorScenePromptTemplate.fromTools(availableTools));
     }
 
     public String buildSubAgentSystemPrompt(AgentSubAgent subAgent, List<Tool> availableTools) {
-        return buildSystemPrompt(availableTools) + """
-
-            ## 当前子代理角色
-
-            你当前扮演：%s
-            角色职责：%s
-            首选工具：%s
-
-            你仍然必须遵守上方的 JSON 协议与安全约束，但应优先按照当前角色职责行动。
-            当首选工具已足以完成当前步骤时，优先使用这些工具；只有在首选工具无法补齐关键证据时，再考虑其他工具。
-            """.formatted(
-                subAgent.name(),
-                subAgent.responsibility(),
-                formatPreferredTools(subAgent.preferredToolNames()));
+        return doctorScenePromptTemplate.buildSubAgentSystemPrompt(
+                subAgent,
+                doctorScenePromptTemplate.fromTools(availableTools));
     }
 
-    /**
-     * 格式化工具描述
-     */
-    private String formatToolDescriptions(List<Tool> tools) {
+    @Override
+    public String buildSubAgentSystemPromptFromCatalog(AgentSubAgent subAgent, List<ToolDescriptor> availableTools) {
+        return renderSubAgentSystemPromptFromCatalog(subAgent, availableTools).getContent();
+    }
+
+    @Override
+    public RenderedPrompt renderSubAgentSystemPromptFromCatalog(AgentSubAgent subAgent, List<ToolDescriptor> availableTools) {
+        if (promptRegistry != null) {
+            PromptRenderResult result = promptRegistry.renderActive(
+                    DOCTOR_SCENE,
+                    DOCTOR_AGENT,
+                    PromptTemplateType.SUB_AGENT_SYSTEM,
+                    PromptRenderRequest.builder()
+                            .variable("subAgent", subAgent)
+                            .variable("availableTools", availableTools)
+                            .build());
+            return RenderedPrompt.builder()
+                    .descriptor(result.getDescriptor())
+                    .content(result.getContent())
+                    .build();
+        }
+        return RenderedPrompt.builder()
+                .descriptor(currentPromptDescriptor(PromptTemplateType.SUB_AGENT_SYSTEM))
+                .content(doctorScenePromptTemplate.buildSubAgentSystemPrompt(subAgent, availableTools))
+                .build();
+    }
+
+    public String buildSystemPromptFromCatalog(List<ToolDescriptor> availableTools) {
+        if (promptRegistry != null) {
+            return promptRegistry.renderActive(
+                    DOCTOR_SCENE,
+                    DOCTOR_AGENT,
+                    PromptTemplateType.SYSTEM,
+                    PromptRenderRequest.builder()
+                            .variable("availableTools", availableTools)
+                            .build())
+                    .getContent();
+        }
+        return doctorScenePromptTemplate.buildSystemPrompt(availableTools);
+    }
+
+    private String formatToolDescriptors(List<ToolDescriptor> tools) {
         return tools.stream()
             .map(tool -> String.format("""
                 ### %s
@@ -158,19 +104,12 @@ public class ReActPromptBuilder {
                 风险等级: %s
                 参数定义: %s
                 """,
-                tool.getName(),
+                tool.getToolName(),
                 tool.getDescription(),
                 tool.getRiskLevel(),
                 JSON.toJSONString(tool.getInputSchema())
             ))
             .collect(Collectors.joining("\n"));
-    }
-
-    private String formatPreferredTools(List<String> toolNames) {
-        if (toolNames == null || toolNames.isEmpty()) {
-            return "无固定偏好";
-        }
-        return String.join(", ", toolNames);
     }
 
     /**
@@ -213,17 +152,13 @@ public class ReActPromptBuilder {
         }
 
         appendSection(builder, "Current Patient Message", command.getPatientMessage());
-        appendSection(builder, "Trigger Decision Summary", extractTriggerSummary(command.getTriggerDecision()));
-        appendSection(builder, "Trigger Decision Reasons", extractTriggerReasons(command.getTriggerDecision()));
-        appendSection(builder, "Profile Snapshot Summary", summarizeMap(command.getProfileSnapshot(), 8));
-        appendSection(builder, "Session Context Summary", summarizeMap(command.getSessionContext(), 8));
+        appendSection(builder, "Trigger Decision Summary", summarizeTriggerDecisionSnapshot(command.getTriggerDecision()));
+        appendSection(builder, "Profile Snapshot Summary", summarizeProfileSnapshot(command.getProfileSnapshot()));
+        appendSection(builder, "Session Context Summary", summarizeSessionContextSnapshot(command.getSessionContext()));
 
         MemorySnapshot memorySnapshot = command.getMemorySnapshot();
         if (memorySnapshot != null) {
-            appendSection(builder, "Short-term Memory Snapshot",
-                    summarizeList(memorySnapshot.getShortTermMemories(), 4, 120));
-            appendSection(builder, "Long-term Memory Snapshot",
-                    summarizeList(memorySnapshot.getLongTermMemories(), 4, 120));
+            appendSection(builder, "Memory Snapshot Summary", summarizeMemorySnapshot(memorySnapshot));
         }
         appendSection(builder, "Task-specific Analysis Focus", taskTypeGuidance(command.getTaskType()));
 
@@ -236,15 +171,36 @@ public class ReActPromptBuilder {
     }
 
     public String buildProtocolRepairPrompt(String errorMessage) {
-        return """
-            你刚才的响应不符合协议，错误是：%s
+        return renderProtocolRepairPrompt(errorMessage).getContent();
+    }
 
-            请立即重新输出，并且：
-            1. 只输出一个合法 JSON 对象
-            2. protocolVersion 必须为 "v1"
-            3. 不要输出 Markdown 代码块
-            4. 不要解释错误，不要附加多余文本
-            """.formatted(errorMessage);
+    @Override
+    public RenderedPrompt renderProtocolRepairPrompt(String errorMessage) {
+        if (promptRegistry != null) {
+            PromptRenderResult result = promptRegistry.renderActive(
+                    DOCTOR_SCENE,
+                    DOCTOR_AGENT,
+                    PromptTemplateType.PROTOCOL_REPAIR,
+                    PromptRenderRequest.builder()
+                            .variable("errorMessage", errorMessage)
+                            .build());
+            return RenderedPrompt.builder()
+                    .descriptor(result.getDescriptor())
+                    .content(result.getContent())
+                    .build();
+        }
+        return RenderedPrompt.builder()
+                .descriptor(currentPromptDescriptor(PromptTemplateType.PROTOCOL_REPAIR))
+                .content("""
+                    你刚才的响应不符合协议，错误是：%s
+
+                    请立即重新输出，并且：
+                    1. 只输出一个合法 JSON 对象
+                    2. protocolVersion 必须为 "v1"
+                    3. 不要输出 Markdown 代码块
+                    4. 不要解释错误，不要附加多余文本
+                    """.formatted(errorMessage))
+                .build();
     }
 
     /**
@@ -254,6 +210,20 @@ public class ReActPromptBuilder {
      * 避免某个超长 slot 挤掉其他高价值上下文；若当前不是患者任务，则回退到通用摘要。</p>
      */
     public String buildContextPromptSection(AgentContext context) {
+        if (promptRegistry != null) {
+            try {
+                return promptRegistry.renderActive(
+                        DOCTOR_SCENE,
+                        DOCTOR_AGENT,
+                        PromptTemplateType.CONTEXT_SECTION,
+                        PromptRenderRequest.builder()
+                                .variable("context", context)
+                                .build())
+                        .getContent();
+            } catch (IllegalArgumentException ignore) {
+                // 回退到当前实现
+            }
+        }
         if (context == null) {
             return "当前无已缓存状态。";
         }
@@ -265,8 +235,14 @@ public class ReActPromptBuilder {
         StringBuilder builder = new StringBuilder();
         appendSection(builder, "Current Patient Message", summarizeObject(slotValue(context, "patient_message"), 320));
         appendSection(builder, "Upstream Routing Decision", summarizeRoutingDecision(context));
-        appendSection(builder, "Patient Profile Facts", summarizeObject(preferredSlotValue(context,
-                "patient_profile", "profile_snapshot"), 420));
+        Object profileSnapshot = preferredSlotValue(context, "patient_profile", "profile_snapshot");
+        if (profileSnapshot instanceof Map<?, ?> profileMap) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> casted = (Map<String, Object>) profileMap;
+            appendSection(builder, "Patient Profile Facts", summarizeProfileSnapshot(casted));
+        } else {
+            appendSection(builder, "Patient Profile Facts", summarizeObject(profileSnapshot, 420));
+        }
         appendSection(builder, "Short-term Memory", summarizeMemorySection(slotValue(context, "chat_history"), 4, 140));
         appendSection(builder, "Long-term Memory", summarizeLongTermMemory(context));
         appendSection(builder, "Current Known Risk", summarizeKnownRisk(context));
@@ -312,6 +288,26 @@ public class ReActPromptBuilder {
         return messages;
     }
 
+    @Override
+    public String currentPromptVersion(PromptTemplateType type) {
+        if (promptRegistry == null) {
+            return DEFAULT_PROMPT_VERSION;
+        }
+        return promptRegistry.findActiveVersion(DOCTOR_SCENE, DOCTOR_AGENT, type)
+                .orElse(DEFAULT_PROMPT_VERSION);
+    }
+
+    @Override
+    public com.lx.governance.agentplatform.model.PromptTemplateDescriptor currentPromptDescriptor(PromptTemplateType type) {
+        return com.lx.governance.agentplatform.model.PromptTemplateDescriptor.builder()
+                .scene(DOCTOR_SCENE)
+                .agentId(DOCTOR_AGENT)
+                .type(type)
+                .version(currentPromptVersion(type))
+                .description("Doctor prompt template")
+                .build();
+    }
+
     private void appendSection(StringBuilder builder, String title, String content) {
         if (content == null || content.isBlank()) {
             return;
@@ -341,6 +337,54 @@ public class ReActPromptBuilder {
             return collection.stream().limit(5).map(String::valueOf).collect(Collectors.joining(" | "));
         }
         return null;
+    }
+
+    private String summarizeTriggerDecisionSnapshot(Map<String, Object> triggerDecision) {
+        if (triggerDecision == null || triggerDecision.isEmpty()) {
+            return null;
+        }
+        List<String> lines = new ArrayList<>();
+        appendSnapshotLine(lines, "summary", extractTriggerSummary(triggerDecision), 120);
+        appendSnapshotLine(lines, "reasons", extractTriggerReasons(triggerDecision), 180);
+        appendSnapshotLine(lines, "route", triggerDecision.get("route"), 60);
+        appendSnapshotLine(lines, "taskType", triggerDecision.get("taskType"), 60);
+        return lines.isEmpty() ? null : String.join("\n", lines);
+    }
+
+    private String summarizeProfileSnapshot(Map<String, Object> profileSnapshot) {
+        if (profileSnapshot == null || profileSnapshot.isEmpty()) {
+            return null;
+        }
+        List<String> lines = new ArrayList<>();
+        appendSnapshotLine(lines, "basicInfo", profileSnapshot.get("basicInfo"), 120);
+        appendSnapshotLine(lines, "healthProfile", profileSnapshot.get("healthProfile"), 160);
+        appendSnapshotLine(lines, "behaviorPreferences", profileSnapshot.get("behaviorPreferences"), 160);
+        appendSnapshotLine(lines, "medicalHistory", profileSnapshot.get("medicalHistory"), 120);
+        return lines.isEmpty() ? summarizeMap(profileSnapshot, 6) : String.join("\n", lines);
+    }
+
+    private String summarizeSessionContextSnapshot(Map<String, Object> sessionContext) {
+        if (sessionContext == null || sessionContext.isEmpty()) {
+            return null;
+        }
+        List<String> lines = new ArrayList<>();
+        appendSnapshotLine(lines, "topic", sessionContext.get("currentTopic"), 80);
+        appendSnapshotLine(lines, "intent", sessionContext.get("userIntent"), 80);
+        appendSnapshotLine(lines, "phase", sessionContext.get("conversationPhase"), 60);
+        appendSnapshotLine(lines, "pendingQuestions", sessionContext.get("pendingQuestions"), 120);
+        appendSnapshotLine(lines, "mentionedEntities", sessionContext.get("mentionedEntities"), 120);
+        appendSnapshotLine(lines, "recentSummaries", sessionContext.get("recentSummaries"), 160);
+        return lines.isEmpty() ? summarizeMap(sessionContext, 6) : String.join("\n", lines);
+    }
+
+    private String summarizeMemorySnapshot(MemorySnapshot memorySnapshot) {
+        if (memorySnapshot == null) {
+            return null;
+        }
+        List<String> lines = new ArrayList<>();
+        appendSnapshotLine(lines, "shortTerm", summarizeList(memorySnapshot.getShortTermMemories(), 3, 80), 220);
+        appendSnapshotLine(lines, "longTerm", summarizeList(memorySnapshot.getLongTermMemories(), 3, 80), 220);
+        return lines.isEmpty() ? null : String.join("\n", lines);
     }
 
     private String summarizeMap(Map<String, Object> source, int maxEntries) {
@@ -531,5 +575,18 @@ public class ReActPromptBuilder {
             return summarizeList(list, 4, Math.max(32, maxChars / 3));
         }
         return abbreviate(String.valueOf(value), maxChars);
+    }
+
+    private void appendSnapshotLine(List<String> lines, String label, Object value, int maxChars) {
+        if (value == null) {
+            return;
+        }
+        String summary = value instanceof String text
+                ? abbreviate(text, maxChars)
+                : summarizeObject(value, maxChars);
+        if (summary == null || summary.isBlank()) {
+            return;
+        }
+        lines.add(label + ": " + summary);
     }
 }

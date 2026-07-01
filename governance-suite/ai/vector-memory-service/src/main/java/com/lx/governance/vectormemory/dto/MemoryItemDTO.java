@@ -45,4 +45,14 @@ public class MemoryItemDTO {
      * Source of this memory (e.g., "chat", "extraction", "manual")
      */
     private String source;
+
+    /**
+     * Memory representation (EVIDENCE/SUMMARY)
+     */
+    private String memoryRepresentation;
+
+    /**
+     * Summary group key for evidence backtracking
+     */
+    private String summaryGroupKey;
 }

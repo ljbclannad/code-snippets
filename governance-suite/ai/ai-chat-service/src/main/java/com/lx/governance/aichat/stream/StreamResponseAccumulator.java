@@ -12,12 +12,21 @@ import java.util.concurrent.atomic.AtomicReference;
 @Slf4j
 public class StreamResponseAccumulator {
 
+    public enum CompletionState {
+        STREAMING,
+        COMPLETED,
+        INTERRUPTED,
+        FAILED
+    }
+
     private final StringBuilder contentBuilder = new StringBuilder();
     private final AtomicReference<String> conversationId = new AtomicReference<>();
     private final AtomicReference<StreamEvent.TokenUsage> tokenUsage = new AtomicReference<>();
     private volatile boolean completed = false;
     private volatile boolean hasError = false;
     private volatile String errorMessage;
+    private volatile CompletionState completionState = CompletionState.STREAMING;
+    private volatile String terminalReason;
 
     /**
      * 累积流事件
@@ -37,6 +46,8 @@ public class StreamResponseAccumulator {
 
             case DONE:
                 completed = true;
+                completionState = CompletionState.COMPLETED;
+                terminalReason = "completed";
                 if (event.getTokenUsage() != null) {
                     tokenUsage.set(event.getTokenUsage());
                 }
@@ -48,7 +59,12 @@ public class StreamResponseAccumulator {
             case ERROR:
                 hasError = true;
                 errorMessage = event.getError();
+                completionState = CompletionState.FAILED;
+                terminalReason = event.getError();
                 log.error("流式响应错误: {}", event.getError());
+                break;
+
+            case STATUS:
                 break;
         }
     }
@@ -95,6 +111,34 @@ public class StreamResponseAccumulator {
         return errorMessage;
     }
 
+    public CompletionState getCompletionState() {
+        return completionState;
+    }
+
+    public String getTerminalReason() {
+        return terminalReason;
+    }
+
+    public void markInterrupted(String reason) {
+        if (completionState == CompletionState.COMPLETED || completionState == CompletionState.FAILED) {
+            return;
+        }
+        completionState = CompletionState.INTERRUPTED;
+        terminalReason = reason;
+        log.info("流式响应被中断 - conversationId: {}, reason: {}", conversationId.get(), reason);
+    }
+
+    public void markFailed(String reason) {
+        if (completionState == CompletionState.COMPLETED || completionState == CompletionState.FAILED) {
+            return;
+        }
+        hasError = true;
+        errorMessage = reason;
+        completionState = CompletionState.FAILED;
+        terminalReason = reason;
+        log.warn("流式响应失败收口 - conversationId: {}, reason: {}", conversationId.get(), reason);
+    }
+
     /**
      * 重置累积器
      */
@@ -105,5 +149,7 @@ public class StreamResponseAccumulator {
         completed = false;
         hasError = false;
         errorMessage = null;
+        completionState = CompletionState.STREAMING;
+        terminalReason = null;
     }
 }

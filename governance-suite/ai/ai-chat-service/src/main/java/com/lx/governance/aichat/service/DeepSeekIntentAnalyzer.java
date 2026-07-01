@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
 
@@ -25,6 +26,19 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 @Slf4j
 public class DeepSeekIntentAnalyzer {
+
+    private static final String DEFAULT_TOPIC = "健康咨询";
+    private static final String DEFAULT_PHASE = "consulting";
+    private static final String DEFAULT_INTENT = "general_health_consultation";
+    private static final String DEFAULT_COMPLEXITY = "simple";
+    private static final Set<String> ALLOWED_INTENTS = Set.of(
+            "casual_chat",
+            "fact_query",
+            "general_health_consultation",
+            "profile_follow_up_answer",
+            "follow_up_trend_analysis",
+            "risk_review_request",
+            "next_action_recommendation");
 
     @Autowired
     private DeepSeekClient deepSeekClient;
@@ -174,6 +188,9 @@ public class DeepSeekIntentAnalyzer {
             if (json.has("mentionedEntities") && json.get("mentionedEntities").isArray()) {
                 mentionedEntities = StreamSupport.stream(json.get("mentionedEntities").spliterator(), false)
                         .map(JsonNode::asText)
+                        .filter(value -> value != null && !value.isBlank())
+                        .map(String::trim)
+                        .distinct()
                         .collect(Collectors.toList());
             }
 
@@ -181,6 +198,9 @@ public class DeepSeekIntentAnalyzer {
             if (json.has("pendingQuestions") && json.get("pendingQuestions").isArray()) {
                 pendingQuestions = StreamSupport.stream(json.get("pendingQuestions").spliterator(), false)
                         .map(JsonNode::asText)
+                        .filter(value -> value != null && !value.isBlank())
+                        .map(String::trim)
+                        .limit(3)
                         .collect(Collectors.toList());
             }
 
@@ -190,14 +210,18 @@ public class DeepSeekIntentAnalyzer {
             }
 
             return SessionContext.builder()
-                    .currentTopic(json.has("currentTopic") ? json.get("currentTopic").asText() : "健康咨询")
+                    .currentTopic(sanitizeText(
+                            json.has("currentTopic") ? json.get("currentTopic").asText() : null,
+                            DEFAULT_TOPIC))
                     .conversationPhase(
-                            json.has("conversationPhase") ? json.get("conversationPhase").asText() : "consulting")
+                            normalizeConversationPhase(json.has("conversationPhase")
+                                    ? json.get("conversationPhase").asText()
+                                    : null))
                     .mentionedEntities(mentionedEntities)
                     .extractedData(extractedData)
-                    .userIntent(json.has("userIntent") ? json.get("userIntent").asText() : "一般咨询")
+                    .userIntent(normalizeIntent(json.has("userIntent") ? json.get("userIntent").asText() : null))
                     .pendingQuestions(pendingQuestions)
-                    .complexity(json.has("complexity") ? json.get("complexity").asText() : "simple")
+                    .complexity(normalizeComplexity(json.has("complexity") ? json.get("complexity").asText() : null))
                     .recentSummaries(new ArrayList<>())
                     .sessionStartTime(System.currentTimeMillis())
                     .lastUpdateTime(System.currentTimeMillis())
@@ -227,17 +251,44 @@ public class DeepSeekIntentAnalyzer {
      */
     private SessionContext createDefaultContext() {
         return SessionContext.builder()
-                .currentTopic("健康咨询")
-                .conversationPhase("consulting")
+                .currentTopic(DEFAULT_TOPIC)
+                .conversationPhase(DEFAULT_PHASE)
                 .mentionedEntities(new ArrayList<>())
                 .extractedData(new HashMap<>())
-                .userIntent("一般咨询")
+                .userIntent(DEFAULT_INTENT)
                 .pendingQuestions(new ArrayList<>())
-                .complexity("simple")
+                .complexity(DEFAULT_COMPLEXITY)
                 .recentSummaries(new ArrayList<>())
                 .sessionStartTime(System.currentTimeMillis())
                 .lastUpdateTime(System.currentTimeMillis())
                 .messageCount(1)
                 .build();
+    }
+
+    private String normalizeIntent(String rawIntent) {
+        String normalized = sanitizeText(rawIntent, DEFAULT_INTENT).toLowerCase();
+        if (ALLOWED_INTENTS.contains(normalized)) {
+            return normalized;
+        }
+        log.warn("意图分析返回了未注册 intent，已回退到默认意图 - rawIntent: {}", rawIntent);
+        return DEFAULT_INTENT;
+    }
+
+    private String normalizeConversationPhase(String rawPhase) {
+        String normalized = sanitizeText(rawPhase, DEFAULT_PHASE).toLowerCase();
+        return "idle".equals(normalized) ? "idle" : DEFAULT_PHASE;
+    }
+
+    private String normalizeComplexity(String rawComplexity) {
+        String normalized = sanitizeText(rawComplexity, DEFAULT_COMPLEXITY).toLowerCase();
+        return "complex".equals(normalized) ? "complex" : DEFAULT_COMPLEXITY;
+    }
+
+    private String sanitizeText(String value, String fallback) {
+        if (value == null) {
+            return fallback;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? fallback : trimmed;
     }
 }

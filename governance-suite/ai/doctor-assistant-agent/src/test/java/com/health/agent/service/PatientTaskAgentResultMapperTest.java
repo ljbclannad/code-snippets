@@ -14,11 +14,16 @@ import com.health.agent.dto.patient.AgentTaskSource;
 import com.health.agent.dto.patient.DoctorAssistantTaskRequest;
 import com.health.agent.dto.patient.DoctorAssistantTaskStatus;
 import com.health.agent.dto.patient.MemorySnapshot;
+import com.health.agent.dto.patient.PatientVisibleEvidence;
 import com.health.agent.dto.patient.StructuredTaskResult;
 import com.health.agent.dto.patient.TaskType;
 import com.health.agent.model.AgentResult;
 import com.health.agent.model.PendingTask;
+import com.health.agent.model.StructuredEvidenceItem;
 import com.health.agent.model.StructuredFinalAnswer;
+import com.lx.governance.agentplatform.model.PlatformTraceContext;
+import com.lx.governance.agentplatform.model.WorkbenchActionType;
+import com.lx.governance.agentplatform.model.WorkbenchViewType;
 
 class PatientTaskAgentResultMapperTest {
 
@@ -44,6 +49,18 @@ class PatientTaskAgentResultMapperTest {
                         .evidenceSources(List.of("source-1"))
                         .uncertainties(List.of("uncertainty-1"))
                         .inferences(List.of("inference-1"))
+                        .evidenceDetails(List.of(
+                                StructuredEvidenceItem.builder()
+                                        .summary("kb detail")
+                                        .source("source-1")
+                                        .evidenceType("KB_HIT")
+                                        .upstream(false)
+                                        .title("妊娠期糖尿病管理共识")
+                                        .snippet("控制总能量摄入并规律监测血糖。")
+                                        .trustLevel("HIGH")
+                                        .score(0.93)
+                                        .hitReason("hybrid_search")
+                                        .build()))
                         .build(),
                 fallback,
                 AgentExecutionCommand.builder()
@@ -61,6 +78,10 @@ class PatientTaskAgentResultMapperTest {
         assertEquals(List.of("action-1"), result.getRecommendedActions());
         assertEquals(List.of("source-1", "AI_CHAT_SESSION_CONTEXT", "PROFILE_SNAPSHOT", "AI_CHAT_MEMORY", "TRIGGER_DECISION"),
                 result.getEvidenceSources());
+        assertEquals(5, result.getEvidenceDetails().size());
+        assertEquals("妊娠期糖尿病管理共识", result.getEvidenceDetails().get(0).getTitle());
+        assertEquals("HIGH", result.getEvidenceDetails().get(0).getTrustLevel());
+        assertEquals(Boolean.TRUE, result.getEvidenceDetails().get(1).getUpstream());
     }
 
     @Test
@@ -90,11 +111,27 @@ class PatientTaskAgentResultMapperTest {
                 .evidenceSources(List.of("AI_CHAT_SESSION_CONTEXT", "WEIGHT_HISTORY"))
                 .inferences(List.of("需要人工确认"))
                 .uncertainties(List.of("u1"))
+                .evidenceDetails(List.of(
+                        StructuredEvidenceItem.builder()
+                                .summary("近3天体重偏高")
+                                .source("WEIGHT_HISTORY")
+                                .evidenceType("KB_HIT")
+                                .upstream(false)
+                                .snippet("过去3日体重波动小于 0.2kg")
+                                .trustLevel("HIGH")
+                                .score(0.88)
+                                .hitReason("rerank_top1")
+                                .build()))
                 .build();
 
         DoctorAssistantTaskRequest request = DoctorAssistantTaskRequest.builder()
                 .conversationId("conv-1")
                 .correlationId("corr-1")
+                .traceContext(PlatformTraceContext.builder()
+                        .traceId("trace-1")
+                        .conversationId("conv-1")
+                        .correlationId("corr-1")
+                        .build())
                 .build();
         AgentExecutionCommand command = AgentExecutionCommand.builder()
                 .source(AgentTaskSource.PATIENT_DIALOG_AI_CHAT)
@@ -111,6 +148,12 @@ class PatientTaskAgentResultMapperTest {
                 "task-1",
                 "session-1",
                 structuredResult,
+                List.of(PatientVisibleEvidence.builder()
+                        .title("体重趋势")
+                        .summary("过去3日体重波动小于 0.2kg")
+                        .source("WEIGHT_HISTORY")
+                        .trustLevel("HIGH")
+                        .build()),
                 true,
                 pendingTaskPayload,
                 "AGENT",
@@ -122,6 +165,35 @@ class PatientTaskAgentResultMapperTest {
         assertEquals(List.of("WEIGHT_HISTORY"), payload.getAgentEvidenceSources());
         assertEquals(List.of("AI_CHAT_SESSION_CONTEXT"), payload.getUpstreamEvidenceSources());
         assertEquals(List.of("需要人工确认"), payload.getInferenceEvidence());
+        assertEquals(1, payload.getEvidenceDetails().size());
+        assertEquals("WEIGHT_HISTORY", payload.getEvidenceDetails().get(0).getSource());
+        assertEquals("HIGH", payload.getEvidenceDetails().get(0).getTrustLevel());
+        assertEquals(1, payload.getPatientVisibleEvidence().size());
+        assertEquals("体重趋势", payload.getPatientVisibleEvidence().get(0).getTitle());
+
+        var platformPayload = mapper.toPlatformWorkbenchPayload(
+                request,
+                command,
+                "task-1",
+                "session-1",
+                structuredResult,
+                true,
+                pendingTaskPayload,
+                "AGENT",
+                "PENDING_APPROVAL",
+                null);
+        assertEquals(WorkbenchViewType.APPROVAL, platformPayload.getViewType());
+        assertEquals(4, platformPayload.getAvailableActions().size());
+        assertEquals(WorkbenchActionType.APPROVE, platformPayload.getAvailableActions().get(0).getActionType());
+        assertEquals(List.of("需要人工确认"), platformPayload.getViewData().get("inferenceEvidence"));
+        assertEquals(List.of("WEIGHT_HISTORY"), platformPayload.getExtensions().get("agentEvidenceSources"));
+        assertNotNull(platformPayload.getViewData().get("evidenceDetails"));
+
+        var traceContext = mapper.toTraceContext(request, command, "run-1", "agent-1", "create_follow_up_task");
+        assertEquals("trace-1", traceContext.getTraceId());
+        assertEquals("run-1", traceContext.getRunId());
+        assertEquals("agent-1", traceContext.getAgentId());
+        assertEquals("create_follow_up_task", traceContext.getToolName());
     }
 
     @Test

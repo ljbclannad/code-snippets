@@ -3,6 +3,8 @@ package com.health.agent.dto.patient;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.health.agent.model.StructuredEvidenceItem;
+
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -69,4 +71,10 @@ public class StructuredTaskResult {
      */
     @Builder.Default
     private List<String> inferences = new ArrayList<>();
+
+    /**
+     * 结构化证据明细，适合透传到医生工作台或治理链路。
+     */
+    @Builder.Default
+    private List<StructuredEvidenceItem> evidenceDetails = new ArrayList<>();
 }

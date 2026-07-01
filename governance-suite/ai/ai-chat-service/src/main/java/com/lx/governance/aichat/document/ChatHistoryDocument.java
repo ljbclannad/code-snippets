@@ -33,15 +33,15 @@ public class ChatHistoryDocument {
     private String conversationId;
 
     /**
-     * 用户消息 - 使用 IK 分词器进行全文搜索
+     * 用户消息 - 本地低依赖环境使用内置 standard analyzer，避免依赖 IK 插件
      */
-    @Field(type = FieldType.Text, analyzer = "ik_max_word", searchAnalyzer = "ik_smart")
+    @Field(type = FieldType.Text, analyzer = "standard", searchAnalyzer = "standard")
     private String userMessage;
 
     /**
-     * AI 回复 - 使用 IK 分词器进行全文搜索
+     * AI 回复 - 本地低依赖环境使用内置 standard analyzer，避免依赖 IK 插件
      */
-    @Field(type = FieldType.Text, analyzer = "ik_max_word", searchAnalyzer = "ik_smart")
+    @Field(type = FieldType.Text, analyzer = "standard", searchAnalyzer = "standard")
     private String aiResponse;
 
     @Field(type = FieldType.Integer)

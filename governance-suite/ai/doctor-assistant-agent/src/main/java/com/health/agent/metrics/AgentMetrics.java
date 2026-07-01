@@ -1,11 +1,17 @@
 package com.health.agent.metrics;
 
 import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
+import io.micrometer.core.instrument.DistributionSummary;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -26,6 +32,9 @@ public class AgentMetrics {
     private final Counter duplicateToolSuppressed;
     private final Counter approvalApproved;
     private final Counter approvalRejected;
+    private final Set<String> boundExecutors = ConcurrentHashMap.newKeySet();
+    private final ConcurrentMap<String, Counter> executorRejectedCounters = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Counter> entryRejectedCounters = new ConcurrentHashMap<>();
 
     public AgentMetrics(MeterRegistry meterRegistry) {
         this.meterRegistry = meterRegistry;
@@ -178,6 +187,112 @@ public class AgentMetrics {
             .tag("status", status)
             .description("按状态统计的会话数")
             .register(meterRegistry)
+            .increment();
+    }
+
+    public void recordKnowledgeRetrieval(String source, String outcome, long durationMs, int resultCount) {
+        String safeSource = source == null || source.isBlank() ? "unknown" : source;
+        String safeOutcome = outcome == null || outcome.isBlank() ? "unknown" : outcome;
+
+        Counter.builder("agent.kb.retrieval.total")
+            .description("Knowledge retrieval attempts by source and outcome")
+            .tag("source", safeSource)
+            .tag("outcome", safeOutcome)
+            .register(meterRegistry)
+            .increment();
+
+        if (durationMs >= 0) {
+            Timer.builder("agent.kb.retrieval.duration")
+                .description("Knowledge retrieval duration")
+                .tag("source", safeSource)
+                .tag("outcome", safeOutcome)
+                .register(meterRegistry)
+                .record(durationMs, TimeUnit.MILLISECONDS);
+        }
+
+        DistributionSummary.builder("agent.kb.retrieval.results")
+            .description("Knowledge retrieval result count")
+            .baseUnit("items")
+            .tag("source", safeSource)
+            .tag("outcome", safeOutcome)
+            .register(meterRegistry)
+            .record(Math.max(resultCount, 0));
+    }
+
+    public void recordEvidenceUsage(String stage, String taskType, int evidenceCount, boolean blocked) {
+        String safeStage = stage == null || stage.isBlank() ? "unknown" : stage;
+        String safeTaskType = taskType == null || taskType.isBlank() ? "unknown" : taskType;
+        String evidenceState = evidenceCount > 0 ? "present" : "missing";
+
+        Counter.builder("agent.evidence.usage.total")
+            .description("Evidence usage distribution by stage")
+            .tag("stage", safeStage)
+            .tag("task_type", safeTaskType)
+            .tag("evidence_state", evidenceState)
+            .tag("blocked", Boolean.toString(blocked))
+            .register(meterRegistry)
+            .increment();
+
+        DistributionSummary.builder("agent.evidence.count")
+            .description("Evidence item count by stage")
+            .baseUnit("items")
+            .tag("stage", safeStage)
+            .tag("task_type", safeTaskType)
+            .tag("blocked", Boolean.toString(blocked))
+            .register(meterRegistry)
+            .record(Math.max(evidenceCount, 0));
+    }
+
+    public void bindExecutor(String executorName, ThreadPoolExecutor executor) {
+        if (executorName == null || executorName.isBlank() || executor == null || !boundExecutors.add(executorName)) {
+            return;
+        }
+
+        Gauge.builder("agent.executor.active", executor, ThreadPoolExecutor::getActiveCount)
+            .description("Agent executor active thread count")
+            .tag("executor", executorName)
+            .register(meterRegistry);
+        Gauge.builder("agent.executor.pool.size", executor, ThreadPoolExecutor::getPoolSize)
+            .description("Agent executor current pool size")
+            .tag("executor", executorName)
+            .register(meterRegistry);
+        Gauge.builder("agent.executor.max.pool.size", executor, ThreadPoolExecutor::getMaximumPoolSize)
+            .description("Agent executor max pool size")
+            .tag("executor", executorName)
+            .register(meterRegistry);
+        Gauge.builder("agent.executor.queue.size", executor, threadPoolExecutor -> threadPoolExecutor.getQueue().size())
+            .description("Agent executor queue size")
+            .tag("executor", executorName)
+            .register(meterRegistry);
+        Gauge.builder("agent.executor.queue.remaining", executor,
+                threadPoolExecutor -> threadPoolExecutor.getQueue().remainingCapacity())
+            .description("Agent executor remaining queue capacity")
+            .tag("executor", executorName)
+            .register(meterRegistry);
+    }
+
+    public void recordExecutorRejected(String executorName) {
+        String safeExecutorName = executorName == null || executorName.isBlank() ? "unknown" : executorName;
+        executorRejectedCounters.computeIfAbsent(safeExecutorName,
+                key -> Counter.builder("agent.executor.rejected")
+                    .description("Agent executor rejected submissions")
+                    .tag("executor", safeExecutorName)
+                    .register(meterRegistry))
+            .increment();
+    }
+
+    public void recordEntryRejected(String entry, String reason, String disposition) {
+        String safeEntry = entry == null || entry.isBlank() ? "unknown" : entry;
+        String safeReason = reason == null || reason.isBlank() ? "unknown" : reason;
+        String safeDisposition = disposition == null || disposition.isBlank() ? "unknown" : disposition;
+        String counterKey = safeEntry + "|" + safeReason + "|" + safeDisposition;
+        entryRejectedCounters.computeIfAbsent(counterKey,
+                key -> Counter.builder("agent.entry.rejected")
+                    .description("Agent entry rejected requests")
+                    .tag("entry", safeEntry)
+                    .tag("reason", safeReason)
+                    .tag("disposition", safeDisposition)
+                    .register(meterRegistry))
             .increment();
     }
 

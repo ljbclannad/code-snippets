@@ -18,10 +18,16 @@ public class AiGroupMemoryCandidateEntity {
     private String polarity;
     private String memoryContent;
     private BigDecimal confidenceScore;
+    private BigDecimal worthinessScore;
     private String status;
+    private String lifecycleStatus;
+    private String decisionReasonCode;
     private Integer hitCount;
+    private Integer sourceCount;
+    private Integer evidenceCount;
     private String sourceMessage;
     private LocalDateTime lastSeenAt;
+    private LocalDateTime lastReinforcedAt;
     private String reviewedBy;
     private LocalDateTime reviewedAt;
     private Long confirmedMemoryId;

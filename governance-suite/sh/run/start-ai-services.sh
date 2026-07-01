@@ -6,11 +6,13 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT_DIR=$(cd "${SCRIPT_DIR}/../.." && pwd)
 LOG_DIR="${ROOT_DIR}/logs/ai-services"
 RESTART_MODE=0
+DEPENDENCIES_PREPARED=0
+WITH_OBSERVABILITY=0
 
 SERVICES=(
   "user-profile-service:8101:/actuator/health"
   "vector-memory-service:8102:/actuator/health"
-  "ai-chat-service:8100:/actuator/health"
+  "ai-chat-service:8100:/api/chat/health"
   "doctor-assistant-agent:8088:/actuator/health"
 )
 
@@ -19,21 +21,55 @@ REQUIRED_CONTAINERS=(
   "gov-redis"
   "gov-rabbitmq"
   "gov-nacos"
+  "gov-elasticsearch"
   "gov-milvus"
+)
+
+DEFAULT_INFRA_SERVICES=(
+  "mysql"
+  "redis"
+  "rabbitmq"
+  "nacos"
+  "elasticsearch"
+  "etcd"
+  "minio"
+  "milvus"
+)
+
+OBSERVABILITY_INFRA_SERVICES=(
+  "kibana"
+  "logstash"
+  "prometheus"
+  "grafana"
+  "jaeger"
 )
 
 usage() {
   cat <<'EOF'
 用法:
-  ./sh/run/start-ai-services.sh [--restart]
+  ./sh/run/start-ai-services.sh [--restart] [--with-observability]
 
 参数:
-  --restart   先停止并清理 8088、8100~8102 对应服务，再重新启动
+  --restart              先停止并清理 8088、8100~8102 对应服务，再重新启动
+  --with-observability   额外启动 Kibana / Logstash / Prometheus / Grafana / Jaeger
 
 可选环境变量:
   MEMORY_RERANK_PROVIDER   rerank 模式，默认 embedding，可选 bge-http
   MEMORY_RERANK_BASE_URL   外部 rerank 服务地址，默认 http://localhost:9997
 EOF
+}
+
+prepare_module_dependencies() {
+  if [[ "${DEPENDENCIES_PREPARED}" -eq 1 ]]; then
+    return 0
+  fi
+
+  echo "预编译并安装 AI 共享模块依赖到本地 Maven 仓库..."
+  (
+    cd "${ROOT_DIR}" && \
+    mvn -q -pl common,ai/agent-platform-common -am -DskipTests install
+  )
+  DEPENDENCIES_PREPARED=1
 }
 
 require_env() {
@@ -144,12 +180,90 @@ wait_for_health() {
   done
 }
 
+wait_for_container_ready() {
+  local container="$1"
+  local timeout="${2:-180}"
+  local start_ts
+  start_ts=$(date +%s)
+
+  while true; do
+    local status
+    status=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "${container}" 2>/dev/null || true)
+
+    if [[ "${status}" == "healthy" || "${status}" == "running" ]]; then
+      echo "  ${container} 就绪: ${status}"
+      return 0
+    fi
+
+    if [[ -z "${status}" ]]; then
+      echo "  等待 ${container} 创建中..."
+    else
+      echo "  等待 ${container} 就绪，当前状态: ${status}"
+    fi
+
+    if (( $(date +%s) - start_ts >= timeout )); then
+      echo "错误: ${container} 在 ${timeout}s 内未就绪"
+      docker ps -a --filter "name=${container}" || true
+      return 1
+    fi
+
+    sleep 3
+  done
+}
+
+start_infra() {
+  echo "启动基础设施容器（默认基础链路 + vector）..."
+  docker compose up -d "${DEFAULT_INFRA_SERVICES[@]}"
+
+  if [[ "${WITH_OBSERVABILITY}" -eq 1 ]]; then
+    echo "启动可观测性容器..."
+    docker compose --profile observability up -d "${OBSERVABILITY_INFRA_SERVICES[@]}"
+  fi
+
+  echo "等待核心基础设施就绪..."
+  for container in "${REQUIRED_CONTAINERS[@]}"; do
+    wait_for_container_ready "${container}"
+  done
+}
+
+launch_service_process() {
+  local log_file="$1"
+  shift
+
+  nohup python3 -c '
+import os
+import sys
+
+os.setsid()
+os.execvp(sys.argv[1], sys.argv[1:])
+' "$@" < /dev/null > "${log_file}" 2>&1 &
+}
+
+append_profile() {
+  local profiles="$1"
+  local profile_to_add="$2"
+
+  if [[ -z "${profiles}" ]]; then
+    echo "${profile_to_add}"
+    return 0
+  fi
+
+  if [[ ",${profiles}," == *",${profile_to_add},"* ]]; then
+    echo "${profiles}"
+    return 0
+  fi
+
+  echo "${profiles},${profile_to_add}"
+}
+
 start_service() {
   local service="$1"
   local port="$2"
   local health_path="$3"
   local pid_file="${LOG_DIR}/${service}.pid"
   local log_file="${LOG_DIR}/${service}.log"
+  local run_args=()
+  local spring_profiles="${SPRING_PROFILES_ACTIVE:-}"
 
   if [[ "${RESTART_MODE}" -eq 1 ]]; then
     if [[ -f "${pid_file}" ]]; then
@@ -175,8 +289,26 @@ start_service() {
     exit 1
   fi
 
+  prepare_module_dependencies
+
+  if [[ "${service}" == "doctor-assistant-agent" ]]; then
+    run_args+=("-Dspring-boot.run.fork=false")
+  fi
+
+  if [[ "${service}" == "ai-chat-service" && "${WITH_OBSERVABILITY}" -eq 1 ]]; then
+    spring_profiles=$(append_profile "${spring_profiles}" "observability")
+  fi
+
+  if [[ -n "${spring_profiles}" ]]; then
+    run_args+=("-Dspring-boot.run.profiles=${spring_profiles}")
+  fi
+
   echo "启动 ${service} (${port})..."
-  nohup mvn -q -pl "ai/${service}" spring-boot:run > "${log_file}" 2>&1 &
+  if [[ "${#run_args[@]}" -gt 0 ]]; then
+    launch_service_process "${log_file}" mvn -q -pl "ai/${service}" "${run_args[@]}" spring-boot:run
+  else
+    launch_service_process "${log_file}" mvn -q -pl "ai/${service}" spring-boot:run
+  fi
   local pid=$!
   echo "${pid}" > "${pid_file}"
 
@@ -196,6 +328,10 @@ while [[ $# -gt 0 ]]; do
       RESTART_MODE=1
       shift
       ;;
+    --with-observability)
+      WITH_OBSERVABILITY=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -210,6 +346,9 @@ done
 
 if [[ "${RESTART_MODE}" -eq 1 ]]; then
   echo "模式: restart"
+fi
+if [[ "${WITH_OBSERVABILITY}" -eq 1 ]]; then
+  echo "模式: with observability"
 fi
 
 require_env "DASHSCOPE_API_KEY"
@@ -226,6 +365,7 @@ fi
 
 echo "检查基础设施状态..."
 cd "${ROOT_DIR}"
+start_infra
 running_containers=$(docker compose ps --status running)
 for container in "${REQUIRED_CONTAINERS[@]}"; do
   if ! grep -q "${container}" <<< "${running_containers}"; then

@@ -1,5 +1,8 @@
 package com.lx.governance.aichat.dto;
 
+import com.lx.governance.agentplatform.model.PlatformContext;
+import com.lx.governance.agentplatform.model.PlatformTraceContext;
+
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -53,6 +56,16 @@ public class DoctorAssistantTaskRequest {
      * 上游链路追踪 ID。
      */
     private String correlationId;
+
+    /**
+     * 平台统一 trace 上下文。
+     */
+    private PlatformTraceContext traceContext;
+
+    /**
+     * 平台统一上下文总线载荷。
+     */
+    private PlatformContext platformContext;
 
     /**
      * 当前会话上下文快照。

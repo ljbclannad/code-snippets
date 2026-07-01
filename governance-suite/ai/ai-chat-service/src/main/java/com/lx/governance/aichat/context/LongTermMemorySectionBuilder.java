@@ -22,7 +22,7 @@ public class LongTermMemorySectionBuilder implements PromptSectionBuilder {
         }
 
         int sectionBudget = Math.min(
-                context.getBudgetAllocation().getMemoryBudget(),
+                context.getBudgetAllocation().getLongTermMemoryBudget(),
                 context.getRemainingBudget());
         String content = support.selectRelevantMemories(
                 context.getInput().getLayeredMemories().getLongTermMemories(),
@@ -32,11 +32,16 @@ public class LongTermMemorySectionBuilder implements PromptSectionBuilder {
             return PromptSectionResult.empty(PromptSectionType.LONG_TERM_MEMORY);
         }
 
+        int usedTokens = support.estimateTokens(content);
+
         return PromptSectionResult.builder()
                 .type(PromptSectionType.LONG_TERM_MEMORY)
                 .title("## 长期记忆")
                 .content(content)
-                .usedTokens(support.estimateTokens(content))
+                .usedTokens(usedTokens)
+                .allocatedTokens(sectionBudget)
+                .originalTokens(usedTokens)
+                .compressed(false)
                 .build();
     }
 }

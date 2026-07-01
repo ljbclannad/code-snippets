@@ -3,6 +3,8 @@ package com.lx.governance.aichat.service;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -15,12 +17,16 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
 import com.lx.governance.aichat.client.DeepSeekClient;
+import com.lx.governance.aichat.dto.DoctorAssistantTaskRequest;
 import com.lx.governance.aichat.client.UserProfileClientFixed;
 import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.LayeredMemories;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.SessionContext;
 import com.lx.governance.aichat.dto.StreamEvent;
+import com.lx.governance.aichat.dto.TaskTriggerDecision;
+import com.lx.governance.aichat.dto.TaskTriggerRoute;
+import com.lx.governance.aichat.dto.TaskType;
 import com.lx.governance.aichat.dto.UserProfileDTO;
 import com.lx.governance.aichat.metrics.AiChatMetrics;
 import com.lx.governance.aichat.quota.QuotaService;
@@ -37,13 +43,23 @@ class AiChatStreamServiceTest {
     @Mock
     private SessionContextService sessionContextService;
     @Mock
-    private MemoryService memoryService;
-    @Mock
     private ChatAsyncProcessingService chatAsyncProcessingService;
     @Mock
     private QuotaService quotaService;
     @Mock
     private LayeredMemoryOrchestrator layeredMemoryOrchestrator;
+    @Mock
+    private TaskTriggerRouter taskTriggerRouter;
+    @Mock
+    private MedicalKnowledgeQaService medicalKnowledgeQaService;
+    @Mock
+    private DoctorAssistantTaskRequestFactory doctorAssistantTaskRequestFactory;
+    @Mock
+    private DoctorAssistantAgentGateway doctorAssistantAgentGateway;
+    @Mock
+    private AgentDispatchPolicy agentDispatchPolicy;
+    @Mock
+    private VisitorIdentityService visitorIdentityService;
 
     private AiChatStreamService aiChatStreamService;
 
@@ -54,11 +70,26 @@ class AiChatStreamServiceTest {
                 deepSeekClient,
                 userProfileClient,
                 sessionContextService,
-                memoryService,
                 chatAsyncProcessingService,
                 new AiChatMetrics(new SimpleMeterRegistry()),
                 quotaService,
-                layeredMemoryOrchestrator);
+                layeredMemoryOrchestrator,
+                taskTriggerRouter,
+                medicalKnowledgeQaService,
+                doctorAssistantTaskRequestFactory,
+                doctorAssistantAgentGateway,
+                new AgentConversationRouteRuntime(agentDispatchPolicy, true, 10 * 60 * 1000L),
+                visitorIdentityService);
+        when(taskTriggerRouter.route(org.mockito.ArgumentMatchers.any(com.lx.governance.aichat.dto.TaskTriggerContext.class)))
+                .thenReturn(TaskTriggerDecision.builder()
+                .route(TaskTriggerRoute.DIRECT_CHAT)
+                .taskType(TaskType.NONE)
+                .summary("stream_test_default")
+                .build());
+        when(medicalKnowledgeQaService.shouldUseKnowledgeQa(any())).thenReturn(false);
+        when(visitorIdentityService.ensureCustomerId(any())).thenAnswer(invocation ->
+                invocation.<ChatRequest>getArgument(0).getCustomerId());
+        when(visitorIdentityService.isVisitor(any())).thenReturn(false);
     }
 
     @Test
@@ -72,7 +103,7 @@ class AiChatStreamServiceTest {
                 .complexity("complex")
                 .build();
 
-        when(sessionContextService.getOrCreateContext(anyString(), anyString(), anyString(), anyString()))
+        when(sessionContextService.getOrCreateContext(anyString(), anyString(), anyString(), anyString(), any(), any()))
                 .thenReturn(sessionContext);
         when(userProfileClient.requestUserProfile("customer-1"))
                 .thenReturn(CompletableFuture.completedFuture(new UserProfileDTO()));
@@ -98,7 +129,7 @@ class AiChatStreamServiceTest {
 
         verify(userProfileClient).requestUserProfile("customer-1");
         verify(layeredMemoryOrchestrator).loadMemories(eq("group-1"), eq("customer-1"), eq("那我这种情况晚饭怎么吃？"), eq(sessionContext), any(UserProfileDTO.class), eq(true), eq(5));
-        verify(sessionContextService).updateContext("conv-1", "那我这种情况晚饭怎么吃？", "建议清淡饮食");
+        verify(sessionContextService).updateContext("conv-1", "那我这种情况晚饭怎么吃？", "建议清淡饮食", null, null);
     }
 
     @Test
@@ -110,7 +141,7 @@ class AiChatStreamServiceTest {
                 .userIntent("一般咨询")
                 .build();
 
-        when(sessionContextService.getOrCreateContext(anyString(), anyString(), anyString(), anyString()))
+        when(sessionContextService.getOrCreateContext(anyString(), anyString(), anyString(), anyString(), any(), any()))
                 .thenReturn(sessionContext);
         CompletableFuture<UserProfileDTO> failed = new CompletableFuture<>();
         failed.completeExceptionally(new RuntimeException("profile fetch failed"));
@@ -134,7 +165,72 @@ class AiChatStreamServiceTest {
 
         verify(layeredMemoryOrchestrator).loadMemories(eq("group-2"), eq("customer-2"), eq("最近睡不好怎么办"),
                 eq(sessionContext), any(UserProfileDTO.class), eq(true), eq(5));
-        verify(sessionContextService).updateContext("conv-2", "最近睡不好怎么办", "先规律作息");
+        verify(sessionContextService).updateContext("conv-2", "最近睡不好怎么办", "先规律作息", null, null);
         verify(chatAsyncProcessingService).handleChatCompleted(any(), any(), anyString());
+    }
+
+    @Test
+    void shouldPassThroughPatientVisibleEvidenceEventsWhenAgentStreamSucceeds() {
+        SessionContext sessionContext = SessionContext.builder()
+                .conversationId("conv-agent-1")
+                .customerId("customer-1")
+                .groupId("group-1")
+                .conversationPhase("follow_up")
+                .userIntent("随访分析")
+                .complexity("complex")
+                .build();
+
+        when(sessionContextService.getOrCreateContext(anyString(), anyString(), anyString(), anyString(), any(), any()))
+                .thenReturn(sessionContext);
+        when(taskTriggerRouter.route(org.mockito.ArgumentMatchers.any(com.lx.governance.aichat.dto.TaskTriggerContext.class)))
+                .thenReturn(TaskTriggerDecision.builder()
+                        .route(TaskTriggerRoute.DOCTOR_ASSISTANT_AGENT)
+                        .taskType(TaskType.PATIENT_FOLLOW_UP_ANALYSIS)
+                        .summary("stream_agent_test")
+                        .build());
+        when(agentDispatchPolicy.evaluate(any(), any(), any()))
+                .thenReturn(new AgentDispatchPolicy.Decision(true, "gray_enabled"));
+        when(userProfileClient.requestUserProfile("customer-1"))
+                .thenReturn(CompletableFuture.completedFuture(new UserProfileDTO()));
+        when(layeredMemoryOrchestrator.loadMemories(eq("group-1"), eq("customer-1"), eq("请帮我分析最近一周血糖变化"), any(), any(), eq(true), eq(5)))
+                .thenReturn(CompletableFuture.completedFuture(LayeredMemories.builder().build()));
+        when(doctorAssistantTaskRequestFactory.buildPatientDialogRequest(any(), any(), any(), any(), any(), anyString()))
+                .thenReturn(DoctorAssistantTaskRequest.builder()
+                        .taskType(TaskType.PATIENT_FOLLOW_UP_ANALYSIS)
+                        .conversationId("conv-agent-1")
+                        .correlationId("corr-agent-1")
+                        .build());
+        when(doctorAssistantAgentGateway.analyzePatientTaskStream(any()))
+                .thenReturn(Flux.just(
+                        StreamEvent.status("evidence", "已附带患者可见证据卡片", java.util.Map.of(
+                                "count", 1,
+                                "items", List.of(java.util.Map.of(
+                                        "title", "血糖复盘建议",
+                                        "summary", "建议继续记录近 3 天血糖变化。",
+                                        "source", "HEALTH_KNOWLEDGE",
+                                        "trustLevel", "HIGH")))),
+                        StreamEvent.content("建议继续观察并补充近一周血糖记录。"),
+                        StreamEvent.done("conv-agent-1", null)));
+
+        ChatRequest request = new ChatRequest();
+        request.setConversationId("conv-agent-1");
+        request.setCustomerId("customer-1");
+        request.setGroupId("group-1");
+        request.setMessage("请帮我分析最近一周血糖变化");
+
+        List<StreamEvent> events = aiChatStreamService.handleChatStreamRequest(request).collectList().block();
+
+        assertTrue(events.stream().anyMatch(event ->
+                event.getType() == StreamEvent.EventType.STATUS
+                        && "evidence".equals(event.getStage())
+                        && event.getDetails() != null
+                        && Integer.valueOf(1).equals(event.getDetails().get("count"))));
+        assertEquals("建议继续观察并补充近一周血糖记录。",
+                events.stream()
+                        .filter(event -> event.getType() == StreamEvent.EventType.CONTENT)
+                        .reduce((first, second) -> second)
+                        .orElseThrow()
+                        .getContent());
+        verify(doctorAssistantAgentGateway).analyzePatientTaskStream(any());
     }
 }

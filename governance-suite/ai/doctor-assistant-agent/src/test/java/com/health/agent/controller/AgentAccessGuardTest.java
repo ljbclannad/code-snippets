@@ -56,4 +56,22 @@ class AgentAccessGuardTest {
 
         assertEquals("RATE_LIMITED: 当前医生请求过于频繁，请稍后重试", exception.getMessage());
     }
+
+    @Test
+    void shouldRejectWhenPatientTaskConcurrencyReachesLimit() {
+        AgentAccessGuard guard = new AgentAccessGuard();
+        ReflectionTestUtils.setField(guard, "maxPatientTaskRequestsPerMinute", 100);
+        ReflectionTestUtils.setField(guard, "maxConcurrentPatientTasks", 1);
+
+        AgentAccessGuard.AccessPermit first = guard.acquirePatientTask("C001");
+
+        AgentException exception = assertThrows(
+            AgentException.class,
+            () -> guard.acquirePatientTask("C002")
+        );
+
+        assertEquals("PATIENT_TASK_OVERLOADED: 当前患者任务分析负载较高，请稍后再试", exception.getMessage());
+
+        first.release();
+    }
 }

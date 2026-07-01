@@ -5,28 +5,53 @@ import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import com.health.agent.exception.AgentException;
+import com.health.agent.metrics.AgentMetrics;
+import com.health.agent.model.AgentStreamEventType;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import com.health.agent.dto.patient.DoctorAssistantTaskRequest;
 import com.health.agent.dto.patient.DoctorAssistantTaskResponse;
+import com.health.agent.model.AgentStreamEvent;
 import com.health.agent.service.PatientTaskAgentService;
 
 import jakarta.validation.Valid;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+
+import java.io.IOException;
+import java.time.LocalDateTime;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
 
 @Slf4j
 @RestController
 @RequestMapping("/api/patient-tasks")
-@RequiredArgsConstructor
 @Tag(name = "患者任务分析", description = "患者来源任务分析接口")
 public class PatientTaskController {
 
     private final PatientTaskAgentService patientTaskAgentService;
+    private final ExecutorService streamExecutor;
+    private final AgentAccessGuard accessGuard;
+    private final AgentMetrics agentMetrics;
+
+    public PatientTaskController(
+            PatientTaskAgentService patientTaskAgentService,
+            @Qualifier("patientTaskStreamExecutor") ExecutorService streamExecutor,
+            AgentAccessGuard accessGuard,
+            AgentMetrics agentMetrics) {
+        this.patientTaskAgentService = patientTaskAgentService;
+        this.streamExecutor = streamExecutor;
+        this.accessGuard = accessGuard;
+        this.agentMetrics = agentMetrics;
+    }
 
     @Operation(
         summary = "分析患者来源任务",
@@ -98,6 +123,111 @@ public class PatientTaskController {
         // 2. 按 taskType 生成结构化分析结果，并判断是否包含高风险信号
         // 3. 对患者可见回复做安全收敛，必要时转人工复核 / 待审批
         // 4. 组装医生工作台载荷、审计上下文和最终响应
-        return ResponseEntity.ok(patientTaskAgentService.analyze(request));
+        try (AgentAccessGuard.AccessPermit permit = accessGuard.acquirePatientTask(request.getCustomerId())) {
+            return ResponseEntity.ok(patientTaskAgentService.analyze(request));
+        } catch (AgentException e) {
+            if (allowDirectChatFallback(request)) {
+                agentMetrics.recordEntryRejected("patient_task", summarizeReason(e.getMessage()), "fallback");
+                return ResponseEntity.ok(patientTaskAgentService.buildEntryRejectedResponse(
+                        request,
+                        "PATIENT_TASK_ENTRY_REJECTED",
+                        e.getMessage()));
+            }
+            agentMetrics.recordEntryRejected("patient_task", summarizeReason(e.getMessage()), "reject");
+            throw e;
+        }
+    }
+
+    @PostMapping(value = "/analyze/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter analyzeStream(@Valid @RequestBody DoctorAssistantTaskRequest request) {
+        log.info("收到患者来源任务流式分析请求 - taskType: {}, conversationId: {}, correlationId: {}",
+                request.getTaskType(), request.getConversationId(), request.getCorrelationId());
+
+        SseEmitter emitter = new SseEmitter(120000L);
+        AgentAccessGuard.AccessPermit permit;
+        try {
+            permit = accessGuard.acquirePatientTask(request.getCustomerId());
+        } catch (AgentException e) {
+            if (allowDirectChatFallback(request)) {
+                agentMetrics.recordEntryRejected("patient_task_stream", summarizeReason(e.getMessage()), "fallback");
+                emitFallbackAndComplete(emitter, patientTaskAgentService.buildEntryRejectedResponse(
+                        request,
+                        "PATIENT_TASK_ENTRY_REJECTED",
+                        e.getMessage()));
+                return emitter;
+            }
+            agentMetrics.recordEntryRejected("patient_task_stream", summarizeReason(e.getMessage()), "reject");
+            throw e;
+        }
+
+        try {
+            CompletableFuture.runAsync(() -> {
+            try {
+                patientTaskAgentService.analyzeStream(request, event -> sendEvent(emitter, event));
+                emitter.complete();
+            } catch (Exception e) {
+                log.error("患者来源任务流式分析失败 - conversationId: {}, correlationId: {}",
+                        request.getConversationId(), request.getCorrelationId(), e);
+                emitter.completeWithError(e);
+            } finally {
+                permit.release();
+            }
+            }, streamExecutor);
+        } catch (RejectedExecutionException e) {
+            permit.release();
+            if (allowDirectChatFallback(request)) {
+                agentMetrics.recordEntryRejected("patient_task_stream", "PATIENT_TASK_STREAM_EXECUTOR_REJECTED", "fallback");
+                emitFallbackAndComplete(emitter, patientTaskAgentService.buildEntryRejectedResponse(
+                        request,
+                        "PATIENT_TASK_STREAM_EXECUTOR_REJECTED",
+                        "患者任务流式线程池已饱和"));
+                return emitter;
+            }
+            agentMetrics.recordEntryRejected("patient_task_stream", "PATIENT_TASK_STREAM_EXECUTOR_REJECTED", "reject");
+            throw new AgentException("PATIENT_TASK_STREAM_EXECUTOR_REJECTED: 患者任务流式线程池已饱和", e);
+        }
+        return emitter;
+    }
+
+    private boolean allowDirectChatFallback(DoctorAssistantTaskRequest request) {
+        return request != null
+                && request.getConstraints() != null
+                && Boolean.TRUE.equals(request.getConstraints().getFallbackToDirectChatOnFailure());
+    }
+
+    private String summarizeReason(String message) {
+        if (message == null || message.isBlank()) {
+            return "unknown";
+        }
+        int separatorIndex = message.indexOf(':');
+        return separatorIndex > 0 ? message.substring(0, separatorIndex).trim() : message.trim();
+    }
+
+    private void emitFallbackAndComplete(SseEmitter emitter, DoctorAssistantTaskResponse response) {
+        try {
+            sendEvent(emitter, AgentStreamEvent.builder()
+                    .sessionId(response != null ? response.getAgentSessionId() : null)
+                    .step(0)
+                    .type(AgentStreamEventType.TASK_RESULT)
+                    .data(response)
+                    .timestamp(LocalDateTime.now())
+                    .build());
+            emitter.complete();
+        } catch (Exception e) {
+            emitter.completeWithError(e);
+        }
+    }
+
+    private void sendEvent(SseEmitter emitter, AgentStreamEvent event) {
+        if (emitter == null || event == null) {
+            return;
+        }
+        try {
+            emitter.send(SseEmitter.event()
+                    .name(event.getType().name().toLowerCase())
+                    .data(event));
+        } catch (IOException e) {
+            throw new IllegalStateException("发送患者任务 SSE 事件失败", e);
+        }
     }
 }

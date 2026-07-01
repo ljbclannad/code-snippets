@@ -46,6 +46,22 @@ public class SearchRequest {
 
     private List<String> tags;
 
+    private String retrievalProfile;
+
+    private List<String> documentTypes;
+
+    private List<String> diseases;
+
+    private List<String> populations;
+
+    private List<String> regions;
+
+    private List<String> sourceTypes;
+
+    private String version;
+
+    private String publishDateFrom;
+
     private String businessDomain;
 
     private String source;

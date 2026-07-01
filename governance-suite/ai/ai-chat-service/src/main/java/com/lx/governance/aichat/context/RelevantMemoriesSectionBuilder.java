@@ -22,7 +22,7 @@ public class RelevantMemoriesSectionBuilder implements PromptSectionBuilder {
         }
 
         int sectionBudget = Math.min(
-                context.getBudgetAllocation().getMemoryBudget(),
+                context.getBudgetAllocation().getLongTermMemoryBudget(),
                 context.getRemainingBudget());
         String content = support.selectRelevantMemories(context.getInput().getMemories(), sectionBudget);
 
@@ -30,11 +30,16 @@ public class RelevantMemoriesSectionBuilder implements PromptSectionBuilder {
             return PromptSectionResult.empty(PromptSectionType.RELEVANT_MEMORY);
         }
 
+        int usedTokens = support.estimateTokens(content);
+
         return PromptSectionResult.builder()
                 .type(PromptSectionType.RELEVANT_MEMORY)
                 .title("## 相关历史记忆")
                 .content(content)
-                .usedTokens(support.estimateTokens(content))
+                .usedTokens(usedTokens)
+                .allocatedTokens(sectionBudget)
+                .originalTokens(usedTokens)
+                .compressed(false)
                 .build();
     }
 }

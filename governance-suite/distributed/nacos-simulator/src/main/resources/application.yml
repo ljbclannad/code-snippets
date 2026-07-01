@@ -1,0 +1,13 @@
+server:
+  port: 8095
+
+spring:
+  application:
+    name: nacos-simulator
+
+simulator:
+  config:
+    long-poll-timeout-ms: 30000
+  registry:
+    default-ttl-ms: 15000
+    expiration-scan-interval-ms: 3000

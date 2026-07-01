@@ -102,6 +102,20 @@ knowledge-base:
     max-top-k: 20
     similarity-threshold: 0.6 # 相似度阈值
 
+  crawler:
+    enabled: true
+    user-agent: Mozilla/5.0 (compatible; GovernanceSuiteKnowledgeBot/1.0; +https://localhost)
+    connect-timeout-millis: 10000
+    read-timeout-millis: 15000
+    politeness-delay-millis: 400
+    max-pages-per-job: 20
+    max-content-length: 200000
+    respect-robots-txt: true
+    fetch-retry-count: 2
+    fetch-retry-backoff-millis: 300
+    default-created-by: kb-crawler
+    output-path: ${knowledge-base.storage.base-path}/crawler
+
   deepseek:
     api-key: ${DEEPSEEK_API_KEY:}
     base-url: https://api.deepseek.com

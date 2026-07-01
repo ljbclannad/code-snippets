@@ -23,15 +23,24 @@ public class ChatResponse {
     private String errorMessage;
     private Long timestamp;
     private List<SimilarConversation> recommendations;
+    private List<PatientVisibleEvidence> patientVisibleEvidence;
 
     /**
      * Create a success response
      */
     public static ChatResponse success(String message, String conversationId) {
+        return success(message, conversationId, null);
+    }
+
+    public static ChatResponse success(
+            String message,
+            String conversationId,
+            List<PatientVisibleEvidence> patientVisibleEvidence) {
         return ChatResponse.builder()
                 .success(true)
                 .message(message)
                 .conversationId(conversationId)
+                .patientVisibleEvidence(patientVisibleEvidence)
                 .timestamp(System.currentTimeMillis())
                 .build();
     }

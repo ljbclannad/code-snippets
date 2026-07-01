@@ -14,10 +14,16 @@
         <result column="polarity" property="polarity"/>
         <result column="memory_content" property="memoryContent"/>
         <result column="confidence_score" property="confidenceScore"/>
+        <result column="worthiness_score" property="worthinessScore"/>
         <result column="status" property="status"/>
+        <result column="lifecycle_status" property="lifecycleStatus"/>
+        <result column="decision_reason_code" property="decisionReasonCode"/>
         <result column="hit_count" property="hitCount"/>
+        <result column="source_count" property="sourceCount"/>
+        <result column="evidence_count" property="evidenceCount"/>
         <result column="source_message" property="sourceMessage"/>
         <result column="last_seen_at" property="lastSeenAt"/>
+        <result column="last_reinforced_at" property="lastReinforcedAt"/>
         <result column="reviewed_by" property="reviewedBy"/>
         <result column="reviewed_at" property="reviewedAt"/>
         <result column="confirmed_memory_id" property="confirmedMemoryId"/>
@@ -28,18 +34,21 @@
     <insert id="insert" parameterType="com.lx.governance.vectormemory.entity.AiGroupMemoryCandidateEntity" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO b_ai_group_memory_candidate (
             customer_id, group_id, memory_type, memory_key, normalized_key, normalized_value,
-            polarity, memory_content, confidence_score, status, hit_count, source_message,
-            last_seen_at, reviewed_by, reviewed_at, confirmed_memory_id
+            polarity, memory_content, confidence_score, worthiness_score, status, lifecycle_status,
+            decision_reason_code, hit_count, source_count, evidence_count, source_message,
+            last_seen_at, last_reinforced_at, reviewed_by, reviewed_at, confirmed_memory_id
         ) VALUES (
             #{customerId}, #{groupId}, #{memoryType}, #{memoryKey}, #{normalizedKey}, #{normalizedValue},
-            #{polarity}, #{memoryContent}, #{confidenceScore}, #{status}, #{hitCount}, #{sourceMessage},
-            #{lastSeenAt}, #{reviewedBy}, #{reviewedAt}, #{confirmedMemoryId}
+            #{polarity}, #{memoryContent}, #{confidenceScore}, #{worthinessScore}, #{status}, #{lifecycleStatus},
+            #{decisionReasonCode}, #{hitCount}, #{sourceCount}, #{evidenceCount}, #{sourceMessage},
+            #{lastSeenAt}, #{lastReinforcedAt}, #{reviewedBy}, #{reviewedAt}, #{confirmedMemoryId}
         )
     </insert>
 
     <update id="updateStatus">
         UPDATE b_ai_group_memory_candidate
         SET status = #{status},
+            lifecycle_status = #{status},
             reviewed_by = #{reviewedBy},
             reviewed_at = #{reviewedAt},
             confirmed_memory_id = #{confirmedMemoryId},
@@ -50,9 +59,14 @@
     <update id="incrementHitCount">
         UPDATE b_ai_group_memory_candidate
         SET hit_count = hit_count + 1,
+            source_count = source_count + 1,
+            evidence_count = evidence_count + 1,
             confidence_score = #{confidenceScore},
+            worthiness_score = #{worthinessScore},
+            decision_reason_code = #{decisionReasonCode},
             source_message = #{sourceMessage},
             last_seen_at = #{lastSeenAt},
+            last_reinforced_at = #{lastReinforcedAt},
             update_time = NOW()
         WHERE id = #{id}
     </update>
@@ -77,5 +91,31 @@
           AND group_id = #{groupId}
           AND status IN ('CANDIDATE', 'CONFLICT')
         ORDER BY update_time DESC
+    </select>
+
+    <select id="selectByCustomerIdAndGroupId" resultMap="BaseResultMap">
+        SELECT * FROM b_ai_group_memory_candidate
+        WHERE customer_id = #{customerId}
+          AND group_id = #{groupId}
+        <if test="statuses != null and statuses.size() > 0">
+            AND status IN
+            <foreach collection="statuses" item="status" open="(" separator="," close=")">
+                #{status}
+            </foreach>
+        </if>
+        ORDER BY update_time DESC
+    </select>
+
+    <select id="countStaleCandidates" resultType="int">
+        SELECT COUNT(*)
+        FROM b_ai_group_memory_candidate
+        WHERE status IN ('CANDIDATE', 'CONFLICT')
+          AND last_seen_at <![CDATA[ <= ]]> DATE_SUB(NOW(), INTERVAL #{staleHours} HOUR)
+    </select>
+
+    <select id="selectOldestPendingAgeHours" resultType="double">
+        SELECT COALESCE(MAX(TIMESTAMPDIFF(HOUR, last_seen_at, NOW())), 0)
+        FROM b_ai_group_memory_candidate
+        WHERE status IN ('CANDIDATE', 'CONFLICT')
     </select>
 </mapper>

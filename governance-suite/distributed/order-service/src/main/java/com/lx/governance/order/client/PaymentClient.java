@@ -17,10 +17,18 @@ public interface PaymentClient {
     @PostMapping("/prepare")
     ApiResponse<PaymentDto> prepare(@RequestBody PaymentPrepareRequest req);
 
+    @PostMapping("/tcc/try")
+    ApiResponse<String> tryPrepareTcc(@RequestBody PaymentPrepareRequest req);
+
     @Component
     class PaymentClientFallback implements PaymentClient {
         @Override
         public ApiResponse<PaymentDto> prepare(PaymentPrepareRequest req) {
+            return ApiResponse.fail("PAYMENT_UNAVAILABLE", "payment-service fallback", null);
+        }
+
+        @Override
+        public ApiResponse<String> tryPrepareTcc(PaymentPrepareRequest req) {
             return ApiResponse.fail("PAYMENT_UNAVAILABLE", "payment-service fallback", null);
         }
     }

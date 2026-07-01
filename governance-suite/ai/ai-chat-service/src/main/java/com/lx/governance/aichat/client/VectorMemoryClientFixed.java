@@ -138,4 +138,8 @@ public class VectorMemoryClientFixed {
         log.info("Memory extraction request sent: groupId={}, customerId={}, correlationId={}",
                 groupId, customerId, correlationId);
     }
+
+    public int getPendingRequestCount() {
+        return pendingRequests.size();
+    }
 }

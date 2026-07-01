@@ -15,6 +15,9 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import com.lx.governance.agentplatform.model.PlatformCostScope;
+import com.lx.governance.agentplatform.runtime.PlatformMetricsService;
+
 import jakarta.annotation.PreDestroy;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -56,7 +59,14 @@ public class DeepSeekClient {
     @Value("${agent.deepseek.max-retries:2}")
     private int maxRetries;
 
+    @Value("${agent.metrics.cost.prompt-price-per-1k-tokens:0}")
+    private double promptPricePer1kTokens;
+
+    @Value("${agent.metrics.cost.completion-price-per-1k-tokens:0}")
+    private double completionPricePer1kTokens;
+
     private volatile ExecutorService requestExecutor;
+    private PlatformMetricsService platformMetricsService;
 
     public DeepSeekClient(ChatModel chatModel) {
         this.chatModel = chatModel;
@@ -65,6 +75,11 @@ public class DeepSeekClient {
     @Autowired(required = false)
     void setRequestExecutor(@Qualifier("deepSeekRequestExecutor") ExecutorService requestExecutor) {
         this.requestExecutor = requestExecutor;
+    }
+
+    @Autowired(required = false)
+    void setPlatformMetricsService(PlatformMetricsService platformMetricsService) {
+        this.platformMetricsService = platformMetricsService;
     }
 
     /**
@@ -235,7 +250,27 @@ public class DeepSeekClient {
             deepSeekResponse.setTotalTokens(usage.getTotalTokens().intValue());
         }
         deepSeekResponse.setDuration(duration);
+        recordPlatformTokenCost(deepSeekResponse);
         return deepSeekResponse;
+    }
+
+    private void recordPlatformTokenCost(DeepSeekResponse response) {
+        if (response == null || platformMetricsService == null) {
+            return;
+        }
+        platformMetricsService.recordTokenCost(
+            PlatformCostScope.AGENT_WORKFLOW,
+            "doctor-assistant-agent",
+            response.getPromptTokens(),
+            response.getCompletionTokens(),
+            response.getTotalTokens(),
+            estimateCost(response.getPromptTokens(), response.getCompletionTokens())
+        );
+    }
+
+    private double estimateCost(int promptTokens, int completionTokens) {
+        return (promptTokens / 1000.0D) * Math.max(0D, promptPricePer1kTokens)
+            + (completionTokens / 1000.0D) * Math.max(0D, completionPricePer1kTokens);
     }
 
     private String extractContent(ChatResponse response) {

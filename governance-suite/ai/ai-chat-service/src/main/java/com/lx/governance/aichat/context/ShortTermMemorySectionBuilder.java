@@ -22,7 +22,7 @@ public class ShortTermMemorySectionBuilder implements PromptSectionBuilder {
         }
 
         int sectionBudget = Math.min(
-                context.getBudgetAllocation().getSessionContextBudget(),
+                context.getBudgetAllocation().getShortTermMemoryBudget(),
                 context.getRemainingBudget());
         String content = support.formatShortTermMemories(
                 context.getInput().getLayeredMemories().getShortTermMemories(),
@@ -32,11 +32,16 @@ public class ShortTermMemorySectionBuilder implements PromptSectionBuilder {
             return PromptSectionResult.empty(PromptSectionType.SHORT_TERM_MEMORY);
         }
 
+        int usedTokens = support.estimateTokens(content);
+
         return PromptSectionResult.builder()
                 .type(PromptSectionType.SHORT_TERM_MEMORY)
                 .title("## 短期记忆")
                 .content(content)
-                .usedTokens(support.estimateTokens(content))
+                .usedTokens(usedTokens)
+                .allocatedTokens(sectionBudget)
+                .originalTokens(usedTokens)
+                .compressed(false)
                 .build();
     }
 }

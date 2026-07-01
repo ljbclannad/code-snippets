@@ -24,22 +24,26 @@ public class SessionContextSectionBuilder implements PromptSectionBuilder {
         int sectionBudget = Math.min(
                 context.getBudgetAllocation().getSessionContextBudget(),
                 context.getRemainingBudget());
-        String content = support.formatSessionContext(context.getInput().getSessionContext());
-        int estimatedTokens = support.estimateTokens(content);
+        String rawContent = support.formatSessionContext(context.getInput().getSessionContext());
+        int estimatedTokens = support.estimateTokens(rawContent);
 
-        if (content.isBlank() || sectionBudget <= 0) {
+        if (rawContent.isBlank() || sectionBudget <= 0) {
             return PromptSectionResult.empty(PromptSectionType.SESSION_CONTEXT);
         }
 
-        if (estimatedTokens > sectionBudget) {
-            content = support.compressText(content, sectionBudget);
-        }
+        String content = support.buildPrioritizedSessionContext(
+                context.getInput().getSessionContext(),
+                sectionBudget);
+        boolean compressed = estimatedTokens > sectionBudget || !rawContent.equals(content);
 
         return PromptSectionResult.builder()
                 .type(PromptSectionType.SESSION_CONTEXT)
                 .title("## 会话上下文")
                 .content(content)
                 .usedTokens(support.estimateTokens(content))
+                .allocatedTokens(sectionBudget)
+                .originalTokens(estimatedTokens)
+                .compressed(compressed)
                 .build();
     }
 }

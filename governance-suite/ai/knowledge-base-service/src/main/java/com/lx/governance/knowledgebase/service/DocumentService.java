@@ -200,6 +200,16 @@ public class DocumentService {
         return documentMapper.selectOne(wrapper);
     }
 
+    public KnowledgeDocument findLatestBySourceAndFileName(String kbId, String source, String fileName) {
+        LambdaQueryWrapper<KnowledgeDocument> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(KnowledgeDocument::getKbId, kbId);
+        wrapper.eq(KnowledgeDocument::getSource, source);
+        wrapper.eq(KnowledgeDocument::getFileName, fileName);
+        wrapper.orderByDesc(KnowledgeDocument::getUpdateTime);
+        wrapper.last("LIMIT 1");
+        return documentMapper.selectOne(wrapper);
+    }
+
     public List<KnowledgeDocument> listActiveByKbId(String kbId, String excludeDocId, int limit) {
         LambdaQueryWrapper<KnowledgeDocument> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(KnowledgeDocument::getKbId, kbId);
@@ -260,6 +270,20 @@ public class DocumentService {
             document.setUpdateTime(LocalDateTime.now());
             documentMapper.updateById(document);
         }
+    }
+
+    @Transactional(rollbackFor = Exception.class)
+    public void updateDocumentTags(String docId, String tags, String updatedBy) {
+        KnowledgeDocument document = getByDocId(docId);
+        if (document == null) {
+            return;
+        }
+        document.setTags(tags);
+        if (updatedBy != null && !updatedBy.isBlank()) {
+            document.setCreatedBy(updatedBy);
+        }
+        document.setUpdateTime(LocalDateTime.now());
+        documentMapper.updateById(document);
     }
 
     @Transactional(rollbackFor = Exception.class)

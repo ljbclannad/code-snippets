@@ -13,7 +13,7 @@ import com.lx.governance.vectormemory.dto.CandidateMemoryComparisonView;
 import com.lx.governance.vectormemory.dto.CandidateMemoryReviewRequest;
 import com.lx.governance.vectormemory.entity.AiGroupMemoryConflictEntity;
 import com.lx.governance.vectormemory.entity.AiGroupMemoryReviewAuditEntity;
-import com.lx.governance.vectormemory.service.CandidateMemoryReviewService;
+import com.lx.governance.vectormemory.application.governance.CandidateMemoryReviewService;
 
 import lombok.RequiredArgsConstructor;
 

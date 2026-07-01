@@ -1,7 +1,8 @@
 package com.health.agent.service;
 
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+
+import com.health.agent.config.DoctorSafetyProperties;
 
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -15,17 +16,32 @@ import java.util.Map;
 @Service
 public class WeightPlateauService {
 
-    @Value("${agent.weight-plateau.window-days:14}")
-    private int windowDays;
+    private int windowDays = 14;
 
-    @Value("${agent.weight-plateau.max-weight-change-kg:0.5}")
-    private double maxWeightChangeKg;
+    private double maxWeightChangeKg = 0.5d;
 
-    @Value("${agent.weight-plateau.recent-trend-days:7}")
-    private int recentTrendDays;
+    private int recentTrendDays = 7;
 
-    @Value("${agent.weight-plateau.recent-downward-threshold-kg:0.2}")
-    private double recentDownwardThresholdKg;
+    private double recentDownwardThresholdKg = 0.2d;
+
+    public WeightPlateauService() {
+    }
+
+    public WeightPlateauService(DoctorSafetyProperties properties) {
+        applyProperties(properties);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void applyProperties(DoctorSafetyProperties properties) {
+        if (properties == null || properties.getWeightPlateau() == null) {
+            return;
+        }
+        DoctorSafetyProperties.WeightPlateau weightPlateau = properties.getWeightPlateau();
+        this.windowDays = weightPlateau.getWindowDays();
+        this.maxWeightChangeKg = weightPlateau.getMaxWeightChangeKg();
+        this.recentTrendDays = weightPlateau.getRecentTrendDays();
+        this.recentDownwardThresholdKg = weightPlateau.getRecentDownwardThresholdKg();
+    }
 
     public Map<String, Object> detectPlateau(List<Map<String, Object>> weightRecords) {
         List<RecordPoint> points = normalize(weightRecords);

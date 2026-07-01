@@ -14,6 +14,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.client.RestClient;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lx.governance.aichat.dto.DoctorAssistantTaskRequest;
 import com.lx.governance.aichat.dto.DoctorAssistantTaskResponse;
 import com.lx.governance.aichat.dto.DoctorAssistantTaskStatus;
@@ -46,6 +47,14 @@ class HttpDoctorAssistantAgentGatewayTest {
                   "status": "PENDING_APPROVAL",
                   "taskType": "PATIENT_FOLLOW_UP_ANALYSIS",
                   "patientSafeReply": "已同步给医生进一步评估，请先按当前安全建议观察。",
+                  "patientVisibleEvidence": [
+                    {
+                      "title": "血糖复盘建议",
+                      "summary": "建议继续记录近 3 天血糖变化。",
+                      "source": "HEALTH_KNOWLEDGE",
+                      "trustLevel": "HIGH"
+                    }
+                  ],
                   "needsHumanReview": true
                 }
                 """));
@@ -54,7 +63,10 @@ class HttpDoctorAssistantAgentGatewayTest {
 
         HttpDoctorAssistantAgentGateway gateway = new HttpDoctorAssistantAgentGateway(
                 RestClient.builder().baseUrl("http://localhost:" + server.getAddress().getPort()).build(),
-                true);
+                new ObjectMapper(),
+                true,
+                "http://localhost:" + server.getAddress().getPort(),
+                5000);
 
         DoctorAssistantTaskResponse response = gateway.analyzePatientTask(DoctorAssistantTaskRequest.builder()
                 .taskType(TaskType.PATIENT_FOLLOW_UP_ANALYSIS)
@@ -65,13 +77,18 @@ class HttpDoctorAssistantAgentGatewayTest {
         assertEquals(DoctorAssistantTaskStatus.PENDING_APPROVAL, response.getStatus());
         assertTrue(response.getNeedsHumanReview());
         assertEquals("agent-session-1", response.getAgentSessionId());
+        assertEquals(1, response.getPatientVisibleEvidence().size());
+        assertEquals("血糖复盘建议", response.getPatientVisibleEvidence().get(0).getTitle());
     }
 
     @Test
     void shouldThrowWhenGatewayDisabled() {
         HttpDoctorAssistantAgentGateway gateway = new HttpDoctorAssistantAgentGateway(
                 RestClient.builder().baseUrl("http://localhost:65535").build(),
-                false);
+                new ObjectMapper(),
+                false,
+                "http://localhost:65535",
+                5000);
 
         AiServiceException exception = assertThrows(AiServiceException.class,
                 () -> gateway.analyzePatientTask(DoctorAssistantTaskRequest.builder().build()));

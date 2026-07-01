@@ -15,7 +15,9 @@ import lombok.NoArgsConstructor;
 public class TaskTriggerContext {
 
     private String customerId;
+    private String userId;
     private String groupId;
+    private String tenantId;
     private String conversationId;
     private String message;
     private SessionContext sessionContext;

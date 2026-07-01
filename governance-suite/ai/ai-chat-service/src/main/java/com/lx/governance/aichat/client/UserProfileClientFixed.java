@@ -134,4 +134,8 @@ public class UserProfileClientFixed {
             log.warn("No pending request found for correlationId: {}", correlationId);
         }
     }
+
+    public int getPendingRequestCount() {
+        return pendingRequests.size();
+    }
 }

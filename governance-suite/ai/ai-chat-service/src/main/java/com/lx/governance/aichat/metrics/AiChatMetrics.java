@@ -38,6 +38,7 @@ public class AiChatMetrics {
     private final ConcurrentMap<String, Counter> patientSafetyCounters = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Counter> agentFallbackCounters = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Counter> humanReviewCounters = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Counter> routeResultCounters = new ConcurrentHashMap<>();
 
     // 计时器
     private final Timer chatResponseTimer;
@@ -47,6 +48,8 @@ public class AiChatMetrics {
     private final Timer embeddingTimer;
     private final ConcurrentMap<String, Timer> rewriteTimers = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, Timer> agentConversationTimers = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Timer> stageTimers = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, Timer> routeResultTimers = new ConcurrentHashMap<>();
 
     // 降级相关指标
     private final io.micrometer.core.instrument.Gauge degradationLevelGauge;
@@ -262,6 +265,37 @@ public class AiChatMetrics {
                 key -> Timer.builder("ai.conversation.path.time")
                         .description("Conversation latency by path")
                         .tag("path", safePath)
+                        .register(meterRegistry))
+                .record(java.time.Duration.ofMillis(Math.max(durationMs, 0L)));
+    }
+
+    public void recordStageLatency(String stage, long durationMs) {
+        String safeStage = stage == null || stage.isBlank() ? "unknown" : stage;
+        stageTimers.computeIfAbsent(safeStage,
+                key -> Timer.builder("ai.chat.stage.time")
+                        .description("Main chat pipeline stage latency")
+                        .tag("stage", safeStage)
+                        .register(meterRegistry))
+                .record(java.time.Duration.ofMillis(Math.max(durationMs, 0L)));
+    }
+
+    public void recordRouteResult(String routeResult, boolean degraded, long durationMs) {
+        String safeRouteResult = routeResult == null || routeResult.isBlank() ? "unknown" : routeResult;
+        String degradedTag = degraded ? "true" : "false";
+
+        routeResultCounters.computeIfAbsent(safeRouteResult + "|" + degradedTag,
+                key -> Counter.builder("ai.chat.route.results")
+                        .description("Final chat route result count")
+                        .tag("route_result", safeRouteResult)
+                        .tag("degraded", degradedTag)
+                        .register(meterRegistry))
+                .increment();
+
+        routeResultTimers.computeIfAbsent(safeRouteResult + "|" + degradedTag,
+                key -> Timer.builder("ai.chat.route.time")
+                        .description("Final chat route latency by route result")
+                        .tag("route_result", safeRouteResult)
+                        .tag("degraded", degradedTag)
                         .register(meterRegistry))
                 .record(java.time.Duration.ofMillis(Math.max(durationMs, 0L)));
     }

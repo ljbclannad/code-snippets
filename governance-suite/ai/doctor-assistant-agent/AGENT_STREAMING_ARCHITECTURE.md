@@ -296,7 +296,7 @@ done
 最直接的方式是用 `curl -N`：
 
 ```bash
-curl -N -X POST "http://localhost:8080/api/agent/execute" \
+curl -N -X POST "http://localhost:8088/api/agent/execute" \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
   -d '{

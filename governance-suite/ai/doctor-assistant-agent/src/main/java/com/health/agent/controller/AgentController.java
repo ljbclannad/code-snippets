@@ -2,11 +2,13 @@ package com.health.agent.controller;
 
 import com.health.agent.dto.agent.AgentExecutionCommand;
 import com.health.agent.engine.ReActAgentEngine;
+import com.health.agent.exception.AgentException;
 import com.health.agent.metrics.AgentMetrics;
 import com.health.agent.model.AgentResult;
 import com.health.agent.model.AgentSession;
 import com.health.agent.model.PendingTask;
 import com.health.agent.service.AgentSessionService;
+import com.health.agent.service.DoctorRunResumeService;
 import com.health.agent.service.PendingTaskService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -16,13 +18,13 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import jakarta.annotation.PreDestroy;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -33,8 +35,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -46,11 +47,6 @@ import java.util.concurrent.atomic.AtomicReference;
 @Tag(name = "Agent 执行", description = "ReAct Agent 执行和会话管理接口")
 public class AgentController {
 
-    private final ExecutorService streamExecutor = Executors.newFixedThreadPool(
-        8,
-        new AgentStreamThreadFactory()
-    );
-
     @Autowired
     private ReActAgentEngine agentEngine;
 
@@ -61,10 +57,17 @@ public class AgentController {
     private PendingTaskService taskService;
 
     @Autowired
+    private DoctorRunResumeService doctorRunResumeService;
+
+    @Autowired
     private AgentMetrics agentMetrics;
 
     @Autowired
     private AgentAccessGuard accessGuard;
+
+    @Autowired
+    @Qualifier("agentStreamExecutor")
+    private ExecutorService streamExecutor;
 
     @Value("${agent.sse.timeout-millis:120000}")
     private long sseTimeoutMillis;
@@ -139,12 +142,17 @@ public class AgentController {
         AgentAccessGuard.AccessPermit permit = accessGuard.acquire(command.getDoctorId(), true);
         AtomicReference<CompletableFuture<?>> streamFuture = new AtomicReference<>();
         SseEmitter emitter = createGuardedEmitter(permit, streamFuture);
-        streamFuture.set(CompletableFuture.runAsync(() -> streamToEmitter(emitter, () -> agentEngine.executeStream(
-            command.getGoal(),
-            command.getCustomerId(),
-            command.getDoctorId(),
-            event -> sendEvent(emitter, event.getType().name().toLowerCase(), event)
-        )), streamExecutor));
+        try {
+            streamFuture.set(CompletableFuture.runAsync(() -> streamToEmitter(emitter, () -> agentEngine.executeStream(
+                command.getGoal(),
+                command.getCustomerId(),
+                command.getDoctorId(),
+                event -> sendEvent(emitter, event.getType().name().toLowerCase(), event)
+            )), streamExecutor));
+        } catch (RejectedExecutionException e) {
+            permit.release();
+            throw new AgentException("AGENT_STREAM_EXECUTOR_REJECTED: 当前 Agent 流式执行线程池已饱和", e);
+        }
         return emitter;
     }
 
@@ -189,19 +197,23 @@ public class AgentController {
         log.info("恢复Agent执行: sessionId={}, taskId={}",
             request.getSessionId(), request.getApprovedTaskId());
 
-        AgentSession session = sessionService.getById(request.getSessionId());
-        if (session == null) {
-            throw new com.health.agent.exception.AgentException("会话不存在: " + request.getSessionId());
-        }
+        com.lx.governance.agentplatform.model.ResumeRunRequest resumeRequest =
+            doctorRunResumeService.prepareResume(request.getSessionId(), request.getApprovedTaskId());
+        AgentSession session = sessionService.getById(resumeRequest.getRunId());
 
         AgentAccessGuard.AccessPermit permit = accessGuard.acquire(session.getDoctorId(), true);
         AtomicReference<CompletableFuture<?>> streamFuture = new AtomicReference<>();
         SseEmitter emitter = createGuardedEmitter(permit, streamFuture);
-        streamFuture.set(CompletableFuture.runAsync(() -> streamToEmitter(emitter, () -> agentEngine.resumeStream(
-            request.getSessionId(),
-            request.getApprovedTaskId(),
-            event -> sendEvent(emitter, event.getType().name().toLowerCase(), event)
-        )), streamExecutor));
+        try {
+            streamFuture.set(CompletableFuture.runAsync(() -> streamToEmitter(emitter, () -> agentEngine.resumeStream(
+                resumeRequest.getRunId(),
+                Long.valueOf(resumeRequest.getApprovalTaskId()),
+                event -> sendEvent(emitter, event.getType().name().toLowerCase(), event)
+            )), streamExecutor));
+        } catch (RejectedExecutionException e) {
+            permit.release();
+            throw new AgentException("AGENT_STREAM_EXECUTOR_REJECTED: 当前 Agent 流式执行线程池已饱和", e);
+        }
         return emitter;
     }
 
@@ -342,22 +354,6 @@ public class AgentController {
         }
     }
 
-    @PreDestroy
-    void shutdownStreamExecutor() {
-        streamExecutor.shutdownNow();
-    }
-
-    private static class AgentStreamThreadFactory implements ThreadFactory {
-        private int index = 0;
-
-        @Override
-        public synchronized Thread newThread(Runnable runnable) {
-            Thread thread = new Thread(runnable, "agent-stream-" + index++);
-            thread.setDaemon(true);
-            return thread;
-        }
-    }
-
     @Operation(
         summary = "查询医生的待确认任务列表",
         description = "查询指定医生的所有待确认任务，通常用于医生工作台展示待审批事项"
@@ -432,7 +428,7 @@ public class AgentController {
     ) {
         log.info("批准任务: taskId={}, comment={}", taskId, request.getReviewComment());
 
-        taskService.approve(taskId, request.getReviewComment());
+        doctorRunResumeService.approveTask(taskId, request.getReviewComment());
         agentMetrics.recordApprovalDecision("approved", "pending_task");
 
         return ResponseEntity.ok(TaskApprovalResponse.builder()
@@ -480,7 +476,7 @@ public class AgentController {
     ) {
         log.info("拒绝任务: taskId={}, comment={}", taskId, request.getReviewComment());
 
-        taskService.reject(taskId, request.getReviewComment());
+        doctorRunResumeService.rejectTask(taskId, request.getReviewComment());
         agentMetrics.recordApprovalDecision("rejected", "pending_task");
 
         return ResponseEntity.ok(TaskApprovalResponse.builder()

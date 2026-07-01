@@ -24,67 +24,88 @@
         </rollingPolicy>
     </appender>
 
-    <!-- LOGSTASH appender - 只发送关键业务日志 -->
-    <appender name="LOGSTASH" class="net.logstash.logback.appender.LogstashTcpSocketAppender">
-        <destination>localhost:50000</destination>
-        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
-            <customFields>{"service":"${APP_NAME}"}</customFields>
-        </encoder>
-        <!-- 过滤器：只发送 WARN 及以上级别的日志 -->
-        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
-            <level>WARN</level>
-        </filter>
-    </appender>
+    <springProfile name="prod,observability">
+        <!-- Logstash 仅在生产或显式观测模式下启用，本地默认不连 50000 -->
+        <appender name="LOGSTASH" class="net.logstash.logback.appender.LogstashTcpSocketAppender">
+            <destination>localhost:50000</destination>
+            <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+                <customFields>{"service":"${APP_NAME}"}</customFields>
+            </encoder>
+            <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+                <level>WARN</level>
+            </filter>
+        </appender>
 
-    <!-- ASYNC wrapper -->
-    <appender name="ASYNC_LOGSTASH" class="ch.qos.logback.classic.AsyncAppender">
-        <appender-ref ref="LOGSTASH"/>
-        <queueSize>512</queueSize>
-        <discardingThreshold>0</discardingThreshold>
-        <neverBlock>true</neverBlock>
-    </appender>
+        <appender name="ASYNC_LOGSTASH" class="ch.qos.logback.classic.AsyncAppender">
+            <appender-ref ref="LOGSTASH"/>
+            <queueSize>512</queueSize>
+            <discardingThreshold>0</discardingThreshold>
+            <neverBlock>true</neverBlock>
+        </appender>
 
-    <!-- 业务关键日志单独发送到 Logstash（INFO 级别）-->
-    <appender name="BUSINESS_LOGSTASH" class="net.logstash.logback.appender.LogstashTcpSocketAppender">
-        <destination>localhost:50000</destination>
-        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
-            <customFields>{"service":"${APP_NAME}","log_type":"business"}</customFields>
-        </encoder>
-    </appender>
+        <appender name="BUSINESS_LOGSTASH" class="net.logstash.logback.appender.LogstashTcpSocketAppender">
+            <destination>localhost:50000</destination>
+            <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+                <customFields>{"service":"${APP_NAME}","log_type":"business"}</customFields>
+            </encoder>
+        </appender>
 
-    <appender name="ASYNC_BUSINESS_LOGSTASH" class="ch.qos.logback.classic.AsyncAppender">
-        <appender-ref ref="BUSINESS_LOGSTASH"/>
-        <queueSize>512</queueSize>
-        <discardingThreshold>0</discardingThreshold>
-        <neverBlock>true</neverBlock>
-    </appender>
+        <appender name="ASYNC_BUSINESS_LOGSTASH" class="ch.qos.logback.classic.AsyncAppender">
+            <appender-ref ref="BUSINESS_LOGSTASH"/>
+            <queueSize>512</queueSize>
+            <discardingThreshold>0</discardingThreshold>
+            <neverBlock>true</neverBlock>
+        </appender>
+    </springProfile>
 
     <!-- Application logger -->
     <logger name="com.lx.governance.aichat" level="INFO"/>
 
-    <!-- 业务关键服务日志单独配置 -->
-    <logger name="com.lx.governance.aichat.service.AiChatService" level="INFO" additivity="false">
-        <appender-ref ref="CONSOLE"/>
-        <appender-ref ref="FILE"/>
-        <appender-ref ref="ASYNC_BUSINESS_LOGSTASH"/>
-    </logger>
+    <springProfile name="!prod &amp; !observability">
+        <logger name="com.lx.governance.aichat.service.AiChatService" level="INFO" additivity="false">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="FILE"/>
+        </logger>
 
-    <logger name="com.lx.governance.aichat.service.MemoryService" level="INFO" additivity="false">
-        <appender-ref ref="CONSOLE"/>
-        <appender-ref ref="FILE"/>
-        <appender-ref ref="ASYNC_BUSINESS_LOGSTASH"/>
-    </logger>
+        <logger name="com.lx.governance.aichat.service.MemoryService" level="INFO" additivity="false">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="FILE"/>
+        </logger>
 
-    <logger name="com.lx.governance.aichat.service.ProfileDiagnosisService" level="INFO" additivity="false">
-        <appender-ref ref="CONSOLE"/>
-        <appender-ref ref="FILE"/>
-        <appender-ref ref="ASYNC_BUSINESS_LOGSTASH"/>
-    </logger>
+        <logger name="com.lx.governance.aichat.service.ProfileDiagnosisService" level="INFO" additivity="false">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="FILE"/>
+        </logger>
 
-    <!-- Root logger -->
-    <root level="INFO">
-        <appender-ref ref="CONSOLE"/>
-        <appender-ref ref="FILE"/>
-        <appender-ref ref="ASYNC_LOGSTASH"/>
-    </root>
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="FILE"/>
+        </root>
+    </springProfile>
+
+    <springProfile name="prod,observability">
+        <logger name="com.lx.governance.aichat.service.AiChatService" level="INFO" additivity="false">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="FILE"/>
+            <appender-ref ref="ASYNC_BUSINESS_LOGSTASH"/>
+        </logger>
+
+        <logger name="com.lx.governance.aichat.service.MemoryService" level="INFO" additivity="false">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="FILE"/>
+            <appender-ref ref="ASYNC_BUSINESS_LOGSTASH"/>
+        </logger>
+
+        <logger name="com.lx.governance.aichat.service.ProfileDiagnosisService" level="INFO" additivity="false">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="FILE"/>
+            <appender-ref ref="ASYNC_BUSINESS_LOGSTASH"/>
+        </logger>
+
+        <root level="INFO">
+            <appender-ref ref="CONSOLE"/>
+            <appender-ref ref="FILE"/>
+            <appender-ref ref="ASYNC_LOGSTASH"/>
+        </root>
+    </springProfile>
 </configuration>

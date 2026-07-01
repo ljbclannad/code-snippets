@@ -82,6 +82,9 @@ public class ShardingSphereDataSourceConfig {
         ShardingTableRuleConfiguration outboxTableRule = new ShardingTableRuleConfiguration(
                 "t_outbox",
                 "order_ds.t_outbox");
+        ShardingTableRuleConfiguration orderTccLogTableRule = new ShardingTableRuleConfiguration(
+                "t_order_tcc_log",
+                "order_ds.t_order_tcc_log");
         ShardingTableRuleConfiguration paymentEventConsumeTableRule = new ShardingTableRuleConfiguration(
                 "t_payment_event_consume",
                 "order_ds.t_payment_event_consume");
@@ -97,6 +100,7 @@ public class ShardingSphereDataSourceConfig {
         ShardingRuleConfiguration shardingRule = new ShardingRuleConfiguration();
         shardingRule.getTables().add(orderTableRule);
         shardingRule.getTables().add(outboxTableRule);
+        shardingRule.getTables().add(orderTccLogTableRule);
         shardingRule.getTables().add(paymentEventConsumeTableRule);
         shardingRule.getTables().add(seckillOrderGuardTableRule);
         shardingRule.setShardingAlgorithms(shardingAlgorithms);

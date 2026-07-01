@@ -14,6 +14,10 @@ import com.lx.governance.aichat.dto.TaskTriggerDecision;
 import com.lx.governance.aichat.dto.TaskTriggerReason;
 import com.lx.governance.aichat.dto.TaskTriggerRoute;
 import com.lx.governance.aichat.dto.TaskType;
+import com.lx.governance.agentplatform.model.AgentSelectionMode;
+import com.lx.governance.agentplatform.model.PlatformConversationRouteType;
+import com.lx.governance.agentplatform.model.PlatformRoutingContext;
+import com.lx.governance.agentplatform.model.PlatformTaskRoutingDecision;
 
 class TaskTriggerRouterTest {
 
@@ -118,6 +122,47 @@ class TaskTriggerRouterTest {
         assertFalse(decision.shouldUpgradeToAgent());
         assertEquals(TaskTriggerRoute.DIRECT_CHAT, decision.getRoute());
         assertTrue(decision.getReasons().contains(TaskTriggerReason.PROFILE_COMPLETION_FOLLOW_UP));
+    }
+
+    @Test
+    void shouldRouteMedicalFactQueryToKnowledgeQaPath() {
+        TaskTriggerDecision decision = router.route(TaskTriggerContext.builder()
+                .message("高血压是什么，平时应该怎么理解")
+                .sessionContext(baseContext("simple", 1, "medical_knowledge_qa"))
+                .build());
+
+        assertFalse(decision.shouldUpgradeToAgent());
+        assertEquals(TaskTriggerRoute.DIRECT_CHAT, decision.getRoute());
+        assertTrue(decision.getReasons().contains(TaskTriggerReason.MEDICAL_KNOWLEDGE_QA));
+    }
+
+    @Test
+    void shouldEscalateSensitiveMedicationFactQueryToAgent() {
+        TaskTriggerDecision decision = router.route(TaskTriggerContext.builder()
+                .message("二甲双胍能不能直接停药")
+                .sessionContext(baseContext("simple", 1, "medical_knowledge_qa"))
+                .build());
+
+        assertTrue(decision.shouldUpgradeToAgent());
+        assertEquals(TaskType.RISK_STRATIFICATION_AND_ESCALATION, decision.getTaskType());
+        assertTrue(decision.getReasons().contains(TaskTriggerReason.MEDICAL_SENSITIVE_FACT_QUERY));
+    }
+
+    @Test
+    void shouldExposePlatformRoutingLayersForRiskReviewRoute() {
+        PlatformTaskRoutingDecision decision = router.route(PlatformRoutingContext.builder()
+                .customerId("C001")
+                .groupId("group-1")
+                .message("患者最近状态恶化，是否需要转人工医生复核风险？")
+                .sessionSignals(java.util.Map.of("sessionContext", baseContext("complex", 6, "risk_review_request")))
+                .build());
+
+        assertEquals(PlatformConversationRouteType.TASK, decision.getRoute());
+        assertEquals("RISK_STRATIFICATION_AND_ESCALATION", decision.getTaskType());
+        assertEquals("doctor-assistant-agent", decision.getTargetAgentId());
+        assertEquals("doctor-risk-review-workflow", decision.getWorkflowCode());
+        assertEquals(AgentSelectionMode.PARALLEL, decision.getSelectionMode());
+        assertEquals("TASK", decision.getLayerDecisions().get("direct_chat_vs_task"));
     }
 
     private SessionContext baseContext(String complexity, int messageCount) {

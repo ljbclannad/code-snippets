@@ -61,6 +61,11 @@ public class StructuredFinalAnswer {
      */
     private List<String> inferences;
 
+    /**
+     * 结构化证据明细，优先用于工作台/审计链路。
+     */
+    private List<StructuredEvidenceItem> evidenceDetails;
+
     public String toTextSummary() {
         String findings = keyFindings == null || keyFindings.isEmpty()
             ? "无"

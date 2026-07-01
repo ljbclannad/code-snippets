@@ -1,7 +1,7 @@
 package com.lx.governance.vectormemory.listener;
 
 import com.lx.governance.vectormemory.config.RabbitMQConfig;
-import com.lx.governance.vectormemory.service.DeadLetterService;
+import com.lx.governance.vectormemory.application.governance.DeadLetterService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.Message;

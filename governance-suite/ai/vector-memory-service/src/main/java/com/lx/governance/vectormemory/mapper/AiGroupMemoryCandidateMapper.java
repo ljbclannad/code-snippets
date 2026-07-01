@@ -20,8 +20,11 @@ public interface AiGroupMemoryCandidateMapper {
 
     void incrementHitCount(@Param("id") Long id,
                            @Param("confidenceScore") java.math.BigDecimal confidenceScore,
+                           @Param("worthinessScore") java.math.BigDecimal worthinessScore,
+                           @Param("decisionReasonCode") String decisionReasonCode,
                            @Param("sourceMessage") String sourceMessage,
-                           @Param("lastSeenAt") java.time.LocalDateTime lastSeenAt);
+                           @Param("lastSeenAt") java.time.LocalDateTime lastSeenAt,
+                           @Param("lastReinforcedAt") java.time.LocalDateTime lastReinforcedAt);
 
     AiGroupMemoryCandidateEntity selectById(@Param("id") Long id);
 
@@ -32,4 +35,12 @@ public interface AiGroupMemoryCandidateMapper {
 
     List<AiGroupMemoryCandidateEntity> selectActiveByCustomerId(@Param("customerId") String customerId,
                                                                 @Param("groupId") String groupId);
+
+    List<AiGroupMemoryCandidateEntity> selectByCustomerIdAndGroupId(@Param("customerId") String customerId,
+                                                                    @Param("groupId") String groupId,
+                                                                    @Param("statuses") List<String> statuses);
+
+    int countStaleCandidates(@Param("staleHours") int staleHours);
+
+    double selectOldestPendingAgeHours();
 }

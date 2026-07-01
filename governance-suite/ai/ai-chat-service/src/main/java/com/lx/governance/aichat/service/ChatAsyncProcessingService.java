@@ -26,6 +26,7 @@ public class ChatAsyncProcessingService {
     private final RabbitTemplate rabbitTemplate;
     private final MemoryService memoryService;
     private final Executor memoryExtractExecutor;
+    private final VisitorIdentityService visitorIdentityService;
 
     @Value("${ai-chat.chat-history.sync-enabled:true}")
     private boolean syncEnabled;
@@ -34,11 +35,13 @@ public class ChatAsyncProcessingService {
             AiChatHistoryMapper chatHistoryMapper,
             RabbitTemplate rabbitTemplate,
             MemoryService memoryService,
-            @Qualifier("memoryExtractExecutor") Executor memoryExtractExecutor) {
+            @Qualifier("memoryExtractExecutor") Executor memoryExtractExecutor,
+            VisitorIdentityService visitorIdentityService) {
         this.chatHistoryMapper = chatHistoryMapper;
         this.rabbitTemplate = rabbitTemplate;
         this.memoryService = memoryService;
         this.memoryExtractExecutor = memoryExtractExecutor;
+        this.visitorIdentityService = visitorIdentityService;
     }
 
     public void handleChatCompleted(ChatRequest request, ChatGenerationResult response, String correlationId) {
@@ -102,6 +105,11 @@ public class ChatAsyncProcessingService {
 
     private void triggerMemoryExtraction(ChatRequest request, ChatGenerationResult response, String correlationId) {
         try {
+            if (visitorIdentityService.isVisitor(request.getCustomerId())) {
+                log.debug("visitor 模式跳过长期记忆提取 - customerId: {}, correlationId: {}",
+                        request.getCustomerId(), correlationId);
+                return;
+            }
             memoryService.extractMemory(
                     request.getGroupId(),
                     request.getCustomerId(),

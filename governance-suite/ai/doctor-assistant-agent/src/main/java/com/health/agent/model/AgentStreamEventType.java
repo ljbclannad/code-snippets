@@ -10,6 +10,7 @@ public enum AgentStreamEventType {
     OBSERVATION,
     PENDING_APPROVAL,
     FINAL_ANSWER,
+    TASK_RESULT,
     ERROR,
     DONE
 }

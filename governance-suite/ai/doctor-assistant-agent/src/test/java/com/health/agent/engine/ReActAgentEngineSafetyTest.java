@@ -1,6 +1,13 @@
 package com.health.agent.engine;
 
 import com.health.agent.client.DeepSeekClient;
+import com.health.agent.dto.agent.AgentExecutionCommand;
+import com.health.agent.dto.patient.MemorySnapshot;
+import com.health.agent.learning.enums.AgentOutcomeLabel;
+import com.health.agent.learning.model.AgentRunOutcome;
+import com.health.agent.learning.model.AgentRunStrategySnapshot;
+import com.health.agent.learning.service.AgentOutcomeRecorder;
+import com.health.agent.learning.service.AgentRunStrategySnapshotRecorder;
 import com.health.agent.metrics.AgentMetrics;
 import com.health.agent.model.ActionDecision;
 import com.health.agent.model.AgentContext;
@@ -10,12 +17,14 @@ import com.health.agent.model.Message;
 import com.health.agent.model.ThoughtResult;
 import com.health.agent.safety.MedicalSafetyService;
 import com.health.agent.service.AgentAuditService;
+import com.health.agent.service.AgentContextMutationService;
 import com.health.agent.service.AgentSessionService;
 import com.health.agent.tool.ToolRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -30,6 +39,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -57,6 +67,12 @@ class ReActAgentEngineSafetyTest {
     @Mock
     private AgentAuditService agentAuditService;
 
+    @Mock
+    private AgentRunStrategySnapshotRecorder strategySnapshotRecorder;
+
+    @Mock
+    private AgentOutcomeRecorder outcomeRecorder;
+
     private ReActAgentEngine engine;
 
     @BeforeEach
@@ -68,9 +84,12 @@ class ReActAgentEngineSafetyTest {
         ReflectionTestUtils.setField(engine, "actionExecutor", actionExecutor);
         ReflectionTestUtils.setField(engine, "toolRegistry", toolRegistry);
         ReflectionTestUtils.setField(engine, "sessionService", sessionService);
+        ReflectionTestUtils.setField(engine, "contextMutationService", new AgentContextMutationService());
         ReflectionTestUtils.setField(engine, "agentMetrics", new AgentMetrics(new SimpleMeterRegistry()));
         ReflectionTestUtils.setField(engine, "medicalSafetyService", new MedicalSafetyService());
         ReflectionTestUtils.setField(engine, "agentAuditService", agentAuditService);
+        ReflectionTestUtils.setField(engine, "strategySnapshotRecorder", strategySnapshotRecorder);
+        ReflectionTestUtils.setField(engine, "outcomeRecorder", outcomeRecorder);
         ReflectionTestUtils.setField(engine, "maxSteps", 3);
         ReflectionTestUtils.setField(engine, "useMock", false);
         ReflectionTestUtils.setField(engine, "protocolRepairAttempts", 1);
@@ -102,14 +121,51 @@ class ReActAgentEngineSafetyTest {
             anyString(),
             anyString()
         );
+        ArgumentCaptor<AgentRunOutcome> outcomeCaptor = ArgumentCaptor.forClass(AgentRunOutcome.class);
+        verify(outcomeRecorder).createOrUpdate(outcomeCaptor.capture());
+        assertEquals(AgentOutcomeLabel.FAILED_SAFETY_BLOCK, outcomeCaptor.getValue().getOutcomeLabel());
+        verify(strategySnapshotRecorder, atLeastOnce()).createOrUpdate(any(AgentRunStrategySnapshot.class));
+    }
+
+    @Test
+    void shouldCaptureMemorySummaryInInitialStrategySnapshot() {
+        AgentSession session = AgentSession.builder().id("2").build();
+        when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
+
+        AgentExecutionCommand command = AgentExecutionCommand.builder()
+                .goal("患者出现胸痛，需要立刻给出建议")
+                .customerId("C002")
+                .doctorId("D002")
+                .patientMessage("患者反馈最近胸闷并伴随胸痛")
+                .memorySnapshot(MemorySnapshot.builder()
+                        .shortTermMemories(List.of("近两天多次提到胸闷和呼吸不适", "夜间症状加重"))
+                        .longTermMemories(List.of("既往存在高血压病史"))
+                        .build())
+                .build();
+
+        engine.executeStream(command, event -> {
+        });
+
+        ArgumentCaptor<AgentRunStrategySnapshot> snapshotCaptor =
+                ArgumentCaptor.forClass(AgentRunStrategySnapshot.class);
+        verify(strategySnapshotRecorder, atLeastOnce()).createOrUpdate(snapshotCaptor.capture());
+        AgentRunStrategySnapshot initialSnapshot = snapshotCaptor.getAllValues().stream()
+                .filter(snapshot -> "2".equals(snapshot.getRunId()) && snapshot.getMemoryProfile() != null)
+                .findFirst()
+                .orElseThrow();
+        assertTrue(String.valueOf(initialSnapshot.getMemoryProfile().get("shortTermSummary")).contains("胸闷"));
+        assertTrue(String.valueOf(initialSnapshot.getMemoryProfile().get("longTermSummary")).contains("高血压"));
+        assertTrue(String.valueOf(initialSnapshot.getMemoryProfile().get("recentFollowUpSignalsSummary")).contains("胸闷"));
     }
 
     @Test
     void shouldBlockHighRiskActionWithoutEvidenceBeforeToolExecution() {
         AgentSession session = AgentSession.builder().id("1").build();
         when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
-        when(toolRegistry.getAllTools()).thenReturn(List.of());
+        when(toolRegistry.listToolDescriptors()).thenReturn(List.of());
         when(promptBuilder.buildUserPrompt(anyString(), anyString())).thenReturn("user");
+        when(promptBuilder.renderSubAgentSystemPromptFromCatalog(any(), any()))
+                .thenReturn(RenderedPrompt.builder().content("system").build());
 
         DeepSeekClient.DeepSeekResponse firstResponse = new DeepSeekClient.DeepSeekResponse();
         firstResponse.setContent("r1");
@@ -142,7 +198,7 @@ class ReActAgentEngineSafetyTest {
         assertEquals(2, result.getTotalSteps());
         assertEquals("MEDIUM", result.getStructuredFinalAnswer().getRiskLevel());
         assertTrue(result.getFinalAnswer().contains("问题摘要"));
-        verify(actionExecutor, never()).execute(any(), anyString(), anyString(), anyString());
+        verify(actionExecutor, never()).execute(any(), anyString(), anyString(), anyString(), any());
         verify(sessionService).updateSession(anyString(), anyList(), anyList(), any(AgentContext.class), anyInt());
     }
 }

@@ -3,6 +3,7 @@ package com.health.agent.engine.subagent;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Set;
 
 @Component
 public class RiskTriageSubAgent implements AgentSubAgent {
@@ -25,5 +26,26 @@ public class RiskTriageSubAgent implements AgentSubAgent {
                 "analyze_medication_adherence",
                 "extract_structured_symptoms",
                 "recommend_medical_review");
+    }
+
+    @Override
+    public Set<String> visibleSlotKeys() {
+        return Set.of(
+                "patient_task_request",
+                "session_context",
+                "profile_snapshot",
+                "patient_profile",
+                "memory_snapshot",
+                "chat_history",
+                "recent_follow_up_signals",
+                "patient_message",
+                "weight_history",
+                "prescription_history",
+                "red_flag_triage",
+                "follow_up_urgency_assessment",
+                "mental_health_risk_screen",
+                "medication_adherence_analysis",
+                "structured_symptoms",
+                "last_tool_result");
     }
 }

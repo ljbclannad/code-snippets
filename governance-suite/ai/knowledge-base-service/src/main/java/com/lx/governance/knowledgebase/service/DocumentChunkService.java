@@ -49,6 +49,42 @@ public class DocumentChunkService {
     }
 
     @Transactional(readOnly = true)
+    public List<SearchResult> faqExactSearch(String kbId, SearchRequest request, int limit) {
+        LambdaQueryWrapper<KnowledgeDocumentChunk> wrapper = buildFilterWrapper(kbId, request);
+        wrapper.and(w -> w.eq(KnowledgeDocumentChunk::getTitle, request.getQuery())
+                .or()
+                .likeRight(KnowledgeDocumentChunk::getTitle, request.getQuery()));
+        wrapper.last("LIMIT " + limit);
+        return chunkMapper.selectList(wrapper).stream()
+                .map(this::toKeywordSearchResult)
+                .peek(result -> {
+                    result.setScore(0.92);
+                    result.setHitReason("faq_exact");
+                })
+                .collect(Collectors.toList());
+    }
+
+    @Transactional(readOnly = true)
+    public List<SearchResult> lexiconRecallSearch(String kbId, SearchRequest request, int limit) {
+        if (request.getTags() == null || request.getTags().isEmpty()) {
+            return List.of();
+        }
+        LambdaQueryWrapper<KnowledgeDocumentChunk> wrapper = buildFilterWrapper(kbId, request);
+        wrapper.and(tagWrapper -> request.getTags().forEach(tag ->
+                tagWrapper.or().like(KnowledgeDocumentChunk::getTags, tag)
+                        .or().like(KnowledgeDocumentChunk::getTitle, tag)
+                        .or().like(KnowledgeDocumentChunk::getContent, tag)));
+        wrapper.last("LIMIT " + limit);
+        return chunkMapper.selectList(wrapper).stream()
+                .map(this::toKeywordSearchResult)
+                .peek(result -> {
+                    result.setScore(0.68);
+                    result.setHitReason("lexicon");
+                })
+                .collect(Collectors.toList());
+    }
+
+    @Transactional(readOnly = true)
     public List<KnowledgeDocumentChunk> listByDocId(String docId) {
         LambdaQueryWrapper<KnowledgeDocumentChunk> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(KnowledgeDocumentChunk::getDocId, docId);
@@ -173,9 +209,23 @@ public class DocumentChunkService {
         metadata.put("title", chunk.getTitle());
         metadata.put("tags", chunk.getTags());
         metadata.put("applicable_scope", chunk.getApplicableScope());
+        metadata.put("source_type", extractTagValue(chunk.getTags(), "source_type:"));
         metadata.put("is_active", chunk.getIsActive());
         metadata.put("is_archived", chunk.getIsArchived());
         metadata.put("duplicate_status", chunk.getDuplicateStatus());
         return metadata;
+    }
+
+    private String extractTagValue(String tags, String prefix) {
+        if (tags == null || tags.isBlank()) {
+            return null;
+        }
+        for (String tag : tags.split(",")) {
+            String trimmed = tag.trim();
+            if (trimmed.startsWith(prefix)) {
+                return trimmed.substring(prefix.length());
+            }
+        }
+        return null;
     }
 }

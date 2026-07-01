@@ -35,6 +35,12 @@
 - 任务型 Agent 协同
 - 医疗知识检索
 
+**当前平台化进展：**
+- 已抽出 `agent-platform-common` 作为多 Agent 公共层，统一承载 `run / workflow / routing / selector / approval / tool / context / audit` 基础协议
+- `ai-chat-service` 正在从“硬编码编排入口”演进为体验入口层，负责对话接入、上下文装载、任务升级和 direct chat fallback
+- `doctor-assistant-agent` 正在从“场景专属 Agent”演进为首个能力运行时，已接入平台级 selector、审批恢复、run 持久化快照和 replay 查询
+- 当前已支持按 `group / user / tenant / agent version` 做 Agent 与工具可见性控制
+
 👉 [查看详细文档](ai/README.md)
 
 ## 快速开始

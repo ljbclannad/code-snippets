@@ -1,5 +1,15 @@
 package com.lx.governance.vectormemory.service;
 
+import com.lx.governance.vectormemory.application.governance.*;
+import com.lx.governance.vectormemory.application.ingestion.*;
+import com.lx.governance.vectormemory.application.retrieval.*;
+import com.lx.governance.vectormemory.domain.candidate.*;
+import com.lx.governance.vectormemory.domain.lifecycle.*;
+import com.lx.governance.vectormemory.domain.retrieval.*;
+import com.lx.governance.vectormemory.integration.ai.*;
+import com.lx.governance.vectormemory.integration.storage.*;
+import com.lx.governance.vectormemory.support.observability.*;
+
 import com.lx.governance.vectormemory.dto.MemorySearchFilter;
 import com.lx.governance.vectormemory.entity.AiGroupMemoryEntity;
 import org.junit.jupiter.api.Test;

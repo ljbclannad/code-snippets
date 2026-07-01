@@ -2,6 +2,7 @@ package com.lx.governance.aichat.service;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.stream.Stream;
 
 import org.springframework.stereotype.Service;
@@ -12,16 +13,23 @@ import com.lx.governance.aichat.dto.TaskTriggerDecision;
 import com.lx.governance.aichat.dto.TaskTriggerReason;
 import com.lx.governance.aichat.dto.TaskTriggerRoute;
 import com.lx.governance.aichat.dto.TaskType;
+import com.lx.governance.agentplatform.model.AgentSelectionMode;
+import com.lx.governance.agentplatform.model.PlatformConversationRouteType;
+import com.lx.governance.agentplatform.model.PlatformRoutingContext;
+import com.lx.governance.agentplatform.model.PlatformRoutingTriggerMode;
+import com.lx.governance.agentplatform.model.PlatformTaskRoutingDecision;
+import com.lx.governance.agentplatform.runtime.PlatformTaskRouter;
 
 /**
  * 在普通对话主链路中提供首版任务升级判定。
  * 当前阶段只做判定和记录，不直接改写既有聊天响应流程。
  */
 @Service
-public class TaskTriggerRouter {
+public class TaskTriggerRouter implements PlatformTaskRouter {
 
     private static final String INTENT_CASUAL_CHAT = "casual_chat";
     private static final String INTENT_FACT_QUERY = "fact_query";
+    private static final String INTENT_MEDICAL_KNOWLEDGE_QA = "medical_knowledge_qa";
     private static final String INTENT_GENERAL_HEALTH_CONSULTATION = "general_health_consultation";
     private static final String INTENT_PROFILE_FOLLOW_UP_ANSWER = "profile_follow_up_answer";
     private static final String INTENT_FOLLOW_UP_TREND_ANALYSIS = "follow_up_trend_analysis";
@@ -34,6 +42,18 @@ public class TaskTriggerRouter {
 
     private static final List<String> SIMPLE_FACT_QUERY_KEYWORDS = List.of(
         "是什么", "什么意思", "怎么理解", "解释一下", "介绍一下"
+    );
+
+    private static final List<String> MEDICAL_KNOWLEDGE_KEYWORDS = List.of(
+        "高血压", "糖尿病", "血糖", "血压", "胆固醇", "药", "药物", "停药", "减量", "加量", "症状", "指南", "说明书", "禁忌"
+    );
+
+    private static final List<String> HIGH_RISK_MEDICAL_KEYWORDS = List.of(
+        "胸痛", "呼吸困难", "昏迷", "抽搐", "自杀", "轻生", "急诊", "晕厥", "黑便", "呕血"
+    );
+
+    private static final List<String> MEDICAL_SENSITIVE_FACT_KEYWORDS = List.of(
+        "停药", "换药", "加量", "减量", "禁忌", "处方", "确诊", "诊断", "急症"
     );
 
     private static final List<String> ANALYSIS_KEYWORDS = List.of(
@@ -57,8 +77,24 @@ public class TaskTriggerRouter {
     );
 
     public TaskTriggerDecision route(TaskTriggerContext context) {
-        String message = normalize(context.getMessage());
-        SessionContext sessionContext = context.getSessionContext();
+        PlatformTaskRoutingDecision platformDecision = route(toPlatformContext(context));
+        return TaskTriggerDecision.builder()
+            .route(platformDecision.shouldUpgradeToTask()
+                ? TaskTriggerRoute.DOCTOR_ASSISTANT_AGENT
+                : TaskTriggerRoute.DIRECT_CHAT)
+            .taskType(resolveTaskType(platformDecision.getTaskType()))
+            .reasons(platformDecision.getReasons().stream()
+                .map(this::resolveReason)
+                .filter(java.util.Objects::nonNull)
+                .toList())
+            .summary(platformDecision.getSummary())
+            .build();
+    }
+
+    @Override
+    public PlatformTaskRoutingDecision route(PlatformRoutingContext context) {
+        String message = normalize(context != null ? context.getMessage() : null);
+        SessionContext sessionContext = sessionContextFrom(context);
         String intent = normalize(sessionIntent(sessionContext));
 
         // 画像补全追问阶段优先级最高。
@@ -79,8 +115,32 @@ public class TaskTriggerRouter {
             return direct(TaskTriggerReason.CASUAL_CHAT_SIGNAL, "命中寒暄或轻量闲聊信号");
         }
 
+        boolean medicalKnowledgeIntent = hasIntent(intent, INTENT_MEDICAL_KNOWLEDGE_QA);
+        boolean medicalKnowledgeSignal = medicalKnowledgeIntent || containsAny(message, MEDICAL_KNOWLEDGE_KEYWORDS);
+        boolean highRiskMedicalSignal = containsAny(message, HIGH_RISK_MEDICAL_KEYWORDS);
+        boolean medicalSensitiveFactSignal = containsAny(message, MEDICAL_SENSITIVE_FACT_KEYWORDS);
+
+        if (highRiskMedicalSignal) {
+            return agent(
+                TaskType.RISK_STRATIFICATION_AND_ESCALATION,
+                reasons(TaskTriggerReason.HIGH_RISK_MEDICAL_SIGNAL),
+                "命中高风险医疗关键词，强制升级 Agent"
+            );
+        }
+
         // “是什么/解释一下”这类偏事实解释的问题，默认保持 direct chat。
         // 只有在同时带有明显分析诉求时，才继续往后看是否需要升级。
+        if (medicalKnowledgeSignal && medicalSensitiveFactSignal) {
+            return agent(
+                TaskType.RISK_STRATIFICATION_AND_ESCALATION,
+                reasons(TaskTriggerReason.MEDICAL_SENSITIVE_FACT_QUERY),
+                "命中医疗安全敏感事实问题，升级到 Agent"
+            );
+        }
+        if (medicalKnowledgeSignal
+            && (medicalKnowledgeIntent || hasIntent(intent, INTENT_FACT_QUERY) || containsAny(message, SIMPLE_FACT_QUERY_KEYWORDS))) {
+            return direct(TaskTriggerReason.MEDICAL_KNOWLEDGE_QA, "命中医疗知识检索问答信号");
+        }
         if (hasIntent(intent, INTENT_FACT_QUERY)
             || (containsAny(message, SIMPLE_FACT_QUERY_KEYWORDS) && !hasIntent(intent, INTENT_FOLLOW_UP_TREND_ANALYSIS)
             && !containsAny(message, ANALYSIS_KEYWORDS))) {
@@ -140,26 +200,60 @@ public class TaskTriggerRouter {
         return direct(TaskTriggerReason.DEFAULT_DIRECT_CHAT, "未命中 Agent 升级条件，保持普通对话");
     }
 
-    private TaskTriggerDecision direct(TaskTriggerReason reason, String summary) {
-        return TaskTriggerDecision.builder()
-            .route(TaskTriggerRoute.DIRECT_CHAT)
-            .taskType(TaskType.NONE)
-            .reasons(List.of(reason))
+    private PlatformTaskRoutingDecision direct(TaskTriggerReason reason, String summary) {
+        return PlatformTaskRoutingDecision.builder()
+            .route(PlatformConversationRouteType.DIRECT_CHAT)
+            .taskType(TaskType.NONE.name())
+            .triggerMode(PlatformRoutingTriggerMode.RULE_BASED)
+            .selectionMode(AgentSelectionMode.SERIAL)
+            .reasons(List.of(reason.name()))
+            .layerDecisions(Map.of(
+                "direct_chat_vs_task", PlatformConversationRouteType.DIRECT_CHAT.name(),
+                "task_type_routing", TaskType.NONE.name(),
+                "agent_selection", "NONE",
+                "workflow_selection", "DIRECT_CHAT"
+            ))
             .summary(summary)
             .build();
     }
 
-    private TaskTriggerDecision agent(TaskType taskType, List<TaskTriggerReason> reasons, String summary) {
+    private PlatformTaskRoutingDecision agent(TaskType taskType, List<TaskTriggerReason> reasons, String summary) {
         List<TaskTriggerReason> filteredReasons = reasons.stream()
             .filter(reason -> reason != null)
             .distinct()
             .toList();
-        return TaskTriggerDecision.builder()
-            .route(TaskTriggerRoute.DOCTOR_ASSISTANT_AGENT)
-            .taskType(taskType)
-            .reasons(filteredReasons)
+        return PlatformTaskRoutingDecision.builder()
+            .route(PlatformConversationRouteType.TASK)
+            .taskType(taskType.name())
+            .targetAgentId("doctor-assistant-agent")
+            .workflowCode(resolveWorkflowCode(taskType))
+            .triggerMode(PlatformRoutingTriggerMode.RULE_BASED)
+            .selectionMode(resolveSelectionMode(taskType))
+            .reasons(filteredReasons.stream().map(Enum::name).toList())
+            .layerDecisions(Map.of(
+                "direct_chat_vs_task", PlatformConversationRouteType.TASK.name(),
+                "task_type_routing", taskType.name(),
+                "agent_selection", "doctor-assistant-agent",
+                "workflow_selection", resolveWorkflowCode(taskType)
+            ))
             .summary(summary)
             .build();
+    }
+
+    private String resolveWorkflowCode(TaskType taskType) {
+        return switch (taskType) {
+            case RISK_STRATIFICATION_AND_ESCALATION -> "doctor-risk-review-workflow";
+            case NEXT_FOLLOW_UP_ACTION_RECOMMENDATION -> "doctor-next-follow-up-workflow";
+            case PATIENT_FOLLOW_UP_ANALYSIS -> "doctor-follow-up-analysis-workflow";
+            default -> "direct-chat-workflow";
+        };
+    }
+
+    private AgentSelectionMode resolveSelectionMode(TaskType taskType) {
+        if (taskType == TaskType.RISK_STRATIFICATION_AND_ESCALATION) {
+            return AgentSelectionMode.PARALLEL;
+        }
+        return AgentSelectionMode.SERIAL;
     }
 
     private TaskTriggerReason complexReason(boolean complexContextSignal) {
@@ -208,5 +302,49 @@ public class TaskTriggerRouter {
 
     private String normalize(String text) {
         return text == null ? "" : text.toLowerCase(Locale.ROOT).trim();
+    }
+
+    private PlatformRoutingContext toPlatformContext(TaskTriggerContext context) {
+        SessionContext sessionContext = context != null ? context.getSessionContext() : null;
+        return PlatformRoutingContext.builder()
+                .customerId(context != null ? context.getCustomerId() : null)
+                .userId(context != null ? context.getUserId() : null)
+                .groupId(context != null ? context.getGroupId() : null)
+                .tenantId(context != null ? context.getTenantId() : null)
+                .conversationId(context != null ? context.getConversationId() : null)
+                .message(context != null ? context.getMessage() : null)
+                .sessionSignals(Map.of(
+                        "sessionContext", sessionContext != null ? sessionContext : SessionContext.builder().build()))
+                .build();
+    }
+
+    private SessionContext sessionContextFrom(PlatformRoutingContext context) {
+        if (context == null || context.getSessionSignals() == null) {
+            return null;
+        }
+        Object sessionContext = context.getSessionSignals().get("sessionContext");
+        return sessionContext instanceof SessionContext value ? value : null;
+    }
+
+    private TaskType resolveTaskType(String taskType) {
+        if (taskType == null || taskType.isBlank()) {
+            return TaskType.NONE;
+        }
+        try {
+            return TaskType.valueOf(taskType);
+        } catch (IllegalArgumentException ignore) {
+            return TaskType.NONE;
+        }
+    }
+
+    private TaskTriggerReason resolveReason(String reason) {
+        if (reason == null || reason.isBlank()) {
+            return null;
+        }
+        try {
+            return TaskTriggerReason.valueOf(reason);
+        } catch (IllegalArgumentException ignore) {
+            return null;
+        }
     }
 }

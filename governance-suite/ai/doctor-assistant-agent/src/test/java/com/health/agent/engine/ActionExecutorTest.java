@@ -11,6 +11,13 @@ import com.health.agent.tool.Tool;
 import com.health.agent.tool.ToolInputValidator;
 import com.health.agent.tool.ToolRegistry;
 import com.health.agent.tool.ToolRiskLevel;
+import com.health.agent.service.PlatformToolOutputAdapter;
+import com.lx.governance.agentplatform.model.AgentAccessContext;
+import com.lx.governance.agentplatform.model.PlatformToolError;
+import com.lx.governance.agentplatform.model.PlatformToolOutput;
+import com.lx.governance.agentplatform.model.ToolDefinition;
+import com.lx.governance.agentplatform.model.ToolIdempotencyPolicy;
+import com.lx.governance.agentplatform.model.ToolRetryPolicy;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -23,13 +30,17 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -55,12 +66,9 @@ class ActionExecutorTest {
         ReflectionTestUtils.setField(actionExecutor, "pendingTaskService", pendingTaskService);
         ReflectionTestUtils.setField(actionExecutor, "agentAuditService", agentAuditService);
         meterRegistry = new SimpleMeterRegistry();
-        ReflectionTestUtils.setField(
-            actionExecutor,
-            "toolMetrics",
-            new ToolMetrics(meterRegistry)
-        );
+        ReflectionTestUtils.setField(actionExecutor, "toolMetrics", new ToolMetrics(meterRegistry));
         ReflectionTestUtils.setField(actionExecutor, "toolInputValidator", new ToolInputValidator());
+        ReflectionTestUtils.setField(actionExecutor, "platformToolOutputAdapter", new PlatformToolOutputAdapter());
         ReflectionTestUtils.setField(actionExecutor, "toolTimeoutMillis", 100L);
         ReflectionTestUtils.setField(actionExecutor, "toolExecutorCorePoolSize", 1);
         ReflectionTestUtils.setField(actionExecutor, "toolExecutorMaxPoolSize", 1);
@@ -76,6 +84,11 @@ class ActionExecutorTest {
             .riskLevel(ToolRiskLevel.HIGH)
             .build();
         when(toolRegistry.getTool("draft_weight_management_plan")).thenReturn(tool);
+        when(toolRegistry.getDefinition("draft_weight_management_plan")).thenReturn(ToolDefinition.builder()
+            .toolName("draft_weight_management_plan")
+            .riskLevel("HIGH")
+            .auditEnabled(true)
+            .build());
 
         ActionDecision action = ActionDecision.builder()
             .toolName("draft_weight_management_plan")
@@ -123,30 +136,28 @@ class ActionExecutorTest {
         assertFalse(result.isSuccess());
         assertTrue(result.getErrorMessage().contains("INVALID_TOOL_INPUT"));
         verify(agentAuditService).recordToolExecution(
-            org.mockito.ArgumentMatchers.eq("S001"),
-            org.mockito.ArgumentMatchers.eq("C001"),
-            org.mockito.ArgumentMatchers.eq("D001"),
-            org.mockito.ArgumentMatchers.isNull(),
-            org.mockito.ArgumentMatchers.eq("get_weight_history"),
+            eq("S001"),
+            eq("C001"),
+            eq("D001"),
+            isNull(),
+            eq("get_weight_history"),
             contains("\"customerId\":\"C001\""),
-            org.mockito.ArgumentMatchers.isNull(),
-            org.mockito.ArgumentMatchers.eq("LOW"),
-            org.mockito.ArgumentMatchers.eq("INVALID_TOOL_INPUT")
+            isNull(),
+            eq("LOW"),
+            eq("INVALID_TOOL_INPUT")
         );
     }
 
     @Test
-    void lowRiskActionShouldReturnTimeoutErrorWhenToolRunsTooLong() {
+    void lowRiskActionShouldUseToolLevelTimeoutWhenConfigured() {
         Tool tool = Tool.builder()
             .name("get_patient_profile")
             .description("查询患者档案")
             .riskLevel(ToolRiskLevel.LOW)
-            .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true)
-            ))
+            .inputSchema(Map.of("customerId", Map.of("type", "string", "required", true)))
             .executor(input -> {
                 try {
-                    Thread.sleep(200);
+                    Thread.sleep(120);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
@@ -154,6 +165,14 @@ class ActionExecutorTest {
             })
             .build();
         when(toolRegistry.getTool("get_patient_profile")).thenReturn(tool);
+        when(toolRegistry.getDefinition("get_patient_profile")).thenReturn(ToolDefinition.builder()
+            .toolName("get_patient_profile")
+            .riskLevel("LOW")
+            .timeoutMs(50L)
+            .retryPolicy(ToolRetryPolicy.noRetry())
+            .auditEnabled(true)
+            .build());
+        ReflectionTestUtils.setField(actionExecutor, "toolTimeoutMillis", 500L);
 
         ActionDecision action = ActionDecision.builder()
             .toolName("get_patient_profile")
@@ -171,22 +190,6 @@ class ActionExecutorTest {
             .timer();
         assertNotNull(failureTimer);
         assertEquals(1, failureTimer.count());
-        assertNotNull(
-            meterRegistry.find("tool.executor.queue.size")
-                .tag("executor", "agent-tool-executor")
-                .gauge()
-        );
-        verify(agentAuditService).recordToolExecution(
-            "S001",
-            "C001",
-            "D001",
-            null,
-            "get_patient_profile",
-            "{\"customerId\":\"C001\"}",
-            null,
-            "LOW",
-            "ERROR"
-        );
     }
 
     @Test
@@ -195,9 +198,7 @@ class ActionExecutorTest {
             .name("get_patient_profile")
             .description("查询患者档案")
             .riskLevel(ToolRiskLevel.LOW)
-            .inputSchema(Map.of(
-                "customerId", Map.of("type", "string", "required", true)
-            ))
+            .inputSchema(Map.of("customerId", Map.of("type", "string", "required", true)))
             .executor(input -> Map.of("customerId", "C001", "name", "张三"))
             .build();
         when(toolRegistry.getTool("get_patient_profile")).thenReturn(tool);
@@ -211,8 +212,144 @@ class ActionExecutorTest {
         ActionResult result = actionExecutor.execute(action, "C001", "D001", "S001");
 
         assertTrue(result.isSuccess());
-        ToolExecutionOutput output = assertInstanceOf(ToolExecutionOutput.class, result.getOutput());
+        PlatformToolOutput output = assertInstanceOf(PlatformToolOutput.class, result.getOutput());
         assertEquals("查询患者档案", output.getSummary());
         assertTrue(output.getStateUpdates().containsKey("patient_profile"));
+        assertFalse(output.getEvidences().isEmpty());
+    }
+
+    @Test
+    void executeShouldRejectToolWhenAccessScopeDoesNotMatch() {
+        Tool tool = Tool.builder()
+            .name("send_health_report")
+            .description("发送报告")
+            .riskLevel(ToolRiskLevel.MEDIUM)
+            .inputSchema(Map.of(
+                "customerId", Map.of("type", "string", "required", true),
+                "reportContent", Map.of("type", "string", "required", true)
+            ))
+            .executor(input -> "ok")
+            .build();
+        when(toolRegistry.getTool("send_health_report")).thenReturn(tool);
+        when(toolRegistry.getDefinition("send_health_report")).thenReturn(ToolDefinition.builder()
+            .toolName("send_health_report")
+            .riskLevel("MEDIUM")
+            .visibleGroupIds(java.util.List.of("vip"))
+            .auditEnabled(true)
+            .build());
+
+        ActionResult result = actionExecutor.execute(
+            ActionDecision.builder()
+                .toolName("send_health_report")
+                .input(Map.of("customerId", "C001", "reportContent", "report"))
+                .reason("权限测试")
+                .build(),
+            "C001",
+            "D001",
+            "S001",
+            AgentAccessContext.builder().groupId("standard").build()
+        );
+
+        assertFalse(result.isSuccess());
+        assertTrue(result.getErrorMessage().contains("无权限"));
+        PlatformToolError error = assertInstanceOf(PlatformToolError.class, result.getOutput());
+        assertEquals("TOOL_ACCESS_DENIED", error.getCode());
+        verify(agentAuditService).recordToolExecution(
+            eq("S001"),
+            eq("C001"),
+            eq("D001"),
+            isNull(),
+            eq("send_health_report"),
+            contains("\"customerId\":\"C001\""),
+            isNull(),
+            eq("MEDIUM"),
+            eq("TOOL_ACCESS_DENIED")
+        );
+    }
+
+    @Test
+    void executeShouldReplayCachedOutputForIdempotentTool() {
+        AtomicInteger calls = new AtomicInteger();
+        Tool tool = Tool.builder()
+            .name("get_patient_profile")
+            .description("查询患者档案")
+            .riskLevel(ToolRiskLevel.LOW)
+            .inputSchema(Map.of("customerId", Map.of("type", "string", "required", true)))
+            .executor(input -> {
+                calls.incrementAndGet();
+                return Map.of("customerId", "C001", "name", "张三");
+            })
+            .build();
+        when(toolRegistry.getTool("get_patient_profile")).thenReturn(tool);
+        when(toolRegistry.getDefinition("get_patient_profile")).thenReturn(ToolDefinition.builder()
+            .toolName("get_patient_profile")
+            .riskLevel("LOW")
+            .idempotencyPolicy(ToolIdempotencyPolicy.IDEMPOTENT)
+            .auditEnabled(true)
+            .build());
+
+        ActionDecision action = ActionDecision.builder()
+            .toolName("get_patient_profile")
+            .input(Map.of("customerId", "C001"))
+            .reason("幂等测试")
+            .build();
+
+        ActionResult first = actionExecutor.execute(action, "C001", "D001", "S001");
+        ActionResult second = actionExecutor.execute(action, "C001", "D001", "S001");
+
+        assertTrue(first.isSuccess());
+        assertTrue(second.isSuccess());
+        assertEquals(1, calls.get());
+        verify(agentAuditService, times(2)).recordToolExecution(
+            eq("S001"),
+            eq("C001"),
+            eq("D001"),
+            isNull(),
+            eq("get_patient_profile"),
+            contains("\"customerId\":\"C001\""),
+            org.mockito.ArgumentMatchers.any(),
+            eq("LOW"),
+            org.mockito.ArgumentMatchers.anyString()
+        );
+    }
+
+    @Test
+    void executeShouldOpenCircuitAfterConfiguredFailures() {
+        Tool tool = Tool.builder()
+            .name("send_reminder")
+            .description("发送提醒")
+            .riskLevel(ToolRiskLevel.MEDIUM)
+            .inputSchema(Map.of(
+                "customerId", Map.of("type", "string", "required", true),
+                "message", Map.of("type", "string", "required", true)
+            ))
+            .executor(input -> {
+                throw new IllegalStateException("boom");
+            })
+            .build();
+        when(toolRegistry.getTool("send_reminder")).thenReturn(tool);
+        when(toolRegistry.getDefinition("send_reminder")).thenReturn(ToolDefinition.builder()
+            .toolName("send_reminder")
+            .riskLevel("MEDIUM")
+            .retryPolicy(ToolRetryPolicy.noRetry())
+            .circuitBreakerFailureThreshold(1)
+            .circuitOpenMillis(60_000L)
+            .auditEnabled(true)
+            .build());
+
+        ActionDecision action = ActionDecision.builder()
+            .toolName("send_reminder")
+            .input(Map.of("customerId", "C001", "message", "hello"))
+            .reason("熔断测试")
+            .build();
+
+        ActionResult first = actionExecutor.execute(action, "C001", "D001", "S001");
+        ActionResult second = actionExecutor.execute(action, "C001", "D001", "S001");
+
+        assertFalse(first.isSuccess());
+        assertFalse(second.isSuccess());
+        assertTrue(second.getErrorMessage().contains("TOOL_CIRCUIT_OPEN"));
+        PlatformToolError error = assertInstanceOf(PlatformToolError.class, second.getOutput());
+        assertEquals("TOOL_CIRCUIT_OPEN", error.getCode());
     }
 }

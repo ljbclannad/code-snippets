@@ -1,5 +1,8 @@
 package com.lx.governance.aichat.dto;
 
+import com.lx.governance.agentplatform.model.WorkbenchPayload;
+import com.lx.governance.agentplatform.model.PlatformTraceContext;
+
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -50,6 +53,11 @@ public class DoctorAssistantTaskResponse {
     private String patientSafeReply;
 
     /**
+     * 面向患者的证据卡片。
+     */
+    private java.util.List<PatientVisibleEvidence> patientVisibleEvidence;
+
+    /**
      * 面向医生的结构化分析结果。
      */
     private StructuredTaskResult structuredResult;
@@ -58,6 +66,16 @@ public class DoctorAssistantTaskResponse {
      * 面向工作台和治理系统的内部载荷。
      */
     private DoctorWorkbenchPayload doctorWorkbenchPayload;
+
+    /**
+     * 面向平台统一工作台协议的共享载荷。
+     */
+    private WorkbenchPayload platformWorkbenchPayload;
+
+    /**
+     * 平台统一 trace 上下文。
+     */
+    private PlatformTraceContext traceContext;
 
     /**
      * 执行路径：真实 Agent 成功或模板回退。

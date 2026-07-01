@@ -14,20 +14,29 @@ import com.lx.governance.common.trace.Trace;
 import com.lx.governance.payment.domain.PaymentDto;
 import com.lx.governance.payment.domain.PreparePaymentRequest;
 import com.lx.governance.payment.service.PaymentAppService;
+import com.lx.governance.payment.service.PaymentTccAction;
 
 @RestController
 @RequestMapping("/")
 public class PaymentController {
 
     private final PaymentAppService appService;
+    private final PaymentTccAction paymentTccAction;
 
-    public PaymentController(PaymentAppService appService) {
+    public PaymentController(PaymentAppService appService, PaymentTccAction paymentTccAction) {
         this.appService = appService;
+        this.paymentTccAction = paymentTccAction;
     }
 
     @PostMapping("/prepare")
     public ApiResponse<PaymentDto> prepare(@RequestBody PreparePaymentRequest req) {
         return ApiResponse.ok(appService.prepare(req), Trace.getOrCreate());
+    }
+
+    @PostMapping("/tcc/try")
+    public ApiResponse<String> tryPrepareTcc(@RequestBody PreparePaymentRequest req) {
+        paymentTccAction.prepare(null, req.getOrderNo(), req.getUserId(), req.getAmountCents());
+        return ApiResponse.ok("OK", Trace.getOrCreate());
     }
 
     @PostMapping("/confirm/{orderNo}")

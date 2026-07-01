@@ -15,6 +15,7 @@ public class AiGroupMemoryReviewAuditEntity {
     private String resultStatus;
     private String reviewer;
     private String resolutionReason;
+    private String decisionReasonCode;
     private String remarks;
     private Long relatedFormalId;
     private LocalDateTime createTime;

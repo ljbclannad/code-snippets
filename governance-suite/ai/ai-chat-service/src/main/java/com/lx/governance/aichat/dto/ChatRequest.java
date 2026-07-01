@@ -12,11 +12,26 @@ public class ChatRequest {
     @NotBlank(message = "Group ID cannot be blank")
     private String groupId;
 
-    @NotBlank(message = "Customer ID cannot be blank")
     private String customerId;
+
+    private String userId;
+
+    private String tenantId;
 
     @NotBlank(message = "Message cannot be blank")
     private String message;
 
     private String conversationId;
+
+    /**
+     * 客户端幂等请求 ID。
+     * 同一条消息因网络重试重复发送时应保持不变。
+     */
+    private String requestId;
+
+    /**
+     * 客户端消息时间戳（毫秒）。
+     * 用于上下文乱序保护；为空时回退到服务端接收时间。
+     */
+    private Long messageTimestamp;
 }

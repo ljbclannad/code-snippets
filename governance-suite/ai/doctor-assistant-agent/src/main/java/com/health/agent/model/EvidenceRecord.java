@@ -1,5 +1,7 @@
 package com.health.agent.model;
 
+import com.lx.governance.agentplatform.model.PlatformContextVisibility;
+
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -16,5 +18,7 @@ public class EvidenceRecord {
     private String toolName;
     private String summary;
     private Object payload;
+    @Builder.Default
+    private PlatformContextVisibility visibility = PlatformContextVisibility.AGENT_INTERNAL;
     private LocalDateTime recordedAt;
 }

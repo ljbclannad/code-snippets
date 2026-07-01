@@ -88,6 +88,87 @@ CREATE TABLE agent_execution_log (
 ) COMMENT='Agent执行日志表';
 
 -- =============================================
+-- 3.1 Agent 运行策略快照表
+-- =============================================
+CREATE TABLE agent_run_strategy_snapshot (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键',
+    run_id VARCHAR(64) NOT NULL COMMENT '平台runId/会话ID',
+    session_id VARCHAR(64) COMMENT 'Agent会话ID',
+    scene VARCHAR(64) NOT NULL COMMENT '场景标识',
+    task_type VARCHAR(64) COMMENT '任务类型',
+    prompt_version VARCHAR(64) COMMENT 'Prompt版本',
+    selector_version VARCHAR(64) COMMENT 'Selector版本',
+    selected_agent_ids_json JSON COMMENT '选中的子Agent列表',
+    selection_mode VARCHAR(16) COMMENT '选择模式：SERIAL/PARALLEL',
+    tool_catalog_version VARCHAR(64) COMMENT '工具目录版本',
+    tool_sequence_json JSON COMMENT '工具调用顺序',
+    memory_profile_json JSON COMMENT '记忆摘要',
+    memory_retrieval_count INT COMMENT '记忆召回条数',
+    memory_rerank_applied TINYINT(1) COMMENT '是否应用rerank',
+    degradation_level VARCHAR(16) COMMENT '降级等级',
+    parallel_enabled TINYINT(1) COMMENT '是否启用并行',
+    fallback_allowed TINYINT(1) COMMENT '是否允许回退',
+    timeout_millis INT COMMENT '超时时间(ms)',
+    patient_visible_only TINYINT(1) COMMENT '是否仅患者可见安全回复',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    UNIQUE KEY uk_run_id (run_id),
+    INDEX idx_scene_task_created (scene, task_type, created_at),
+    INDEX idx_created_at (created_at)
+) COMMENT='Agent运行策略快照表';
+
+-- =============================================
+-- 3.2 Agent 运行结果表
+-- =============================================
+CREATE TABLE agent_run_outcome (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键',
+    run_id VARCHAR(64) NOT NULL COMMENT '平台runId/会话ID',
+    session_id VARCHAR(64) COMMENT 'Agent会话ID',
+    scene VARCHAR(64) NOT NULL COMMENT '场景标识',
+    task_type VARCHAR(64) COMMENT '任务类型',
+    customer_id VARCHAR(64) COMMENT '患者ID',
+    doctor_id VARCHAR(64) COMMENT '医生ID',
+    final_status VARCHAR(32) NOT NULL COMMENT '最终运行状态',
+    outcome_label VARCHAR(64) NOT NULL COMMENT '结构化结果标签',
+    fallback_used TINYINT(1) DEFAULT 0 COMMENT '是否使用回退',
+    manual_review_required TINYINT(1) DEFAULT 0 COMMENT '是否要求人工复核',
+    manual_override TINYINT(1) DEFAULT 0 COMMENT '是否人工覆盖',
+    doctor_accepted TINYINT(1) COMMENT '医生是否接受',
+    doctor_rejected TINYINT(1) COMMENT '医生是否拒绝',
+    evidence_sufficient TINYINT(1) COMMENT '证据是否充分',
+    tool_error_count INT DEFAULT 0 COMMENT '工具错误次数',
+    retry_count INT DEFAULT 0 COMMENT '重试次数',
+    duration_ms BIGINT COMMENT '执行耗时(ms)',
+    error_code VARCHAR(64) COMMENT '错误码',
+    error_message VARCHAR(512) COMMENT '错误信息',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    UNIQUE KEY uk_run_id (run_id),
+    INDEX idx_scene_task_created (scene, task_type, created_at),
+    INDEX idx_outcome_label_created (outcome_label, created_at)
+) COMMENT='Agent运行结果表';
+
+-- =============================================
+-- 3.3 Agent 结果归因表
+-- =============================================
+CREATE TABLE agent_outcome_attribution (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT COMMENT '主键',
+    run_id VARCHAR(64) NOT NULL COMMENT '平台runId/会话ID',
+    session_id VARCHAR(64) COMMENT 'Agent会话ID',
+    scene VARCHAR(64) NOT NULL COMMENT '场景标识',
+    task_type VARCHAR(64) COMMENT '任务类型',
+    primary_cause VARCHAR(64) NOT NULL COMMENT '主归因原因',
+    secondary_causes_json JSON COMMENT '次级原因列表',
+    confidence DECIMAL(5,4) COMMENT '归因置信度',
+    evidence_summary_json JSON COMMENT '证据摘要',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    UNIQUE KEY uk_attribution_run_id (run_id),
+    INDEX idx_attribution_scene_task_created (scene, task_type, created_at),
+    INDEX idx_primary_cause_created (primary_cause, created_at)
+) COMMENT='Agent结果归因表';
+
+-- =============================================
 -- 4. 患者档案表（示例数据）
 -- =============================================
 CREATE TABLE patient_profile (

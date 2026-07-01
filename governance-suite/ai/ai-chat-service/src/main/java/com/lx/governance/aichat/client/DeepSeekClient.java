@@ -12,6 +12,7 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.StreamingChatModel;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -27,6 +28,9 @@ import com.lx.governance.aichat.dto.UserProfileDTO;
 import com.lx.governance.aichat.exception.AiServiceException;
 import com.lx.governance.aichat.monitor.TokenMonitor;
 import com.lx.governance.aichat.monitor.TokenUsageMetrics;
+import com.lx.governance.aichat.stream.MarkdownStreamNormalizer;
+import com.lx.governance.agentplatform.model.PlatformCostScope;
+import com.lx.governance.agentplatform.runtime.PlatformMetricsService;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -46,8 +50,21 @@ public class DeepSeekClient {
     private final TokenMonitor tokenMonitor;
     private final ContextBudgetProperties properties;
 
+    private PlatformMetricsService platformMetricsService;
+
     @Value("${spring.ai.openai.chat.options.model:deepseek-chat}")
     private String model;
+
+    @Value("${ai-chat.metrics.cost.prompt-price-per-1k-tokens:0}")
+    private double promptPricePer1kTokens;
+
+    @Value("${ai-chat.metrics.cost.completion-price-per-1k-tokens:0}")
+    private double completionPricePer1kTokens;
+
+    @Autowired(required = false)
+    void setPlatformMetricsService(PlatformMetricsService platformMetricsService) {
+        this.platformMetricsService = platformMetricsService;
+    }
 
     /**
      * Send chat request to DeepSeek API
@@ -101,6 +118,7 @@ public class DeepSeekClient {
 
             // Record token usage with monitoring logic
             recordTokenUsage(usage, duration);
+            recordPlatformTokenCost(usage);
 
             // Convert to the internal unified result format
             return buildChatGenerationResult(content, usage, request.getConversationId());
@@ -158,6 +176,7 @@ public class DeepSeekClient {
                     usage.getTotalTokens());
 
             recordTokenUsage(usage, duration);
+            recordPlatformTokenCost(usage);
             return buildChatGenerationResult(content, usage, request.getConversationId());
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - startTime;
@@ -205,6 +224,7 @@ public class DeepSeekClient {
 
                 // 发送开始事件
                 String conversationId = request.getConversationId();
+                MarkdownStreamNormalizer markdownNormalizer = new MarkdownStreamNormalizer();
 
                 // Call StreamingChatModel
                 return Flux.concat(
@@ -212,8 +232,21 @@ public class DeepSeekClient {
                         streamingChatModel.stream(prompt)
                                 .map(response -> {
                                     String content = response.getResult().getOutput().getContent();
-                                    return StreamEvent.content(content);
+                                    return content == null ? "" : content;
                                 })
+                                .<StreamEvent>handle((content, sink) -> {
+                                    String normalized = markdownNormalizer.onChunk(content);
+                                    if (!normalized.isEmpty()) {
+                                        sink.next(StreamEvent.content(normalized));
+                                    }
+                                })
+                                .concatWith(Flux.defer(() -> {
+                                    String finalized = markdownNormalizer.finish();
+                                    if (finalized.isEmpty()) {
+                                        return Flux.<StreamEvent>empty();
+                                    }
+                                    return Flux.just(StreamEvent.content(finalized));
+                                }))
                                 .doOnComplete(() -> {
                                     long duration = System.currentTimeMillis() - startTime;
                                     log.info("DeepSeek API streaming completed in {}ms", duration);
@@ -268,14 +301,28 @@ public class DeepSeekClient {
                                 .build());
 
                 String conversationId = request.getConversationId();
+                MarkdownStreamNormalizer markdownNormalizer = new MarkdownStreamNormalizer();
 
                 return Flux.concat(
                         Flux.just(StreamEvent.start(conversationId)),
                         streamingChatModel.stream(prompt)
                                 .map(response -> {
                                     String content = response.getResult().getOutput().getContent();
-                                    return StreamEvent.content(content);
+                                    return content == null ? "" : content;
                                 })
+                                .<StreamEvent>handle((content, sink) -> {
+                                    String normalized = markdownNormalizer.onChunk(content);
+                                    if (!normalized.isEmpty()) {
+                                        sink.next(StreamEvent.content(normalized));
+                                    }
+                                })
+                                .concatWith(Flux.defer(() -> {
+                                    String finalized = markdownNormalizer.finish();
+                                    if (finalized.isEmpty()) {
+                                        return Flux.<StreamEvent>empty();
+                                    }
+                                    return Flux.just(StreamEvent.content(finalized));
+                                }))
                                 .doOnComplete(() -> {
                                     long duration = System.currentTimeMillis() - startTime;
                                     log.info("DeepSeek API streaming completed in {}ms", duration);
@@ -356,6 +403,28 @@ public class DeepSeekClient {
 
         // 记录到监控系统
         tokenMonitor.recordTokenUsage(metrics);
+    }
+
+    private void recordPlatformTokenCost(org.springframework.ai.chat.metadata.Usage usage) {
+        if (usage == null || platformMetricsService == null) {
+            return;
+        }
+        int promptTokens = usage.getPromptTokens() != null ? usage.getPromptTokens().intValue() : 0;
+        int completionTokens = usage.getGenerationTokens() != null ? usage.getGenerationTokens().intValue() : 0;
+        int totalTokens = usage.getTotalTokens() != null ? usage.getTotalTokens().intValue() : 0;
+        double estimatedCost = estimateCost(promptTokens, completionTokens);
+        platformMetricsService.recordTokenCost(
+                PlatformCostScope.DIRECT_CHAT,
+                "ai-chat-direct",
+                promptTokens,
+                completionTokens,
+                totalTokens,
+                estimatedCost);
+    }
+
+    private double estimateCost(int promptTokens, int completionTokens) {
+        return (promptTokens / 1000.0D) * Math.max(0D, promptPricePer1kTokens)
+                + (completionTokens / 1000.0D) * Math.max(0D, completionPricePer1kTokens);
     }
 
     private boolean isTimeoutException(Throwable throwable) {

@@ -45,4 +45,4 @@ mvn -f pom.xml spring-boot:run
 ## 重要补充文档
 
 - [API 使用指南](./docs/api/API_USAGE_GUIDE.md)
-- [患者任务升级与真实 Agent 增强 TODO](./docs/PATIENT_TASK_AGENT_EXECUTION_TODO.md)
+- 患者任务升级与 Agent 增强事项当前已收敛在仓库级平台/运行时设计文档中，当前目录下未单独维护 `PATIENT_TASK_AGENT_EXECUTION_TODO.md`
