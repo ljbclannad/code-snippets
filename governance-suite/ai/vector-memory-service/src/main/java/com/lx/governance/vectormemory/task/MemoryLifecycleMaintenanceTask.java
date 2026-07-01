@@ -4,11 +4,11 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import com.lx.governance.vectormemory.config.MemoryLifecycleProperties;
-import com.lx.governance.vectormemory.service.MemoryCompactionService;
-import com.lx.governance.vectormemory.service.MemoryCompactionService.CompactionBatchResult;
-import com.lx.governance.vectormemory.service.MemoryDecayService;
-import com.lx.governance.vectormemory.service.MemoryDecayService.DecayBatchResult;
-import com.lx.governance.vectormemory.service.MemoryLifecycleMetricsService;
+import com.lx.governance.vectormemory.domain.lifecycle.MemoryCompactionService;
+import com.lx.governance.vectormemory.domain.lifecycle.MemoryCompactionService.CompactionBatchResult;
+import com.lx.governance.vectormemory.domain.lifecycle.MemoryDecayService;
+import com.lx.governance.vectormemory.domain.lifecycle.MemoryDecayService.DecayBatchResult;
+import com.lx.governance.vectormemory.support.observability.MemoryLifecycleMetricsService;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

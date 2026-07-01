@@ -3,7 +3,7 @@ package com.lx.governance.vectormemory.controller;
 import com.lx.governance.common.api.ApiResponse;
 import com.lx.governance.common.trace.Trace;
 import com.lx.governance.vectormemory.domain.DeadLetterMessage;
-import com.lx.governance.vectormemory.service.DeadLetterService;
+import com.lx.governance.vectormemory.application.governance.DeadLetterService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;

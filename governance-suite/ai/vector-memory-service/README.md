@@ -4,7 +4,7 @@
 
 - 长期记忆提取与候选态治理
 - lifecycle 写入决策、衰减、归档、压缩治理
-- Redis / Milvus / MySQL 混合检索
+- Redis / Milvus / MySQL 三路召回
 - 结果去重与语义 rerank
 - 候选态转正、冲突审核、治理回放与审计留痕
 
@@ -20,8 +20,42 @@
 对应入口见：
 
 - 监听器：[VectorMemoryMessageListener.java](src/main/java/com/lx/governance/vectormemory/listener/VectorMemoryMessageListener.java)
-- 提取服务：[MemoryExtractionService.java](src/main/java/com/lx/governance/vectormemory/service/MemoryExtractionService.java)
-- 检索服务：[MemoryRetrievalService.java](src/main/java/com/lx/governance/vectormemory/service/MemoryRetrievalService.java)
+- 提取应用服务：[MemoryExtractionService.java](src/main/java/com/lx/governance/vectormemory/application/ingestion/MemoryExtractionService.java)
+- 检索应用服务：[MemoryRetrievalService.java](src/main/java/com/lx/governance/vectormemory/application/retrieval/MemoryRetrievalService.java)
+
+## 当前分层
+
+本模块已从“单个 `service` 包堆叠全部能力”调整为按职责分层：
+
+```text
+com.lx.governance.vectormemory
+├── application
+│   ├── governance   # 审核、治理、死信等应用编排入口
+│   ├── ingestion    # 记忆提取应用入口
+│   └── retrieval    # 长期记忆检索应用入口
+├── domain
+│   ├── candidate    # 候选态、冲突、合并、转正规则
+│   ├── lifecycle    # retention / decay / compaction / ingestion policy
+│   └── retrieval    # 检索过滤、去重、rerank 等领域策略
+├── integration
+│   ├── ai           # DeepSeek / embedding / BGE rerank 适配
+│   └── storage      # Redis / Milvus 等存储适配
+├── support
+│   └── observability # 审计与指标
+├── controller
+├── listener
+├── mapper
+├── dto
+├── entity
+└── task
+```
+
+分层约束：
+
+- `application` 负责流程编排，不承载底层存储细节
+- `domain` 放业务规则、策略和领域对象
+- `integration` 负责外部依赖适配
+- `support` 放审计、指标等横切能力
 
 ## 核心流程
 
@@ -47,9 +81,10 @@
 
 关键类：
 
-- [DeepSeekService.java](src/main/java/com/lx/governance/vectormemory/service/DeepSeekService.java)
-- [MemoryLifecycleIngestionPipeline.java](src/main/java/com/lx/governance/vectormemory/service/MemoryLifecycleIngestionPipeline.java)
-- [CandidateMemoryService.java](src/main/java/com/lx/governance/vectormemory/service/CandidateMemoryService.java)
+- [MemoryExtractionService.java](src/main/java/com/lx/governance/vectormemory/application/ingestion/MemoryExtractionService.java)
+- [DeepSeekService.java](src/main/java/com/lx/governance/vectormemory/integration/ai/DeepSeekService.java)
+- [MemoryLifecycleIngestionPipeline.java](src/main/java/com/lx/governance/vectormemory/domain/lifecycle/MemoryLifecycleIngestionPipeline.java)
+- [CandidateMemoryService.java](src/main/java/com/lx/governance/vectormemory/domain/candidate/CandidateMemoryService.java)
 
 ### 2. 长期记忆检索
 
@@ -59,7 +94,7 @@
 -> `vector.memory.request`
 -> `VectorMemoryMessageListener`
 -> `MemoryRetrievalService`
--> Redis / Milvus / Keyword
+-> Redis / Milvus / MySQL Keyword
 -> 去重
 -> rerank
 
@@ -73,9 +108,10 @@
 
 关键类：
 
-- [MemoryRetrievalService.java](src/main/java/com/lx/governance/vectormemory/service/MemoryRetrievalService.java)
-- [MemoryDeduplicationService.java](src/main/java/com/lx/governance/vectormemory/service/MemoryDeduplicationService.java)
-- [MemoryRerankService.java](src/main/java/com/lx/governance/vectormemory/service/MemoryRerankService.java)
+- [MemoryRetrievalService.java](src/main/java/com/lx/governance/vectormemory/application/retrieval/MemoryRetrievalService.java)
+- [MemoryDeduplicationService.java](src/main/java/com/lx/governance/vectormemory/domain/retrieval/MemoryDeduplicationService.java)
+- [MemoryRerankService.java](src/main/java/com/lx/governance/vectormemory/domain/retrieval/MemoryRerankService.java)
+- [StructuredMemoryQueryCompiler.java](src/main/java/com/lx/governance/vectormemory/domain/retrieval/StructuredMemoryQueryCompiler.java)
 
 ## 数据分层
 
@@ -102,7 +138,7 @@
 
 相关类：
 
-- [VectorStoreService.java](src/main/java/com/lx/governance/vectormemory/service/VectorStoreService.java)
+- [VectorStoreService.java](src/main/java/com/lx/governance/vectormemory/integration/storage/VectorStoreService.java)
 - [MilvusVectorStoreConfig.java](src/main/java/com/lx/governance/vectormemory/config/MilvusVectorStoreConfig.java)
 
 ### Redis
@@ -114,7 +150,7 @@
 
 相关类：
 
-- [RedisMemoryIndexService.java](src/main/java/com/lx/governance/vectormemory/service/RedisMemoryIndexService.java)
+- [RedisMemoryIndexService.java](src/main/java/com/lx/governance/vectormemory/integration/storage/RedisMemoryIndexService.java)
 
 ## 当前实现重点
 
@@ -131,9 +167,9 @@
 
 相关类：
 
-- [MemoryLifecycleIngestionPipeline.java](src/main/java/com/lx/governance/vectormemory/service/MemoryLifecycleIngestionPipeline.java)
-- [MemoryWorthinessEvaluator.java](src/main/java/com/lx/governance/vectormemory/service/MemoryWorthinessEvaluator.java)
-- [MemoryNoiseFilter.java](src/main/java/com/lx/governance/vectormemory/service/MemoryNoiseFilter.java)
+- [MemoryLifecycleIngestionPipeline.java](src/main/java/com/lx/governance/vectormemory/domain/lifecycle/MemoryLifecycleIngestionPipeline.java)
+- [MemoryWorthinessEvaluator.java](src/main/java/com/lx/governance/vectormemory/domain/lifecycle/MemoryWorthinessEvaluator.java)
+- [MemoryNoiseFilter.java](src/main/java/com/lx/governance/vectormemory/domain/lifecycle/MemoryNoiseFilter.java)
 - [MemoryLifecycleDecision.java](src/main/java/com/lx/governance/vectormemory/dto/MemoryLifecycleDecision.java)
 
 ### 候选态治理
@@ -148,8 +184,10 @@
 
 相关类：
 
-- [CandidateMemoryService.java](src/main/java/com/lx/governance/vectormemory/service/CandidateMemoryService.java)
-- [CandidateMemoryReviewService.java](src/main/java/com/lx/governance/vectormemory/service/CandidateMemoryReviewService.java)
+- [CandidateMemoryService.java](src/main/java/com/lx/governance/vectormemory/domain/candidate/CandidateMemoryService.java)
+- [CandidateMemoryReviewService.java](src/main/java/com/lx/governance/vectormemory/application/governance/CandidateMemoryReviewService.java)
+- [MemoryConflictResolver.java](src/main/java/com/lx/governance/vectormemory/domain/candidate/MemoryConflictResolver.java)
+- [MemoryConflictResolution.java](src/main/java/com/lx/governance/vectormemory/domain/candidate/MemoryConflictResolution.java)
 
 ### 类型归一化
 
@@ -161,7 +199,7 @@
 
 相关类：
 
-- [MemoryTypeNormalizer.java](src/main/java/com/lx/governance/vectormemory/service/MemoryTypeNormalizer.java)
+- [MemoryTypeNormalizer.java](src/main/java/com/lx/governance/vectormemory/domain/lifecycle/MemoryTypeNormalizer.java)
 - [MemoryType.java](src/main/java/com/lx/governance/vectormemory/enums/MemoryType.java)
 
 ### Embedding 复用
@@ -171,23 +209,12 @@
 - 去重阶段预生成候选内容 embedding
 - rerank 阶段优先复用去重阶段产出的 embedding cache
 
-### 冲突治理与合并策略
-
-当前已补齐统一的冲突关系和 resolution 策略：
-
-- 完全等价：吸收现有正式记忆
-- 偏好冲突：按最新值更新正式记忆
-- 事实共存：保留版本和来源
-- 症状类：按时间窗口追加并设置失效时间
-- 无法自动决策：进入人工审核
-
 相关类：
 
-- [MemoryConflictResolver.java](src/main/java/com/lx/governance/vectormemory/service/MemoryConflictResolver.java)
-- [MemoryConflictResolution.java](src/main/java/com/lx/governance/vectormemory/service/MemoryConflictResolution.java)
-- [MemoryMergeService.java](src/main/java/com/lx/governance/vectormemory/service/MemoryMergeService.java)
+- [EmbeddingService.java](src/main/java/com/lx/governance/vectormemory/integration/ai/EmbeddingService.java)
+- [MemoryDeduplicationService.java](src/main/java/com/lx/governance/vectormemory/domain/retrieval/MemoryDeduplicationService.java)
 
-### Retention / Decay / Archive
+### Retention / Decay / Archive / Compaction
 
 正式记忆已支持生命周期维护：
 
@@ -195,26 +222,16 @@
 - 扫描低价值、过期、已归档记忆
 - 支持仅降权的 `DECAYING`
 - 支持归档后不参与默认召回
+- 支持高频证据压缩成摘要记忆
 - 删除时同步清理 MySQL / Milvus / Redis
 
 相关类：
 
-- [MemoryRetentionPolicy.java](src/main/java/com/lx/governance/vectormemory/service/MemoryRetentionPolicy.java)
-- [MemoryDecayService.java](src/main/java/com/lx/governance/vectormemory/service/MemoryDecayService.java)
+- [MemoryRetentionPolicy.java](src/main/java/com/lx/governance/vectormemory/domain/lifecycle/MemoryRetentionPolicy.java)
+- [MemoryDecayService.java](src/main/java/com/lx/governance/vectormemory/domain/lifecycle/MemoryDecayService.java)
+- [MemoryCompactionService.java](src/main/java/com/lx/governance/vectormemory/domain/lifecycle/MemoryCompactionService.java)
+- [ConfirmedMemoryMaintenanceService.java](src/main/java/com/lx/governance/vectormemory/domain/lifecycle/ConfirmedMemoryMaintenanceService.java)
 - [MemoryLifecycleMaintenanceTask.java](src/main/java/com/lx/governance/vectormemory/task/MemoryLifecycleMaintenanceTask.java)
-
-### Summary Memory / Compaction
-
-当前已支持把高频重复证据压缩成摘要记忆：
-
-- 区分 `EVIDENCE` 与 `SUMMARY`
-- 对高频重复候选形成 summary memory
-- 检索时优先返回摘要，同时保留证据可回溯
-
-相关类：
-
-- [MemoryCompactionService.java](src/main/java/com/lx/governance/vectormemory/service/MemoryCompactionService.java)
-- [MemoryRetrievalService.java](src/main/java/com/lx/governance/vectormemory/service/MemoryRetrievalService.java)
 
 ### 可观测性与审计
 
@@ -227,22 +244,8 @@
 
 相关类：
 
-- [MemoryLifecycleMetricsService.java](src/main/java/com/lx/governance/vectormemory/service/MemoryLifecycleMetricsService.java)
-- [MemoryLifecycleAuditService.java](src/main/java/com/lx/governance/vectormemory/service/MemoryLifecycleAuditService.java)
-
-## 长期记忆更新
-
-正式长期记忆更新不再简单复用新增接口，而是走专门的维护服务：
-
-- [ConfirmedMemoryMaintenanceService.java](src/main/java/com/lx/governance/vectormemory/service/ConfirmedMemoryMaintenanceService.java)
-
-当前策略：
-
-1. 先写入新向量
-2. 再更新 MySQL 的 `embedding_id`
-3. 最后尽力删除旧向量
-
-这是一个基础版一致性方案，后续仍可继续补充 MySQL / Milvus 的补偿任务表或重试机制。
+- [MemoryLifecycleMetricsService.java](src/main/java/com/lx/governance/vectormemory/support/observability/MemoryLifecycleMetricsService.java)
+- [MemoryLifecycleAuditService.java](src/main/java/com/lx/governance/vectormemory/support/observability/MemoryLifecycleAuditService.java)
 
 ## Lifecycle 状态模型
 
@@ -258,150 +261,3 @@
 - `CONFIRMED`
 - `DECAYING`
 - `ARCHIVED`
-- `DELETED`（逻辑删除后通过事件体现）
-
-记忆表现形态：
-
-- `EVIDENCE`
-- `SUMMARY`
-
-保留策略：
-
-- `LONG_TERM`
-- `LATEST_WINS`
-- `TIME_WINDOW`
-
-## 治理接口
-
-### 候选记忆审核接口
-
-基础路径：`/api/candidate-memory`
-
-- `POST /{id}/confirm`
-  - 确认候选记忆，可触发转正、吸收、偏好更新或版本追加
-- `POST /{id}/reject`
-  - 拒绝候选记忆
-- `GET /{id}/conflicts`
-  - 查询候选关联冲突
-- `GET /{id}/audits`
-  - 查询候选审核审计
-- `GET /{id}/comparison`
-  - 查询候选对比视图
-
-请求体：
-
-```json
-{
-  "reviewer": "doctor-a",
-  "resolutionReason": "manual_confirm",
-  "remarks": "reviewed by doctor"
-}
-```
-
-控制器：
-
-- [CandidateMemoryReviewController.java](src/main/java/com/lx/governance/vectormemory/controller/CandidateMemoryReviewController.java)
-
-### Lifecycle 治理接口
-
-基础路径：`/api/memory-lifecycle`
-
-- `GET /replay`
-  - 按 `groupId + customerId` 回放 lifecycle 决策事件
-- `GET /candidates`
-  - 查询候选列表，可按 `status` 过滤
-- `GET /candidates/{id}`
-  - 查询候选详情，包含 conflicts / audits / lifecycle events / relatedFormalMemory
-- `GET /memories`
-  - 查询正式记忆列表，可按 `lifecycleStatus` 过滤
-- `GET /memories/{id}/history`
-  - 查询单条正式记忆生命周期历史
-- `POST /memories/{id}/archive`
-  - 人工归档正式记忆
-- `POST /memories/{id}/restore`
-  - 恢复已归档正式记忆到默认召回
-- `POST /memories/{id}/delete`
-  - 人工删除正式记忆，并清理向量与 Redis 索引
-- `POST /memories/merge`
-  - 合并两条同 scope 正式记忆，source 归档到 target
-
-`GET /replay` 查询参数：
-
-- `groupId`
-- `customerId`
-- `memoryType`：可选
-- `limit`：可选，默认 `100`
-
-治理动作请求体：
-
-```json
-{
-  "reviewer": "doctor-a",
-  "reasonCode": "manual_archive",
-  "remarks": "no longer valid"
-}
-```
-
-合并请求体：
-
-```json
-{
-  "sourceMemoryId": 7,
-  "targetMemoryId": 8,
-  "reviewer": "doctor-a",
-  "reasonCode": "manual_merge",
-  "remarks": "merge duplicate memories"
-}
-```
-
-控制器：
-
-- [MemoryLifecycleGovernanceController.java](src/main/java/com/lx/governance/vectormemory/controller/MemoryLifecycleGovernanceController.java)
-
-说明：
-
-- 当前模块尚未接入 Swagger / SpringDoc
-- 接口统一返回 `ApiResponse<T>`，成功结构为：
-
-```json
-{
-  "success": true,
-  "code": "OK",
-  "message": "success",
-  "traceId": "trace-id",
-  "data": {}
-}
-```
-
-## 配置重点
-
-配置文件：
-
-- [application.yml](src/main/resources/application.yml)
-- [Memory Lifecycle](MEMORY-LIFECYCLE.md)
-
-重点配置项：
-
-- `spring.ai.openai.*`：DeepSeek 兼容模型
-- `spring.ai.dashscope.*`：Embedding 模型
-- `memory.retrieval.*`：混合召回、权重、rerank、语义去重
-- `memory.lifecycle.*`：候选阈值、衰减、归档、压缩、治理任务
-- `milvus.*`：Milvus 连接与 collection 管理
-
-## 测试与验证
-
-集成测试说明见：
-
-- [集成测试 README](src/test/java/com/lx/governance/vectormemory/integration/README.md)
-
-模块编译验证：
-
-```bash
-mvn -pl ai/vector-memory-service -am -DskipTests compile
-```
-
-Lifecycle 相关定向验证：
-
-```bash
-mvn -pl ai/vector-memory-service -am -Dtest=MemoryLifecycleGovernanceServiceTest,CandidateMemoryServiceTest,MemoryLifecycleIngestionPipelineTest,MemoryCompactionServiceTest,MemoryDecayServiceTest,MemoryRetrievalServiceTest -Dsurefire.failIfNoSpecifiedTests=false test
-```

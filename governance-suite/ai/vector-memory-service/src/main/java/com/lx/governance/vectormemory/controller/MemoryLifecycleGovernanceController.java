@@ -19,7 +19,7 @@ import com.lx.governance.vectormemory.dto.MemoryLifecycleHistoryView;
 import com.lx.governance.vectormemory.dto.MemoryLifecycleReplayView;
 import com.lx.governance.vectormemory.entity.AiGroupMemoryCandidateEntity;
 import com.lx.governance.vectormemory.entity.AiGroupMemoryEntity;
-import com.lx.governance.vectormemory.service.MemoryLifecycleGovernanceService;
+import com.lx.governance.vectormemory.application.governance.MemoryLifecycleGovernanceService;
 
 import lombok.RequiredArgsConstructor;
 
