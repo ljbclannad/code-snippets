@@ -13,6 +13,7 @@ mysql -h127.0.0.1 -P3306 -uroot -proot < distributed/init-databases.sql
 - **表结构**:
   - `t_order_0`, `t_order_1` - 订单表（分片）
   - `t_outbox` - Outbox 消息表
+  - `t_order_tcc_log` - 订单TCC事务日志
   - `t_payment_event_consume` - 支付事件消费记录
   - `t_seckill_order_guard` - 秒杀订单防重表
   - `t_appointment_order` - 挂号订单表
@@ -28,6 +29,7 @@ mysql -h127.0.0.1 -P3306 -uroot -proot < distributed/init-databases.sql
 - **使用服务**: payment-service
 - **表结构**:
   - `t_payment_0`, `t_payment_1` - 支付表（分片）
+  - `t_payment_tcc_log` - 支付TCC事务日志
   - `t_id_segment` - ID段分配表
   - `undo_log` - Seata 回滚日志
 
@@ -35,6 +37,7 @@ mysql -h127.0.0.1 -P3306 -uroot -proot < distributed/init-databases.sql
 - **使用服务**: inventory-service
 - **表结构**:
   - `t_stock` - 库存表
+  - `t_inventory_tcc_log` - 库存TCC事务日志
   - `undo_log` - Seata 回滚日志
 
 ### user_db

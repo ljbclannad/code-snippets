@@ -23,7 +23,7 @@ USE `order_db`;
 CREATE TABLE IF NOT EXISTS `t_order_0` (
   `id` BIGINT NOT NULL COMMENT '主键ID',
   `order_no` VARCHAR(64) NOT NULL COMMENT '订单号',
-  `user_id` BIGINT NOT NULL COMMENT '用户ID',
+  `customer_id` BIGINT NOT NULL COMMENT '用户ID',
   `product_id` VARCHAR(64) NOT NULL COMMENT '商品ID',
   `quantity` INT NOT NULL COMMENT '数量',
   `amount_cents` BIGINT NOT NULL COMMENT '金额(分)',
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS `t_order_0` (
   `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_order_no` (`order_no`),
-  KEY `idx_user_id` (`user_id`),
+  KEY `idx_customer_id` (`customer_id`),
   KEY `idx_status` (`status`),
   KEY `idx_created_at` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='订单表 - 分片0';
@@ -52,6 +52,17 @@ CREATE TABLE IF NOT EXISTS `t_outbox` (
   PRIMARY KEY (`id`),
   KEY `idx_status_created` (`status`, `created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Outbox 消息表';
+
+CREATE TABLE IF NOT EXISTS `t_order_tcc_log` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  `order_no` VARCHAR(64) NOT NULL COMMENT '订单号',
+  `xid` VARCHAR(128) NOT NULL COMMENT 'Seata 全局事务ID',
+  `state` VARCHAR(16) NOT NULL COMMENT 'TRIED/COMMITTED/ROLLBACKED',
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_order_no` (`order_no`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='订单TCC事务日志';
 
 -- 支付事件消费记录表
 CREATE TABLE IF NOT EXISTS `t_payment_event_consume` (
@@ -181,6 +192,17 @@ CREATE TABLE IF NOT EXISTS `t_id_segment` (
   UNIQUE KEY `uk_biz_type` (`biz_type`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='ID段分配表';
 
+CREATE TABLE IF NOT EXISTS `t_payment_tcc_log` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  `order_no` VARCHAR(64) NOT NULL COMMENT '订单号',
+  `xid` VARCHAR(128) NOT NULL COMMENT 'Seata 全局事务ID',
+  `state` VARCHAR(16) NOT NULL COMMENT 'TRIED/COMMITTED/ROLLBACKED',
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_order_no` (`order_no`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='支付TCC事务日志';
+
 -- Seata AT 模式 undo_log 表
 CREATE TABLE IF NOT EXISTS `undo_log` (
   `id` BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -205,12 +227,15 @@ CREATE TABLE IF NOT EXISTS `t_payment_0` (
   `id` BIGINT NOT NULL COMMENT '主键ID',
   `order_no` VARCHAR(64) NOT NULL COMMENT '订单号',
   `user_id` BIGINT NOT NULL COMMENT '用户ID',
+  `pay_no` VARCHAR(64) NOT NULL COMMENT '支付单号',
   `amount_cents` BIGINT NOT NULL COMMENT '金额(分)',
-  `status` VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT '状态: PENDING-待支付 PREPARED-预扣款 CONFIRMED-已确认 CANCELLED-已取消',
+  `status` VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT '状态: PENDING-待支付 PREPARED-预扣款 SUCCEEDED-已支付 CANCELLED-已取消',
+  `idempotency_key` VARCHAR(128) DEFAULT NULL COMMENT '幂等键',
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_order_no` (`order_no`),
+  UNIQUE KEY `uk_pay_no` (`pay_no`),
   KEY `idx_user_id` (`user_id`),
   KEY `idx_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='支付表 - 分片0';
@@ -250,13 +275,27 @@ USE `inventory_db`;
 CREATE TABLE IF NOT EXISTS `t_stock` (
   `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
   `product_id` VARCHAR(64) NOT NULL COMMENT '商品ID',
-  `quantity` INT NOT NULL COMMENT '库存数量',
+  `available` INT NOT NULL COMMENT '可用库存',
   `version` INT NOT NULL DEFAULT 0 COMMENT '乐观锁版本号',
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_product_id` (`product_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='库存表';
+
+CREATE TABLE IF NOT EXISTS `t_inventory_tcc_log` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  `order_no` VARCHAR(64) NOT NULL COMMENT '订单号',
+  `product_id` VARCHAR(64) NOT NULL COMMENT '商品ID',
+  `quantity` INT NOT NULL COMMENT '冻结/回滚数量',
+  `xid` VARCHAR(128) NOT NULL COMMENT 'Seata 全局事务ID',
+  `state` VARCHAR(16) NOT NULL COMMENT 'TRIED/COMMITTED/ROLLBACKED',
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_order_no` (`order_no`),
+  KEY `idx_product_id` (`product_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='库存TCC事务日志';
 
 CREATE TABLE IF NOT EXISTS `undo_log` (
   `id` BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -372,7 +411,7 @@ CREATE TABLE IF NOT EXISTS `lock_table` (
 
 -- 库存初始化
 USE `inventory_db`;
-INSERT IGNORE INTO `t_stock` (`product_id`, `quantity`) VALUES
+INSERT IGNORE INTO `t_stock` (`product_id`, `available`) VALUES
 ('p1', 1000),
 ('p2', 500),
 ('p3', 800);

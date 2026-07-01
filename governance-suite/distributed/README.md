@@ -491,6 +491,42 @@ tail -f logs/outbox-consumer.log
 2. **Change Data Capture (CDC)**：替代 Outbox 轮询
 3. **分库分表**：使用 ShardingSphere 的分片能力
 
+## TCC 新增链路
+
+项目中额外补了一条 Seata TCC 下单链路，入口为：
+
+```bash
+curl -X POST http://localhost:8080/api/order/order/tcc \
+  -H "Authorization: $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: demo-tcc-1' \
+  -d '{"productId":"p1","quantity":1,"amountCents":100}'
+```
+
+### TCC 处理点
+
+- `order-service`
+  - 本地 `OrderTccAction` 负责订单 `try/confirm/cancel`
+  - `try` 写入 `TCC_PREPARED` 订单和 `t_order_tcc_log`
+- `payment-service`
+  - `PaymentTccAction` 负责支付预留与补偿
+  - `try` 写入 `PREPARED` 支付单和 `t_payment_tcc_log`
+- `inventory-service`
+  - `InventoryTccAction` 负责库存预扣与回补
+  - `try` 先扣减库存，再写入 `t_inventory_tcc_log`
+
+### 幂等、空回滚、悬挂方案
+
+- 幂等
+  - 每个参与者都用 `order_no` 作为 TCC 业务幂等键
+  - `try/confirm/cancel` 先查对应的 `*_tcc_log`，已处理直接返回
+- 空回滚
+  - `cancel` 发现没有 `try` 日志时，会落一条 `ROLLBACKED` 标记后直接返回
+  - 这样可以处理 `cancel` 先于 `try` 到达的场景
+- 悬挂
+  - `try` 开始前先检查是否存在 `ROLLBACKED` 标记
+  - 如果存在，直接拒绝本次 `try`，避免回滚后又再次执行业务预扣
+
 ## 开发指南
 
 ### 本地开发

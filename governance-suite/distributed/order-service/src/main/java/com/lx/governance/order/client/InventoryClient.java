@@ -16,10 +16,18 @@ public interface InventoryClient {
     @PostMapping("/deduct")
     ApiResponse<String> deduct(@RequestBody InventoryDeductRequest req);
 
+    @PostMapping("/tcc/try")
+    ApiResponse<String> tryDeductTcc(@RequestBody InventoryDeductRequest req);
+
     @Component
     class InventoryClientFallback implements InventoryClient {
         @Override
         public ApiResponse<String> deduct(InventoryDeductRequest req) {
+            return ApiResponse.fail("INVENTORY_UNAVAILABLE", "inventory-service fallback", null);
+        }
+
+        @Override
+        public ApiResponse<String> tryDeductTcc(InventoryDeductRequest req) {
             return ApiResponse.fail("INVENTORY_UNAVAILABLE", "inventory-service fallback", null);
         }
     }

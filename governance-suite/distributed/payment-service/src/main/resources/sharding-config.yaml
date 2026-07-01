@@ -17,6 +17,8 @@ rules:
           shardingAlgorithmName: payment-inline
     t_id_segment:
       actualDataNodes: ds0.t_id_segment
+    t_payment_tcc_log:
+      actualDataNodes: ds0.t_payment_tcc_log
   shardingAlgorithms:
     payment-inline:
       type: INLINE

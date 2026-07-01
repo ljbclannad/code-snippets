@@ -27,6 +27,13 @@ public class StockRepository {
         );
     }
 
+    public int increase(String productId, int qty) {
+        return jdbcTemplate.update(
+                "UPDATE t_stock SET available = available + ?, version = version + 1 WHERE product_id=?",
+                qty, productId
+        );
+    }
+
     public static class StockRow {
         public final String productId;
         public final int available;
