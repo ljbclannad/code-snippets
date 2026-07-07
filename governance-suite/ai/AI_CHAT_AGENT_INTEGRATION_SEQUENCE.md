@@ -681,7 +681,7 @@ sequenceDiagram
     else Redis 中已有上下文
         Redis-->>Context: existing SessionContext
         opt 命中重新分析条件
-            Note over Context: messageCount==1; detectTopicChange; messageCount%5==0; now-lastUpdateTime>10m
+            Note over Context: 第 2 条消息、检测到话题切换、每 5 条消息重分析一次，或距离上次更新超过 10 分钟
             Context->>Intent: analyzeIntentWithTimeout(message, recentSummaries, 5000ms)
             Intent-->>Context: updated SessionContext
             Context->>Context: mergeContextUpdate(...)
@@ -692,7 +692,7 @@ sequenceDiagram
 
     Chat->>Router: route(TaskTriggerContext)
     Router->>Router: 检查追问中 / 闲聊 / 事实问答 / 分析意图 / 风险信号 / 下一步动作
-    Note over Router: pendingQuestions; userIntent; message keywords; complexity; messageCount>=4
+    Note over Router: 综合 pendingQuestions、userIntent、消息关键词、复杂度，以及消息轮次数是否较多来做路由判定
     Router-->>Chat: TaskTriggerDecision
     Chat->>Context: recordTaskTriggerDecision(conversationId, decision)
     Context->>Redis: SET lastTaskTrigger*
@@ -711,7 +711,7 @@ sequenceDiagram
         Profile-->>Chat: UserProfileDTO
 
         alt 画像补全追问优先触发
-            Note over Chat: diagnosis.needsCompletion && !shouldStopFollowUp(conversationId)
+            Note over Chat: 当画像仍需补全，且当前会话不应停止追问时，优先进入画像补全追问
             Chat->>Chat: handleProfileCompletionIfNeeded(...)
             Chat->>Context: updateContext(conversationId, userMessage, "")
             Context->>Redis: GET/SET context
@@ -728,7 +728,7 @@ sequenceDiagram
     MemoryOrch->>MemoryOrch: extractShortTermMemories(sessionContext)
     Note over MemoryOrch: 短期记忆来自 currentTopic、userIntent、pendingQuestions、recentSummaries
     alt 降级关闭记忆 or retrievalCount=0 or 当前消息不需要检索
-        Note over MemoryOrch: !memoryEnabled; retrievalCount==0; !MessageValidator.shouldRetrieveMemories(...); complexity=simple
+        Note over MemoryOrch: 当记忆功能关闭、检索条数为零、消息无需检索，或当前问题足够简单时，只返回短期记忆
         MemoryOrch-->>Chat: shortTermMemories only
     else 需要长期记忆检索
         MemoryOrch->>Rewrite: rewrite(message, sessionContext, profile)
@@ -736,7 +736,7 @@ sequenceDiagram
         MemoryOrch->>Filter: decide(sessionContext)
         Filter-->>MemoryOrch: memoryTypes/minConfidence/recentDays
         MemoryOrch->>Planner: plan(message, retrievalQuery, filterDecision)
-        Note over Planner: rewrittenQuery; keywords; suggested*; contextDependent; intent filter decision
+        Note over Planner: 规划时会综合改写后的 query、关键词、建议过滤条件、上下文依赖性和意图过滤结果
         Planner-->>MemoryOrch: StructuredMemoryQuery
         MemoryOrch->>Memory: retrieveMemories(groupId, customerId, structuredQuery)
         Memory->>MemoryClient: requestMemories(structuredQuery)
@@ -746,7 +746,7 @@ sequenceDiagram
         VectorListener->>VectorSvc: retrieveGroupMemories(effectiveQuery, groupId, customerId, topK, compiledFilter)
         Note over VectorSvc: 并行召回 Redis 最近记忆、Milvus 向量记忆、MySQL 关键词记忆
         opt rerank.enabled = true
-            Note over Rerank: rerank.enabled=true; mode=full|partial
+            Note over Rerank: 开启 rerank 后，可按全量或部分模式对召回结果重新排序
             VectorSvc->>Rerank: rerank(...) or rerankPartial(...)
             Rerank-->>VectorSvc: reranked memories
         end
@@ -754,13 +754,13 @@ sequenceDiagram
         VectorListener-->>MemoryClient: MemoryResponseMessage
         MemoryClient-->>Memory: candidate memories
         Memory->>Memory: similarity threshold + dedup + topK
-        Note over Memory: similarity>=threshold; enableDeduplication; limit=maxCount
+        Note over Memory: 按相似度阈值筛选，再做去重，并截断到最大返回条数
         Memory-->>MemoryOrch: longTermMemories
         MemoryOrch-->>Chat: shortTermMemories + longTermMemories
     end
 
     alt shouldUpgradeToAgent = false
-        Note over Chat: triggerDecision.route=DIRECT_CHAT || visitorMode
+        Note over Chat: 当路由结果是 DIRECT_CHAT，或当前为 visitor 模式时，走普通对话链路
         Chat->>LLM: chat(request, profile, sessionContext, layeredMemories)
         LLM-->>Chat: ChatGenerationResult(answer, usage)
         Chat->>Context: updateContext(conversationId, userMessage, aiResponse)
@@ -774,10 +774,10 @@ sequenceDiagram
     else shouldUpgradeToAgent = true
         Chat->>RouteRuntime: evaluateInvocation(request, sessionContext, triggerDecision)
         RouteRuntime->>Policy: evaluate(request, sessionContext, triggerDecision)
-        Note over Policy: enabledTaskTypes; enabledGroupIds; enabledUserIds; enabledTenantIds; enabledAgentVersions; !circuitBreakerOpen
+        Note over Policy: 结合任务类型、群组、用户、租户、Agent 版本灰度范围，以及熔断器状态决定是否放行
         Policy-->>RouteRuntime: Decision(invokeAgent, reason)
         RouteRuntime->>PlatformRoute: evaluateInvocation(pendingReviewSnapshot, invokeAgent, reason)
-        Note over PlatformRoute: lastAgentReviewStatus==PENDING_APPROVAL && now-lastAgentOutcomeAt<=pendingReviewShortCircuitWindowMs
+        Note over PlatformRoute: 如果上一次 Agent 结果仍在待人工复核窗口内，则优先命中短路分支
         PlatformRoute-->>RouteRuntime: PlatformRouteDecision(target, invokeAgent, reason)
         RouteRuntime-->>Chat: PlatformRouteDecision
         alt 已有待处理人工复核，命中短路窗口
@@ -807,14 +807,14 @@ sequenceDiagram
                 AgentSvc->>AgentSvc: 优先调用 ReActAgentEngine.executeStream(command, noopEventSink)
                 AgentSvc->>AgentSvc: 预加载 sessionContext / profileSnapshot / memorySnapshot / triggerDecision
                 alt 真实 Agent 返回 SUCCESS / PENDING_APPROVAL
-                    Note over AgentSvc: agentResult!=null && status!=ERROR/MAX_STEPS
+                    Note over AgentSvc: 真实 Agent 有返回结果，且执行状态不是 ERROR 或 MAX_STEPS
                     AgentSvc->>AgentSvc: AgentResult -> StructuredTaskResult / PendingTask / WorkbenchPayload
                     AgentSvc->>AgentSvc: PatientReplyComposer 生成 candidatePatientReply
                     AgentSvc->>Safety: sanitize(candidatePatientReply, structuredResult, needsHumanReview)
-                    Note over Safety: reply risk; structuredResult.riskLevel; needsHumanReview; medical high-risk signal
+                    Note over Safety: 安全清洗会综合回复风险、结构化结果风险等级、是否需要人工复核和医疗高风险信号
                     Safety-->>AgentSvc: allowed or blocked
                 else 真实 Agent 返回 ERROR / MAX_STEPS / null 或执行异常
-                    Note over AgentSvc: agentEngine==null; agentResult==null; status=ERROR/MAX_STEPS; executeStream throws
+                    Note over AgentSvc: 当 Agent 引擎缺失、无结果、状态异常，或执行流抛错时，回退到模板分析链路
                     AgentSvc->>AgentSvc: 回退模板分析链路
                     AgentSvc->>Safety: sanitize(candidatePatientReply, structuredResult, needsHumanReview)
                     Safety-->>AgentSvc: allowed or blocked
@@ -825,7 +825,7 @@ sequenceDiagram
 
                 Chat->>RouteRuntime: evaluateAgentResponse(agentResponse)
                 RouteRuntime->>PlatformRoute: evaluateAgentResponse(PlatformAgentResponse)
-                Note over PlatformRoute: status=SKIPPED|ERROR; patientSafeReply blank
+                Note over PlatformRoute: 如果 Agent 结果被跳过、执行报错，或缺少患者可见回复，则进入回退判定
                 PlatformRoute-->>RouteRuntime: PlatformRouteDecision(target, invokeAgent, reason)
                 RouteRuntime-->>Chat: PlatformRouteDecision
 
