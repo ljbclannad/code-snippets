@@ -325,15 +325,11 @@ public class BeanFactory {
         for (int i = 0; i < parameterTypes.length; i++) {
             Class<?> paramType = parameterTypes[i];
 
-            // 生成依赖的 Bean 名称（首字母小写）
-            String dependencyName = paramType.getSimpleName();
-            dependencyName = Character.toLowerCase(dependencyName.charAt(0)) + dependencyName.substring(1);
-
             // 递归获取依赖（可能触发依赖的创建）
             // 注意：这里无法从三级缓存获取早期引用，因为对象还未创建
-            args[i] = getBean(dependencyName);
+            args[i] = resolveDependency(paramType);
             System.out.println("      - Resolved constructor parameter [" + i + "]: " +
-                    paramType.getSimpleName() + " -> " + dependencyName);
+                    paramType.getSimpleName());
         }
 
         return args;
@@ -393,13 +389,10 @@ public class BeanFactory {
         for (Field field : fields) {
             if (field.isAnnotationPresent(Autowired.class)) {
                 field.setAccessible(true);
-                String dependencyName = field.getType().getSimpleName();
-                dependencyName = Character.toLowerCase(dependencyName.charAt(0)) + dependencyName.substring(1);
-
-                Object dependency = getBean(dependencyName);
+                Object dependency = resolveDependency(field.getType());
                 field.set(bean, dependency);
                 System.out.println(
-                        "   [Autowired] Injected " + dependencyName + " into " + bean.getClass().getSimpleName()
+                        "   [Autowired] Injected " + field.getType().getSimpleName() + " into " + bean.getClass().getSimpleName()
                                 + " (field)");
             }
         }
@@ -412,18 +405,35 @@ public class BeanFactory {
                 if (method.getName().startsWith("set") && method.getParameterCount() == 1) {
                     method.setAccessible(true);
                     Class<?> paramType = method.getParameterTypes()[0];
-
-                    String dependencyName = paramType.getSimpleName();
-                    dependencyName = Character.toLowerCase(dependencyName.charAt(0)) + dependencyName.substring(1);
-
-                    Object dependency = getBean(dependencyName);
+                    Object dependency = resolveDependency(paramType);
                     method.invoke(bean, dependency);
                     System.out.println(
-                            "   [Autowired] Injected " + dependencyName + " into " + bean.getClass().getSimpleName() +
+                            "   [Autowired] Injected " + paramType.getSimpleName() + " into " + bean.getClass().getSimpleName() +
                                     " (setter: " + method.getName() + ")");
                 }
             }
         }
+    }
+
+    /**
+     * 解析依赖：
+     * 1. 优先按类型查找唯一候选（支持接口注入）
+     * 2. 回退到约定 beanName（兼容现有示例）
+     */
+    private Object resolveDependency(Class<?> dependencyType) throws Exception {
+        Object dependency = getBeanByType(dependencyType);
+        if (dependency != null) {
+            return dependency;
+        }
+
+        String dependencyName = dependencyType.getSimpleName();
+        dependencyName = Character.toLowerCase(dependencyName.charAt(0)) + dependencyName.substring(1);
+
+        if (!beanDefinitions.containsKey(dependencyName)) {
+            throw new Exception("No bean found for dependency type: " + dependencyType.getName());
+        }
+
+        return getBean(dependencyName);
     }
 
     /**

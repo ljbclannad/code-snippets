@@ -7,6 +7,9 @@
 ```
 spring-simulation-java/
 └── src/main/java/com/spring/simulation/
+    ├── examples/                      # 演示入口
+    │   ├── aop/                       # AOP 执行顺序、Ordered 演示
+    │   └── context/                   # 容器刷新、自动注入、综合能力演示
     ├── ioc/                           # IoC 容器核心
     │   ├── ApplicationContext.java    # 应用上下文
     │   ├── AnnotationConfigApplicationContext.java  # 注解配置上下文
@@ -57,17 +60,12 @@ spring-simulation-java/
     ├── circular/                      # 循环依赖示例
     │   ├── ServiceA.java
     │   └── ServiceB.java
-    ├── demo/                          # 示例代码
-    │   ├── UserService.java
-    │   ├── UserRepository.java
-    │   ├── OrderService.java          # 演示生命周期回调
-    │   ├── LoggingBeanPostProcessor.java
-    │   ├── CustomBeanFactoryPostProcessor.java
-    │   └── StartupListener.java
-    ├── SpringSimulationDemo.java      # 基础演示
-    ├── SpringRefreshDemo.java         # refresh 流程演示
-    ├── SpringAdvancedDemo.java        # 高级特性演示
-    └── SpringEnhancedDemo.java        # 增强功能演示
+    ├── demo/                          # 教学示例支撑类
+    │   ├── app/                       # 示例业务 Bean
+    │   ├── extension/                 # BeanFactory/BPP 扩展点示例
+    │   ├── listener/                  # 事件监听器示例
+    │   └── guide/                     # 讲解型示例
+    └── constructor/                   # 构造器注入与 Aware 示例
 ```
 
 ## 核心功能
@@ -185,8 +183,8 @@ spring-simulation-java/
 ### 方式 1: 增强功能演示（推荐）
 ```bash
 cd spring-simulation-java
-javac -d bin src/main/java/com/spring/simulation/**/*.java src/main/java/com/spring/simulation/*.java
-java -cp bin com.spring.simulation.SpringEnhancedDemo
+javac -d bin $(find src/main/java -name '*.java')
+java -cp bin com.spring.simulation.examples.context.SpringEnhancedDemo
 ```
 
 演示内容：
@@ -198,7 +196,7 @@ java -cp bin com.spring.simulation.SpringEnhancedDemo
 
 ### 方式 2: 完整的高级特性演示
 ```bash
-java -cp bin com.spring.simulation.SpringAdvancedDemo
+java -cp bin com.spring.simulation.examples.context.SpringAdvancedDemo
 ```
 
 演示内容：
@@ -211,7 +209,7 @@ java -cp bin com.spring.simulation.SpringAdvancedDemo
 
 ### 方式 3: ApplicationContext.refresh() 流程演示
 ```bash
-java -cp bin com.spring.simulation.SpringRefreshDemo
+java -cp bin com.spring.simulation.examples.context.SpringRefreshDemo
 ```
 
 演示内容：
@@ -221,7 +219,7 @@ java -cp bin com.spring.simulation.SpringRefreshDemo
 
 ### 方式 4: 基础演示
 ```bash
-java -cp bin com.spring.simulation.SpringSimulationDemo
+java -cp bin com.spring.simulation.examples.context.SpringSimulationDemo
 ```
 
 演示内容：
@@ -548,10 +546,10 @@ public class OrderService {
 
 ```bash
 # 编译项目
-javac -d bin src/main/java/com/spring/simulation/**/*.java src/main/java/com/spring/simulation/*.java
+javac -d bin $(find src/main/java -name '*.java')
 
 # 运行增强功能演示
-java -cp bin com.spring.simulation.SpringEnhancedDemo
+java -cp bin com.spring.simulation.examples.context.SpringEnhancedDemo
 ```
 
 **测试结果**：
@@ -573,10 +571,10 @@ java -cp bin com.spring.simulation.SpringEnhancedDemo
 
 ## 学习路径建议
 
-1. **入门**：从 `SpringSimulationDemo` 开始，了解基础的 IoC 和 AOP
-2. **进阶**：学习 `SpringRefreshDemo`，理解容器的启动流程
-3. **高级**：研究 `SpringAdvancedDemo`，掌握生命周期、循环依赖、事务管理
-4. **增强**：探索 `SpringEnhancedDemo`，学习作用域、SpEL、切点表达式等高级特性
+1. **入门**：从 `com.spring.simulation.examples.context.SpringSimulationDemo` 开始，了解基础的 IoC 和 AOP
+2. **进阶**：学习 `com.spring.simulation.examples.context.SpringRefreshDemo`，理解容器的启动流程
+3. **高级**：研究 `com.spring.simulation.examples.context.SpringAdvancedDemo`，掌握生命周期、循环依赖、事务管理
+4. **增强**：探索 `com.spring.simulation.examples.context.SpringEnhancedDemo`，学习作用域、SpEL、切点表达式等高级特性
 
 ## 贡献
 
