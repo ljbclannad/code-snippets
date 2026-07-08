@@ -204,7 +204,7 @@ public Object getBeanByType(Class<?> type) throws Exception {
 
 ## 运行示例
 
-查看 `AutowiredDemo.java` 的运行输出，可以清楚地看到：
+查看 `SpringRefreshDemo.java` 的运行输出，可以清楚地看到：
 
 ```
 [Phase 6] registerBeanPostProcessors()

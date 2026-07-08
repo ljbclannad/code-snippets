@@ -128,14 +128,13 @@
 
 ## 本轮整理后的建议阅读顺序
 
-1. `examples/context/SpringSimulationDemo`
-2. `examples/context/SpringRefreshDemo`
+1. `examples/context/SpringRefreshDemo`
 3. `ioc/ApplicationContext`
 4. `ioc/BeanFactory`
 5. `demo/app/*`
 6. `aop/*`
 7. `transaction/*`
-8. `examples/context/SpringAdvancedDemo`
+7. `examples/context/SpringAdvancedDemo`
 
 ## 完成定义
 

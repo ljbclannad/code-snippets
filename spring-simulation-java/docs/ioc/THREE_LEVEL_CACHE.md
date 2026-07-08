@@ -246,7 +246,7 @@ private Object getEarlyBeanReference(String beanName, Object bean) {
 运行 `SpringAdvancedDemo` 可以看到三级缓存的工作过程：
 
 ```bash
-java -cp bin com.spring.simulation.SpringAdvancedDemo
+java -cp bin com.spring.simulation.examples.context.SpringAdvancedDemo
 ```
 
 输出示例：

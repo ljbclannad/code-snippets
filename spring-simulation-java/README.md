@@ -6,6 +6,13 @@
 
 ```
 spring-simulation-java/
+├── docs/                            # 学习文档与规划文档
+│   ├── README.md                    # 文档导航
+│   ├── aop/                         # AOP 专题
+│   ├── ioc/                         # IoC / 依赖注入专题
+│   ├── architecture/                # 架构设计总览
+│   ├── SPRING_SECONDARY_DEVELOPMENT_ROADMAP.md
+│   └── SPRING_SIMULATION_TODO.md
 └── src/main/java/com/spring/simulation/
     ├── examples/                      # 演示入口
     │   ├── aop/                       # AOP 执行顺序、Ordered 演示
@@ -207,7 +214,7 @@ java -cp bin com.spring.simulation.examples.context.SpringAdvancedDemo
 - Aware 接口回调
 - BeanPostProcessor 和 BeanFactoryPostProcessor
 
-### 方式 3: ApplicationContext.refresh() 流程演示
+### 方式 3: ApplicationContext.refresh() 主线演示
 ```bash
 java -cp bin com.spring.simulation.examples.context.SpringRefreshDemo
 ```
@@ -216,14 +223,7 @@ java -cp bin com.spring.simulation.examples.context.SpringRefreshDemo
 - 完整的 12 阶段 refresh 流程
 - 组件扫描和自动注册
 - Bean 实例化和依赖注入
-
-### 方式 4: 基础演示
-```bash
-java -cp bin com.spring.simulation.examples.context.SpringSimulationDemo
-```
-
-演示内容：
-- 基础的 IoC 和 AOP 功能
+- 最小 AOP 集成示例
 
 ## 输出示例
 
@@ -571,10 +571,9 @@ java -cp bin com.spring.simulation.examples.context.SpringEnhancedDemo
 
 ## 学习路径建议
 
-1. **入门**：从 `com.spring.simulation.examples.context.SpringSimulationDemo` 开始，了解基础的 IoC 和 AOP
-2. **进阶**：学习 `com.spring.simulation.examples.context.SpringRefreshDemo`，理解容器的启动流程
-3. **高级**：研究 `com.spring.simulation.examples.context.SpringAdvancedDemo`，掌握生命周期、循环依赖、事务管理
-4. **增强**：探索 `com.spring.simulation.examples.context.SpringEnhancedDemo`，学习作用域、SpEL、切点表达式等高级特性
+1. **入门**：从 `com.spring.simulation.examples.context.SpringRefreshDemo` 开始，沿着容器主线理解 IoC、注入、AOP 是如何串起来的
+2. **进阶**：研究 `com.spring.simulation.examples.context.SpringAdvancedDemo`，掌握生命周期、循环依赖、事务管理
+4. **增强**：探索 `com.spring.simulation.examples.context.SpringEnhancedDemo`，学习作用域、SpEL、切点表达式等扩展特性
 
 ## 贡献
 

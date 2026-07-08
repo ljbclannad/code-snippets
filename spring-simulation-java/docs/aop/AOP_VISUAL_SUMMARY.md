@@ -224,10 +224,10 @@ main()
 
 ```bash
 # 编译
-javac -d bin -sourcepath src/main/java src/main/java/com/spring/simulation/AopExecutionOrderDemo.java
+javac -d bin $(find src/main/java -name '*.java')
 
 # 运行
-java -cp bin com.spring.simulation.AopExecutionOrderDemo
+java -cp bin com.spring.simulation.examples.aop.AopExecutionOrderDemo
 ```
 
 输出会清晰地展示每个拦截器的进入、执行、退出过程，以及 Around 为什么打印 2 次。

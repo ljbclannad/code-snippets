@@ -8,6 +8,17 @@ import com.spring.simulation.demo.app.UserRepository;
 import com.spring.simulation.demo.app.UserService;
 import com.spring.simulation.ioc.AnnotationConfigApplicationContext;
 
+/**
+ * 主线容器 Demo。
+ *
+ * 这个入口承担项目里最重要的学习主线：
+ * 1. refresh() 12 阶段
+ * 2. 组件扫描与 BeanDefinition 注册
+ * 3. 依赖注入与 Bean 获取
+ * 4. 在业务 Bean 上叠加最小 AOP 示例
+ *
+ * 后续 IoC 容器深化优先从这里扩展，而不是再新增新的基础 Demo。
+ */
 public class SpringRefreshDemo {
     public static void main(String[] args) throws Exception {
         System.out.println("╔════════════════════════════════════════════════════════════╗");

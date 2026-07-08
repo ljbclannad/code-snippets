@@ -385,10 +385,10 @@ public void sortInterceptors() {
 
 ```bash
 # 编译
-javac -d bin -sourcepath src/main/java src/main/java/com/spring/simulation/AopOrderedDemo.java
+javac -d bin $(find src/main/java -name '*.java')
 
 # 运行
-java -cp bin com.spring.simulation.AopOrderedDemo
+java -cp bin com.spring.simulation.examples.aop.AopOrderedDemo
 ```
 
 输出会清晰地展示：

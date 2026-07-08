@@ -18,12 +18,16 @@
 
 当前最适合的学习入口：
 
-- `com.spring.simulation.examples.context.SpringSimulationDemo`
 - `com.spring.simulation.examples.context.SpringRefreshDemo`
 - `com.spring.simulation.examples.context.SpringAdvancedDemo`
 - `com.spring.simulation.examples.context.SpringEnhancedDemo`
 - `com.spring.simulation.examples.aop.AopExecutionOrderDemo`
 - `com.spring.simulation.examples.aop.AopOrderedDemo`
+
+说明：
+
+- `SpringRefreshDemo` 是主线 demo，阶段 1 的 IoC 深化优先从这里推进
+- `SpringAdvancedDemo` 和 `SpringEnhancedDemo` 保持专题角色，不再承担基础入口职责
 
 ## 阶段 1：把 IoC 容器做深
 
