@@ -3,7 +3,9 @@ package com.spring.simulation.ioc;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.spring.simulation.environment.Environment;
 public class ApplicationContext {
+    private final Environment environment = new Environment();
     private BeanFactory beanFactory = new BeanFactory();
     private List<BeanPostProcessor> beanPostProcessors = new ArrayList<>();
     private List<BeanFactoryPostProcessor> beanFactoryPostProcessors = new ArrayList<>();
@@ -81,6 +83,11 @@ public class ApplicationContext {
         System.out.println("  - Setting startup date");
         System.out.println("  - Initializing property sources");
         System.out.println("  - Validating required properties");
+        for (int i = 0, size = environment.getPropertySources().size(); i < size; i++) {
+            com.spring.simulation.environment.PropertySource propertySource = environment.getPropertySources().get(i);
+            System.out.println("    * Loaded PropertySource: " + propertySource.getClass().getSimpleName()
+                    + " (order=" + propertySource.getOrder() + ")");
+        }
     }
 
     /**
@@ -131,26 +138,6 @@ public class ApplicationContext {
 
         System.out.println("    * Registered environment bean: 'environment' -> " + Environment.class.getSimpleName());
         System.out.println("      (用于访问系统属性、环境变量等)");
-    }
-
-    /**
-     * 简单的环境 Bean 类
-     * 模拟 Spring 的 org.springframework.core.env.Environment
-     */
-    public static class Environment {
-        public String getProperty(String key) {
-            return System.getProperty(key);
-        }
-
-        public String getEnv(String key) {
-            return System.getenv(key);
-        }
-
-        @Override
-        public String toString() {
-            return "Environment[OS=" + System.getProperty("os.name") +
-                    ", Java=" + System.getProperty("java.version") + "]";
-        }
     }
 
     /**

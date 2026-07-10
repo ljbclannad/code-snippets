@@ -1,5 +1,6 @@
 package com.spring.simulation.constructor;
 
+import com.spring.simulation.environment.Environment;
 import com.spring.simulation.ioc.*;
 
 /**
@@ -59,8 +60,7 @@ public class AwareDemo implements BeanNameAware, BeanFactoryAware, ApplicationCo
      * 场景 3：访问环境变量
      */
     public void accessEnvironment() throws Exception {
-        ApplicationContext.Environment env =
-            (ApplicationContext.Environment) applicationContext.getBean("environment");
+        Environment env = (Environment) applicationContext.getBean("environment");
         System.out.println("    [AwareDemo] Accessed environment: " + env);
         System.out.println("      使用场景：读取配置文件、系统属性、环境变量");
     }
