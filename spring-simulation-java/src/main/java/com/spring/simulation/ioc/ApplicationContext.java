@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import com.spring.simulation.environment.Environment;
+
 public class ApplicationContext {
     private final Environment environment = new Environment();
     private BeanFactory beanFactory = new BeanFactory();
@@ -95,6 +96,27 @@ public class ApplicationContext {
      *
      * 设计原因：加载 Bean 定义
      * 1. 刷新 BeanFactory（如果已存在则销毁重建）
+     *    为什么要先销毁？
+     *    - BeanFactory 里不只是“定义”，还持有上一轮 refresh 的运行时状态
+     *    - 如果不先清理，旧的单例对象、三级缓存、后处理器等状态会污染新一轮启动
+     *    - refresh 的目标是拿到一个“干净的工厂”，确保本轮容器初始化结果可预测
+     *
+     *    一般需要销毁/清理的内容：
+     *    - singletonObjects：已经完成初始化的单例 Bean
+     *    - earlySingletonObjects：循环依赖时提前暴露的早期引用
+     *    - singletonFactories：三级缓存中的 Bean 工厂
+     *    - singletonsCurrentlyInCreation：正在创建中的 Bean 标记
+     *    - beanPostProcessors：上一轮注册的 BeanPostProcessor
+     *    - beanDefinitions：上一轮加载的 Bean 定义
+     *
+     *    实际框架里通常还会触发：
+     *    - DisposableBean.destroy() / 自定义 destroy-method
+     *    - 连接池、线程池、文件句柄等资源释放
+     *
+     *    最朴素的重建方式通常就是：
+     *    - 先销毁旧 BeanFactory 管理的 Bean 和缓存
+     *    - 再 new 一个新的 BeanFactory
+     *    - 然后重新加载 BeanDefinition
      * 2. 加载 Bean 定义（从 XML、注解、Java Config 等）
      * 3. 返回可用的 BeanFactory
      *
@@ -102,7 +124,10 @@ public class ApplicationContext {
      */
     protected BeanFactory obtainFreshBeanFactory() {
         System.out.println("\n[Phase 2] obtainFreshBeanFactory()");
+
         System.out.println("  - Refreshing BeanFactory");
+        this.beanFactory = new BeanFactory();
+        this.beanFactory.setApplicationContext(this);
         System.out.println("  - Loading bean definitions");
         scanAndRegisterBeans();
         return beanFactory;
