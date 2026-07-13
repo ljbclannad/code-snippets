@@ -6,27 +6,28 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class ComponentScanner {
-    private String basePackage;
+    private String[] basePackages;
 
-    public ComponentScanner(String basePackage) {
-        this.basePackage = basePackage;
+    public ComponentScanner(String... basePackage) {
+        this.basePackages = basePackage;
     }
 
     public List<Class<?>> scan() throws Exception {
-        System.out.println("  - Scanning package: " + basePackage);
         List<Class<?>> components = new ArrayList<>();
+        for (String basePackage : basePackages) {
+            System.out.println("  - Scanning package: " + basePackage);
+            String path = basePackage.replace('.', '/');
+            URL resource = Thread.currentThread().getContextClassLoader().getResource(path);
 
-        String path = basePackage.replace('.', '/');
-        URL resource = Thread.currentThread().getContextClassLoader().getResource(path);
-
-        if (resource != null) {
-            File directory = new File(resource.getFile());
-            if (directory.exists()) {
-                scanDirectory(directory, basePackage, components);
+            if (resource != null) {
+                File directory = new File(resource.getFile());
+                if (directory.exists()) {
+                    scanDirectory(directory, basePackage, components);
+                }
             }
-        }
+            System.out.println("  - Found " + components.size() + " components");
 
-        System.out.println("  - Found " + components.size() + " components");
+        }
         return components;
     }
 

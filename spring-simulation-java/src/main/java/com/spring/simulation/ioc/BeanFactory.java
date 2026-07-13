@@ -58,6 +58,10 @@ public class BeanFactory {
     private ApplicationContext applicationContext;
 
     public void registerBeanDefinition(String beanName, BeanDefinition beanDefinition) {
+        if (beanDefinitions.containsKey(beanName)) {
+            throw new IllegalStateException(
+                    "Bean definition already exists: " + beanName);
+        }
         beanDefinitions.put(beanName, beanDefinition);
         System.out.println("[IoC] Registered bean definition: " + beanName);
     }

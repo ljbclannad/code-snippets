@@ -3,9 +3,9 @@ package com.spring.simulation.ioc;
 import java.lang.reflect.Method;
 
 public class AnnotationConfigApplicationContext extends ApplicationContext {
-    private final String basePackage;
+    private final String[] basePackage;
 
-    public AnnotationConfigApplicationContext(String basePackage) {
+    public AnnotationConfigApplicationContext(String... basePackage) {
         this.basePackage = basePackage;
     }
 
@@ -22,7 +22,7 @@ public class AnnotationConfigApplicationContext extends ApplicationContext {
      * 3. 注册到 BeanFactory
      * 4. 处理 @Configuration 中的 @Bean 方法
      */
-    protected void scanAndRegisterBeanDefinitions(String basePackage) {
+    protected void scanAndRegisterBeanDefinitions(String[] basePackage) {
         try {
             ComponentScanner scanner = new ComponentScanner(basePackage);
             for (Class<?> beanClass : scanner.scan()) {
@@ -37,7 +37,8 @@ public class AnnotationConfigApplicationContext extends ApplicationContext {
                 }
             }
         } catch (Exception e) {
-            System.err.println("Error scanning components: " + e.getMessage());
+            throw new IllegalStateException(
+                    "Failed to scan and register bean definitions: " + basePackage, e);
         }
     }
 

@@ -5,8 +5,8 @@ package com.spring.simulation.ioc;
  *
  * 关系上可以理解为：
  * ApplicationContext
- *   -> AnnotationConfigApplicationContext
- *   -> AnnotationConfigWebApplicationContext
+ * -> AnnotationConfigApplicationContext
+ * -> AnnotationConfigWebApplicationContext
  *
  * Web 版本在通用注解配置能力之上，额外接管：
  * 1. Web 环境判定
@@ -15,7 +15,7 @@ package com.spring.simulation.ioc;
  */
 public class AnnotationConfigWebApplicationContext extends AnnotationConfigApplicationContext {
 
-    public AnnotationConfigWebApplicationContext(String basePackage) {
+    public AnnotationConfigWebApplicationContext(String... basePackage) {
         super(basePackage);
     }
 

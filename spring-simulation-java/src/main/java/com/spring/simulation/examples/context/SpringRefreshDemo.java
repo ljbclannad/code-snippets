@@ -25,8 +25,8 @@ public class SpringRefreshDemo {
         System.out.println("║   Spring ApplicationContext.refresh() 流程演示             ║");
         System.out.println("╚════════════════════════════════════════════════════════════╝");
 
-        AnnotationConfigWebApplicationContext context =
-            new AnnotationConfigWebApplicationContext("com.spring.simulation.demo");
+        AnnotationConfigWebApplicationContext context = new AnnotationConfigWebApplicationContext(
+                "com.spring.simulation.demo", "com.spring.simulation.demo2");
 
         context.refresh();
 

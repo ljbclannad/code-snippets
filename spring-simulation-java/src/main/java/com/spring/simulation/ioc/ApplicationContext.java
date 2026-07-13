@@ -118,6 +118,13 @@ public class ApplicationContext {
      * - 再 new 一个新的 BeanFactory
      * - 然后重新加载 BeanDefinition
      * 2. 加载 Bean 定义（从 XML、注解、Java Config 等）
+     * - XML：解析 <bean> 标签，提取 beanName、class、scope、依赖关系等元数据
+     * - 注解：扫描指定包下的 @Component、@Configuration 等候选组件，生成定义元数据
+     * - Java Config：解析 @Configuration 类中的 @Bean 方法，为方法返回值生成定义元数据
+     * - 注册：将解析出的 BeanDefinition 按 beanName 保存到 BeanFactory 的定义表中
+     *
+     * 此阶段只描述“如何创建 Bean”，不会调用构造器或创建实际对象；
+     * Bean 的实例化在后续 finishBeanFactoryInitialization() 阶段进行。
      * 3. 返回可用的 BeanFactory
      *
      * 这是 Bean 定义注册的阶段，但 Bean 还未实例化
