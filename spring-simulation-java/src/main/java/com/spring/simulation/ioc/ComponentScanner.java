@@ -32,7 +32,8 @@ public class ComponentScanner {
 
     private void scanDirectory(File directory, String packageName, List<Class<?>> components) throws Exception {
         File[] files = directory.listFiles();
-        if (files == null) return;
+        if (files == null)
+            return;
 
         for (File file : files) {
             if (file.isDirectory()) {
@@ -41,11 +42,11 @@ public class ComponentScanner {
                 String className = packageName + "." + file.getName().replace(".class", "");
                 Class<?> clazz = Class.forName(className);
 
-                if (clazz.isAnnotationPresent(Component.class)) {
+                // 遍历注解，如果存在component或者configuration的情况下，标记为可识别的bean
+                if (clazz.isAnnotationPresent(Component.class) || clazz.isAnnotationPresent(Configuration.class)) {
                     components.add(clazz);
                     Component annotation = clazz.getAnnotation(Component.class);
-                    String beanName = annotation.value().isEmpty() ?
-                            generateBeanName(clazz) : annotation.value();
+                    String beanName = annotation.value().isEmpty() ? generateBeanName(clazz) : annotation.value();
 
                     // 检查 @Scope 注解
                     String scope = BeanScope.SINGLETON;
@@ -54,7 +55,7 @@ public class ComponentScanner {
                     }
 
                     System.out.println("    - Found @Component: " + clazz.getSimpleName() +
-                                     " -> " + beanName + " (scope: " + scope + ")");
+                            " -> " + beanName + " (scope: " + scope + ")");
                 }
             }
         }

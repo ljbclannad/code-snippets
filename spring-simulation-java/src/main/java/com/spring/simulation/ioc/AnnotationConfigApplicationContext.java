@@ -25,14 +25,15 @@ public class AnnotationConfigApplicationContext extends ApplicationContext {
     protected void scanAndRegisterBeanDefinitions(String basePackage) {
         try {
             ComponentScanner scanner = new ComponentScanner(basePackage);
-            for (Class<?> componentClass : scanner.scan()) {
-                BeanDefinition beanDefinition = createBeanDefinition(componentClass);
+            for (Class<?> beanClass : scanner.scan()) {
+                BeanDefinition beanDefinition = createBeanDefinition(beanClass);
                 String beanName = beanDefinition.getBeanName();
+                // 将扫描到的内容注册到beanFactory中
                 registerBeanDefinition(beanName, beanDefinition);
 
                 // 处理 @Configuration 类中的 @Bean 方法
-                if (componentClass.isAnnotationPresent(Configuration.class)) {
-                    processBeanMethods(componentClass, beanName);
+                if (beanClass.isAnnotationPresent(Configuration.class)) {
+                    processBeanMethods(beanClass, beanName);
                 }
             }
         } catch (Exception e) {
@@ -43,18 +44,35 @@ public class AnnotationConfigApplicationContext extends ApplicationContext {
     /**
      * 将扫描到的组件类转换为 BeanDefinition。
      */
-    protected BeanDefinition createBeanDefinition(Class<?> componentClass) {
-        Component annotation = componentClass.getAnnotation(Component.class);
-        String beanName = annotation.value().isEmpty()
-                ? generateBeanName(componentClass)
-                : annotation.value();
+    protected BeanDefinition createBeanDefinition(Class<?> beanClass) {
+        String beanName = getBeanName(beanClass);
 
-        BeanDefinition beanDefinition = new BeanDefinition(beanName, componentClass);
-        if (componentClass.isAnnotationPresent(Scope.class)) {
-            String scope = componentClass.getAnnotation(Scope.class).value();
+        BeanDefinition beanDefinition = new BeanDefinition(beanName, beanClass);
+        if (beanClass.isAnnotationPresent(Scope.class)) {
+            String scope = beanClass.getAnnotation(Scope.class).value();
             beanDefinition.setScope(scope);
         }
         return beanDefinition;
+    }
+
+    /**
+     * 获取注释的beanName
+     * 
+     * @param beanClass
+     * @return
+     */
+    private String getBeanName(Class<?> beanClass) {
+        Component component = beanClass.getAnnotation(Component.class);
+        if (component != null && !component.value().isEmpty()) {
+            return component.value();
+        }
+
+        Configuration configuration = beanClass.getAnnotation(Configuration.class);
+        if (configuration != null && !configuration.value().isEmpty()) {
+            return configuration.value();
+        }
+
+        return generateBeanName(beanClass);
     }
 
     /**
@@ -64,8 +82,7 @@ public class AnnotationConfigApplicationContext extends ApplicationContext {
         for (Method method : configClass.getDeclaredMethods()) {
             if (method.isAnnotationPresent(Bean.class)) {
                 Bean beanAnnotation = method.getAnnotation(Bean.class);
-                String beanName = beanAnnotation.value().isEmpty() ?
-                        method.getName() : beanAnnotation.value();
+                String beanName = beanAnnotation.value().isEmpty() ? method.getName() : beanAnnotation.value();
 
                 BeanDefinition beanDefinition = new BeanDefinition(beanName, method.getReturnType());
                 beanDefinition.setScope(beanAnnotation.scope());
@@ -74,7 +91,7 @@ public class AnnotationConfigApplicationContext extends ApplicationContext {
 
                 registerBeanDefinition(beanName, beanDefinition);
                 System.out.println("    - Registered @Bean method: " + method.getName() +
-                                 " -> " + beanName + " (scope: " + beanAnnotation.scope() + ")");
+                        " -> " + beanName + " (scope: " + beanAnnotation.scope() + ")");
             }
         }
     }
