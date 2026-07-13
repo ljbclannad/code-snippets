@@ -6,7 +6,7 @@ import com.spring.simulation.aop.BeforeAdvice;
 import com.spring.simulation.aop.JdkDynamicAopProxy;
 import com.spring.simulation.demo.app.UserRepository;
 import com.spring.simulation.demo.app.UserService;
-import com.spring.simulation.ioc.AnnotationConfigApplicationContext;
+import com.spring.simulation.ioc.AnnotationConfigWebApplicationContext;
 
 /**
  * 主线容器 Demo。
@@ -25,8 +25,8 @@ public class SpringRefreshDemo {
         System.out.println("║   Spring ApplicationContext.refresh() 流程演示             ║");
         System.out.println("╚════════════════════════════════════════════════════════════╝");
 
-        AnnotationConfigApplicationContext context =
-            new AnnotationConfigApplicationContext("com.spring.simulation.demo");
+        AnnotationConfigWebApplicationContext context =
+            new AnnotationConfigWebApplicationContext("com.spring.simulation.demo");
 
         context.refresh();
 

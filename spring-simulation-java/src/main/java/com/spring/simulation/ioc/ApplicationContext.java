@@ -96,41 +96,73 @@ public class ApplicationContext {
      *
      * 设计原因：加载 Bean 定义
      * 1. 刷新 BeanFactory（如果已存在则销毁重建）
-     *    为什么要先销毁？
-     *    - BeanFactory 里不只是“定义”，还持有上一轮 refresh 的运行时状态
-     *    - 如果不先清理，旧的单例对象、三级缓存、后处理器等状态会污染新一轮启动
-     *    - refresh 的目标是拿到一个“干净的工厂”，确保本轮容器初始化结果可预测
+     * 为什么要先销毁？
+     * - BeanFactory 里不只是“定义”，还持有上一轮 refresh 的运行时状态
+     * - 如果不先清理，旧的单例对象、三级缓存、后处理器等状态会污染新一轮启动
+     * - refresh 的目标是拿到一个“干净的工厂”，确保本轮容器初始化结果可预测
      *
-     *    一般需要销毁/清理的内容：
-     *    - singletonObjects：已经完成初始化的单例 Bean
-     *    - earlySingletonObjects：循环依赖时提前暴露的早期引用
-     *    - singletonFactories：三级缓存中的 Bean 工厂
-     *    - singletonsCurrentlyInCreation：正在创建中的 Bean 标记
-     *    - beanPostProcessors：上一轮注册的 BeanPostProcessor
-     *    - beanDefinitions：上一轮加载的 Bean 定义
+     * 一般需要销毁/清理的内容：
+     * - singletonObjects：已经完成初始化的单例 Bean
+     * - earlySingletonObjects：循环依赖时提前暴露的早期引用
+     * - singletonFactories：三级缓存中的 Bean 工厂
+     * - singletonsCurrentlyInCreation：正在创建中的 Bean 标记
+     * - beanPostProcessors：上一轮注册的 BeanPostProcessor
+     * - beanDefinitions：上一轮加载的 Bean 定义
      *
-     *    实际框架里通常还会触发：
-     *    - DisposableBean.destroy() / 自定义 destroy-method
-     *    - 连接池、线程池、文件句柄等资源释放
+     * 实际框架里通常还会触发：
+     * - DisposableBean.destroy() / 自定义 destroy-method
+     * - 连接池、线程池、文件句柄等资源释放
      *
-     *    最朴素的重建方式通常就是：
-     *    - 先销毁旧 BeanFactory 管理的 Bean 和缓存
-     *    - 再 new 一个新的 BeanFactory
-     *    - 然后重新加载 BeanDefinition
+     * 最朴素的重建方式通常就是：
+     * - 先销毁旧 BeanFactory 管理的 Bean 和缓存
+     * - 再 new 一个新的 BeanFactory
+     * - 然后重新加载 BeanDefinition
      * 2. 加载 Bean 定义（从 XML、注解、Java Config 等）
      * 3. 返回可用的 BeanFactory
      *
      * 这是 Bean 定义注册的阶段，但 Bean 还未实例化
      */
-    protected BeanFactory obtainFreshBeanFactory() {
+    protected BeanFactory obtainFreshBeanFactory() throws Exception {
         System.out.println("\n[Phase 2] obtainFreshBeanFactory()");
+        destroyOldBeanFactoryIfNecessary();
+        refreshBeanFactory();
+        System.out.println("  - Loading bean definitions");
+        loadBeanDefinitions();
+        return beanFactory;
+    }
 
+    /**
+     * 销毁上一轮 refresh 遗留的 BeanFactory 运行时状态。
+     *
+     * 这里只负责清理旧工厂，不负责创建新工厂。
+     */
+    protected void destroyOldBeanFactoryIfNecessary() throws Exception {
+        if (this.beanFactory != null) {
+            System.out.println("  - Destroying existing BeanFactory state");
+            beanFactory.destroySingletons();
+        }
+        registeredBeanNames.clear();
+    }
+
+    /**
+     * 创建一个全新的 BeanFactory，并完成最基础的上下文绑定。
+     *
+     * 这里只负责“拿到一个干净的工厂”，不负责加载 BeanDefinition。
+     */
+    protected void refreshBeanFactory() {
         System.out.println("  - Refreshing BeanFactory");
         this.beanFactory = new BeanFactory();
         this.beanFactory.setApplicationContext(this);
-        System.out.println("  - Loading bean definitions");
-        scanAndRegisterBeans();
-        return beanFactory;
+    }
+
+    /**
+     * 加载 BeanDefinition。
+     *
+     * 基类默认不从外部来源加载定义，只使用编程式注册进来的 BeanDefinition。
+     * 具体上下文（如注解配置、XML 配置）应覆盖这个方法，接入自己的定义加载策略。
+     */
+    protected void loadBeanDefinitions() throws Exception {
+        System.out.println("  - No external bean definition source configured, using registered definitions only");
     }
 
     /**
@@ -202,8 +234,7 @@ public class ApplicationContext {
      * 实际 Spring 会检查 classpath 中是否存在 Servlet 相关类
      */
     protected boolean isWebEnvironment() {
-        // 简化实现：可以通过系统属性或环境变量判断
-        return System.getProperty("spring.web.enabled", "true").equals("true");
+        return false;
     }
 
     /**
@@ -392,10 +423,6 @@ public class ApplicationContext {
         System.out.println("\n[Phase 12] finishRefresh()");
         System.out.println("  - Publishing ContextRefreshedEvent");
         System.out.println("  - Starting lifecycle processors");
-    }
-
-    protected void scanAndRegisterBeans() {
-        System.out.println("  - Scanning for bean definitions...");
     }
 
     private void instantiateSingletons() throws Exception {

@@ -3,6 +3,7 @@ package com.spring.simulation.ioc;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
@@ -45,6 +46,10 @@ public class BeanFactory {
     // BeanPostProcessor 列表：Bean 初始化前后的扩展点
     // 设计原因：提供统一的扩展机制，AOP 代理就是在这里创建的
     private List<BeanPostProcessor> beanPostProcessors = new ArrayList<>();
+
+    // 需要在容器关闭时执行销毁回调的 Bean 注册表
+    // 设计原因：不是所有单例 Bean 都需要 destroy()，单独维护更符合职责划分
+    private Map<String, DisposableBean> disposableBeans = new LinkedHashMap<>();
 
     // 标志位：是否正在创建 BeanPostProcessor
     // 设计原因：BeanPostProcessor 的创建不应该被其他 BeanPostProcessor 处理，避免循环依赖
@@ -237,6 +242,10 @@ public class BeanFactory {
         System.out.println("[Bean Lifecycle] 6. BeanPostProcessor.postProcessAfterInitialization");
         bean = applyBeanPostProcessorsAfterInitialization(bean, beanName);
 
+        // ========== 步骤 7: 注册销毁回调 ==========
+        // 设计原因：容器关闭时不应再临时扫描所有单例 Bean，而是在创建完成时登记需要销毁的 Bean
+        registerDisposableBeanIfNecessary(beanName, beanDefinition, bean);
+
         System.out.println("[Bean Lifecycle] Bean creation completed: " + beanName + "\n");
 
         return bean;
@@ -392,7 +401,8 @@ public class BeanFactory {
                 Object dependency = resolveDependency(field.getType());
                 field.set(bean, dependency);
                 System.out.println(
-                        "   [Autowired] Injected " + field.getType().getSimpleName() + " into " + bean.getClass().getSimpleName()
+                        "   [Autowired] Injected " + field.getType().getSimpleName() + " into "
+                                + bean.getClass().getSimpleName()
                                 + " (field)");
             }
         }
@@ -408,7 +418,8 @@ public class BeanFactory {
                     Object dependency = resolveDependency(paramType);
                     method.invoke(bean, dependency);
                     System.out.println(
-                            "   [Autowired] Injected " + paramType.getSimpleName() + " into " + bean.getClass().getSimpleName() +
+                            "   [Autowired] Injected " + paramType.getSimpleName() + " into "
+                                    + bean.getClass().getSimpleName() +
                                     " (setter: " + method.getName() + ")");
                 }
             }
@@ -539,15 +550,48 @@ public class BeanFactory {
         return result;
     }
 
+    /**
+     * 注册需要销毁回调的 Bean。
+     *
+     * 只有单例 Bean 且实现了 DisposableBean 时才需要登记。
+     * prototype Bean 的生命周期由调用方管理，容器通常不负责回调 destroy。
+     */
+    private void registerDisposableBeanIfNecessary(String beanName, BeanDefinition beanDefinition, Object bean) {
+        if (beanDefinition.isSingleton() && bean instanceof DisposableBean) {
+            disposableBeans.put(beanName, (DisposableBean) bean);
+            System.out.println("   [DisposableBean] Registered for destroy callback: " + beanName);
+        }
+    }
+
     public void destroySingletons() throws Exception {
         System.out.println("\n[Bean Lifecycle] ========== Destroying Singleton Beans ==========");
-        for (Map.Entry<String, Object> entry : singletonObjects.entrySet()) {
-            Object bean = entry.getValue();
-            if (bean instanceof DisposableBean) {
-                System.out.println("[DisposableBean] Destroying: " + entry.getKey());
-                ((DisposableBean) bean).destroy();
-            }
+        destroyDisposableBeans();
+        clearSingletonBeans();
+    }
+
+    /**
+     * 执行 DisposableBean 的销毁回调。
+     */
+    private void destroyDisposableBeans() throws Exception {
+        // 按注册逆序销毁更贴近真实容器行为：后创建的对象通常更先销毁
+        List<Map.Entry<String, DisposableBean>> entries = new ArrayList<>(disposableBeans.entrySet());
+        for (int i = entries.size() - 1; i >= 0; i--) {
+            Map.Entry<String, DisposableBean> entry = entries.get(i);
+            System.out.println("[DisposableBean] Destroying: " + entry.getKey());
+            entry.getValue().destroy();
         }
+    }
+
+    /**
+     * 清理单例 Bean 相关缓存，避免旧 refresh 的状态污染下一轮容器启动。
+     */
+    private void clearSingletonBeans() {
+        disposableBeans.clear();
+        singletonObjects.clear();
+        earlySingletonObjects.clear();
+        singletonFactories.clear();
+        singletonsCurrentlyInCreation.clear();
+        beanPostProcessors.clear();
     }
 
     public Map<String, BeanDefinition> getBeanDefinitions() {
