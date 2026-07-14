@@ -8,6 +8,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
+import com.spring.simulation.spel.SpelExpressionParser;
+
 public class BeanFactory {
     // Bean 定义注册表：存储所有 Bean 的元数据（类信息、作用域等）
     private Map<String, BeanDefinition> beanDefinitions = new HashMap<>();
@@ -55,7 +57,14 @@ public class BeanFactory {
     // 设计原因：BeanPostProcessor 的创建不应该被其他 BeanPostProcessor 处理，避免循环依赖
     private boolean creatingBeanPostProcessor = false;
 
-    private ApplicationContext applicationContext;
+    // BeanFactory 动态加载 Bean 类、代理类或扩展类时使用的默认类加载器。
+    private ClassLoader beanClassLoader = BeanFactory.class.getClassLoader();
+
+    // 用于统一解析 ${...} 占位符与 #{...} 表达式。
+    private SpelExpressionParser expressionParser;
+
+    // 容器基础设施的按类型注入映射，不需要对应的 BeanDefinition。
+    private final Map<Class<?>, Object> resolvableDependencies = new HashMap<>();
 
     public void registerBeanDefinition(String beanName, BeanDefinition beanDefinition) {
         if (beanDefinitions.containsKey(beanName)) {
@@ -66,15 +75,83 @@ public class BeanFactory {
         System.out.println("[IoC] Registered bean definition: " + beanName);
     }
 
+    /**
+     * 注册一个已经存在的单例对象。
+     *
+     * 该对象不需要 BeanDefinition，也不会再次经历实例化和初始化流程。
+     */
+    public void registerSingleton(String beanName, Object singletonObject) {
+        if (beanDefinitions.containsKey(beanName) || singletonObjects.containsKey(beanName)) {
+            throw new IllegalStateException("Bean already exists: " + beanName);
+        }
+        singletonObjects.put(beanName, singletonObject);
+        System.out.println("[IoC] Registered singleton: " + beanName);
+    }
+
+    /**
+     * 判断当前工厂中是否已经存在指定名称的 Bean。
+     *
+     * 已注册的 BeanDefinition 和已存在的单例对象都视为已存在。
+     */
+    public boolean containsBean(String beanName) {
+        return beanDefinitions.containsKey(beanName) || singletonObjects.containsKey(beanName);
+    }
+
+    /**
+     * 注册无需 BeanDefinition 的基础设施依赖，供 @Autowired 按类型直接注入。
+     */
+    public void registerResolvableDependency(Class<?> dependencyType, Object dependency) {
+        if (!dependencyType.isInstance(dependency)) {
+            throw new IllegalArgumentException("Dependency does not implement type: " + dependencyType.getName());
+        }
+        resolvableDependencies.put(dependencyType, dependency);
+    }
+
     public void addBeanPostProcessor(BeanPostProcessor processor) {
         beanPostProcessors.add(processor);
     }
 
-    public void setApplicationContext(ApplicationContext applicationContext) {
-        this.applicationContext = applicationContext;
+    /**
+     * 设置 BeanFactory 的默认类加载器。
+     */
+    public void setBeanClassLoader(ClassLoader beanClassLoader) {
+        this.beanClassLoader = beanClassLoader != null ? beanClassLoader : BeanFactory.class.getClassLoader();
+    }
+
+    public ClassLoader getBeanClassLoader() {
+        return beanClassLoader;
+    }
+
+    /**
+     * 按类名加载 Bean 类，但不触发类的静态初始化。
+     */
+    public Class<?> loadBeanClass(String className) throws ClassNotFoundException {
+        return Class.forName(className, false, beanClassLoader);
+    }
+
+    /**
+     * 设置用于解析 @Value 内容的占位符与表达式解析器。
+     */
+    public void setExpressionParser(SpelExpressionParser expressionParser) {
+        this.expressionParser = expressionParser;
+    }
+
+    /**
+     * 解析 ${...}、#{...} 或字面量值。
+     */
+    public Object resolveValue(String value) {
+        if (expressionParser == null) {
+            throw new IllegalStateException("Expression parser has not been configured");
+        }
+        return expressionParser.parseExpression(value);
     }
 
     public Object getBean(String beanName) throws Exception {
+        Object singleton = getSingleton(beanName);
+        if (singleton != null) {
+            return singleton;
+        }
+
         if (!beanDefinitions.containsKey(beanName)) {
             throw new Exception("Bean not found: " + beanName);
         }
@@ -84,7 +161,7 @@ public class BeanFactory {
         // 单例 Bean 的获取逻辑（三级缓存查找）
         if (beanDefinition.isSingleton()) {
             // 尝试从三级缓存中获取 Bean
-            Object singleton = getSingleton(beanName);
+            singleton = getSingleton(beanName);
             if (singleton != null) {
                 return singleton;
             }
@@ -226,7 +303,7 @@ public class BeanFactory {
         populateBean(bean);
 
         // ========== 步骤 3: Aware 接口回调 ==========
-        // 设计原因：让 Bean 感知容器内部对象（BeanName、BeanFactory、ApplicationContext）
+        // 设计原因：让 Bean 感知 BeanFactory 自身对象（BeanName、BeanFactory）
         System.out.println("[Bean Lifecycle] 3. Invoke Aware interfaces");
         invokeAwareMethods(beanName, bean);
 
@@ -457,7 +534,7 @@ public class BeanFactory {
      * 设计原因：
      * 1. 有些 Bean 需要知道自己在容器中的名称（BeanNameAware）
      * 2. 有些 Bean 需要手动从容器获取其他 Bean（BeanFactoryAware）
-     * 3. 有些 Bean 需要发布事件或访问环境变量（ApplicationContextAware）
+     * ApplicationContextAware 等上下文级回调由 ApplicationContextAwareProcessor 处理。
      *
      * 为什么不直接在构造器中传入？
      * 因为这些是可选的，不是所有 Bean 都需要，通过接口实现按需获取更灵活
@@ -473,10 +550,6 @@ public class BeanFactory {
             ((BeanFactoryAware) bean).setBeanFactory(this);
         }
 
-        if (bean instanceof ApplicationContextAware && applicationContext != null) {
-            System.out.println("   [Aware] Invoking ApplicationContextAware.setApplicationContext");
-            ((ApplicationContextAware) bean).setApplicationContext(applicationContext);
-        }
     }
 
     /**
@@ -614,6 +687,12 @@ public class BeanFactory {
      * @return 匹配的 Bean 实例，如果找不到或找到多个则返回 null
      */
     public Object getBeanByType(Class<?> type) throws Exception {
+        Object resolvableDependency = resolvableDependencies.get(type);
+        if (resolvableDependency != null) {
+            System.out.println("[IoC] Resolved infrastructure dependency by type: " + type.getSimpleName());
+            return resolvableDependency;
+        }
+
         Object matchedBean = null;
         String matchedBeanName = null;
         int matchCount = 0;

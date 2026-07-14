@@ -6,15 +6,12 @@ import java.util.List;
 import com.spring.simulation.environment.Environment;
 
 public class ApplicationContext {
+    // 在这里创建的目的是保证：当前 Context 内，按 Bean 名称从容器取环境对象，身份完全一致。
     private final Environment environment = new Environment();
     private BeanFactory beanFactory = new BeanFactory();
     private List<BeanPostProcessor> beanPostProcessors = new ArrayList<>();
     private List<BeanFactoryPostProcessor> beanFactoryPostProcessors = new ArrayList<>();
     private List<String> registeredBeanNames = new ArrayList<>();
-
-    public ApplicationContext() {
-        beanFactory.setApplicationContext(this);
-    }
 
     /**
      * Spring 容器初始化的核心方法：refresh()
@@ -159,7 +156,6 @@ public class ApplicationContext {
     protected void refreshBeanFactory() {
         System.out.println("  - Refreshing BeanFactory");
         this.beanFactory = new BeanFactory();
-        this.beanFactory.setApplicationContext(this);
     }
 
     /**
@@ -175,19 +171,88 @@ public class ApplicationContext {
     /**
      * 阶段 3: 准备 BeanFactory
      *
-     * 设计原因：配置 BeanFactory 的标准特性
+     * 设计目的：将 ApplicationContext 持有的基础设施能力配置给 BeanFactory。
+     *
+     * - ApplicationContext 负责持有并组织 Environment、类加载器、资源加载、事件发布等基础设施。
+     * - BeanFactory 负责在创建和管理业务 Bean 时使用这些能力。
+     * - prepareBeanFactory() 就是两者的能力装配阶段：不创建业务 Bean，只让 BeanFactory 具备
+     * 解析配置、加载类、处理生命周期回调等基础能力。
+     *
      * 1. 设置类加载器（用于加载 Bean 的 Class）
      * 2. 注册默认的 BeanPostProcessor（如处理 Aware 接口的处理器）
      * 3. 注册环境相关的 Bean（Environment、SystemProperties 等）
+     *
+     * 与 obtainFreshBeanFactory() 的区别：
+     * - obtainFreshBeanFactory() 负责销毁旧工厂、创建新工厂，并加载用户声明的 BeanDefinition；
+     * 它解决的是“业务 Bean 如何被定义”。
+     * - prepareBeanFactory() 在新工厂和用户定义都准备好后，为工厂补充 ApplicationContext
+     * 提供的基础设施；它解决的是“工厂具备哪些管理 Bean 的能力”。
+     *
+     * 例如 environment 是 ApplicationContext 已持有的对象，不是扫描得到的业务 Bean。
+     * 在此阶段注册，既能确保新 BeanFactory 已存在，也能先检查用户是否已声明同名 Bean，
+     * 避免默认基础设施覆盖用户定义。此时仍不会创建普通业务 Bean。
      */
     protected void prepareBeanFactory() {
-        System.out.println("\n[Phase 3] prepareBeanFactory()");
-        System.out.println("  - Setting class loader");
-        System.out.println("  - Registering default bean post processors");
-        System.out.println("  - Registering environment beans");
+        // 1. Environment 使用同一实例注册为 singleton（已实现）
+        // 2. 设置默认 ClassLoader（已实现）
+        // 3. 将 ApplicationContextAware 回调抽为 ApplicationContextAwareProcessor（已实现）
+        // 4. 支持按类型注入 BeanFactory / ApplicationContext（已实现）
+        // 5. 配置占位符与表达式解析器（已实现，@Value 注入待接入）
+        // 6. 最后再考虑监听器探测、LoadTimeWeaver
 
+        System.out.println("\n[Phase 3] prepareBeanFactory()");
+        // 统一动态加载 Bean 类和创建代理类时使用的 ClassLoader，避免各扩展点自行选择导致类型不一致。
+        configureBeanClassLoader();
+        // 将 ${...} 和 #{...} 的解析集中到 BeanFactory，供后续 BeanPostProcessor 统一处理 @Value。
+        configureExpressionParser();
+        // 注册容器自身，供业务 Bean 通过 @Autowired 按类型获取基础设施对象。
+        registerResolvableDependencies();
+        // 注册上下文级后处理器；后续每个业务 Bean 创建时都会经过它，按需触发 ApplicationContextAware 回调。
+        registerApplicationContextAwareProcessor();
         // 案例：注册环境相关的 Bean
         registerEnvironmentBean();
+    }
+
+    /**
+     * 将当前线程的上下文类加载器设置为 BeanFactory 的默认类加载器。
+     *
+     * 后续按类名加载 Bean 类、扫描第三方模块或创建代理类时，都应统一使用该加载器。
+     */
+    private void configureBeanClassLoader() {
+        ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
+        if (classLoader == null) {
+            classLoader = getClass().getClassLoader();
+        }
+        beanFactory.setBeanClassLoader(classLoader);
+        System.out.println("  - Setting class loader: " + classLoader.getClass().getSimpleName());
+    }
+
+    /**
+     * 配置统一的占位符与表达式解析器。
+     *
+     * ${...} 通过当前 Context 的 Environment 查找配置，#{...} 交由 SpEL 解析器计算。
+     * 具体的 @Value 字段注入将在 BeanPostProcessor 创建 Bean 时调用 BeanFactory.resolveValue()。
+     */
+    private void configureExpressionParser() {
+        beanFactory.setExpressionParser(new com.spring.simulation.spel.SpelExpressionParser(environment));
+        System.out.println("  - Configuring placeholder and expression parser");
+    }
+
+    /**
+     * 注册不需要 BeanDefinition 的容器基础设施，避免将它们误当成普通业务 Bean 创建。
+     */
+    private void registerResolvableDependencies() {
+        beanFactory.registerResolvableDependency(BeanFactory.class, beanFactory);
+        beanFactory.registerResolvableDependency(ApplicationContext.class, this);
+        System.out.println("  - Registering resolvable dependencies: BeanFactory, ApplicationContext");
+    }
+
+    /**
+     * 提前注册上下文级 Aware 回调处理器，使其在业务 Bean 初始化前生效。
+     */
+    private void registerApplicationContextAwareProcessor() {
+        beanFactory.addBeanPostProcessor(new ApplicationContextAwareProcessor(this));
+        System.out.println("  - Registering ApplicationContextAwareProcessor");
     }
 
     /**
@@ -195,13 +260,16 @@ public class ApplicationContext {
      * 模拟 Spring 注册 Environment、SystemProperties、SystemEnvironment 等内置 Bean
      */
     private void registerEnvironmentBean() {
-        // 创建一个简单的环境 Bean（模拟 Spring 的 Environment）
-        BeanDefinition envBeanDef = new BeanDefinition("environment", Environment.class);
-        beanFactory.registerBeanDefinition("environment", envBeanDef);
-        registeredBeanNames.add("environment");
+        if (beanFactory.containsBean("environment")) {
+            System.out.println("    * Using existing environment bean");
+            return;
+        }
+
+        // 直接注册 ApplicationContext 已持有的 Environment，避免 BeanFactory 再创建一个新实例。
+        beanFactory.registerSingleton("environment", environment);
 
         System.out.println("    * Registered environment bean: 'environment' -> " + Environment.class.getSimpleName());
-        System.out.println("      (用于访问系统属性、环境变量等)");
+        System.out.println("      (与 ApplicationContext 共享同一个实例，用于访问系统属性、环境变量等)");
     }
 
     /**

@@ -6,6 +6,8 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import com.spring.simulation.environment.Environment;
+
 /**
  * SpEL 表达式解析器（简化版）
  *
@@ -22,13 +24,15 @@ import java.util.regex.Pattern;
  * 本实现为简化版，支持基础功能
  */
 public class SpelExpressionParser {
-    private Map<String, Object> context = new HashMap<>();
-
-    // 系统属性和环境变量
-    static {
-    }
+    private final Map<String, Object> context = new HashMap<>();
+    private final Environment environment;
 
     public SpelExpressionParser() {
+        this(new Environment());
+    }
+
+    public SpelExpressionParser(Environment environment) {
+        this.environment = environment != null ? environment : new Environment();
         // 注册系统属性和环境变量
         context.put("systemProperties", System.getProperties());
         context.put("systemEnvironment", System.getenv());
@@ -67,8 +71,14 @@ public class SpelExpressionParser {
      * 解析属性占位符
      */
     private Object resolveProperty(String propertyName) {
+        // 优先使用 ApplicationContext 注入的统一 Environment。
+        String value = environment.getProperty(propertyName);
+        if (value != null) {
+            return value;
+        }
+
         // 从系统属性获取
-        String value = System.getProperty(propertyName);
+        value = System.getProperty(propertyName);
         if (value != null) {
             return value;
         }
