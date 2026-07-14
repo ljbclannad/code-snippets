@@ -3,6 +3,7 @@ package com.lx.governance.aichat.performance;
 import com.lx.governance.aichat.service.AiChatService;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
@@ -17,7 +18,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @SpringBootTest
-@ActiveProfiles("test")
+@EnabledIfSystemProperty(named = "ai.external.tests", matches = "true")
+@ActiveProfiles("external-test")
 @Slf4j
 class AiChatPerformanceTest {
 

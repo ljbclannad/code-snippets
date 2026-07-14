@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.model.ChatModel;
@@ -13,6 +14,7 @@ import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 
 /**
@@ -20,6 +22,8 @@ import org.springframework.test.context.TestPropertySource;
  * 验证 ChatModel 是否正确配置和工作
  */
 @SpringBootTest
+@EnabledIfSystemProperty(named = "ai.external.tests", matches = "true")
+@ActiveProfiles("external-test")
 @TestPropertySource(properties = {
         "spring.ai.openai.api-key=test-key",
         "spring.ai.openai.base-url=https://api.deepseek.com",

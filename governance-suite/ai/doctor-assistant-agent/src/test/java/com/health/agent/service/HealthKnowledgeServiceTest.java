@@ -36,7 +36,8 @@ class HealthKnowledgeServiceTest {
         result.setHitReason("hybrid");
         result.setScore(0.91);
         result.setApplicableScope("doctor_assistant");
-        when(client.searchMedicalKnowledge("高血压运动", 3)).thenReturn(List.of(result));
+        when(client.searchMedicalKnowledge("高血压运动", 3, null, null, null, null))
+                .thenReturn(List.of(result));
 
         SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
         HealthKnowledgeService service = new HealthKnowledgeService(mapper, client, new AgentMetrics(meterRegistry));
@@ -61,7 +62,8 @@ class HealthKnowledgeServiceTest {
         HealthKnowledgeMapper mapper = mock(HealthKnowledgeMapper.class);
         KnowledgeBaseClient client = mock(KnowledgeBaseClient.class);
         when(client.isEnabled()).thenReturn(true);
-        when(client.searchMedicalKnowledge("减重饮食", 3)).thenThrow(new IOException("kb unavailable"));
+        when(client.searchMedicalKnowledge("减重饮食", 3, null, null, null, null))
+                .thenThrow(new IOException("kb unavailable"));
 
         HealthKnowledge local = HealthKnowledge.builder()
                 .title("本地减重饮食建议")

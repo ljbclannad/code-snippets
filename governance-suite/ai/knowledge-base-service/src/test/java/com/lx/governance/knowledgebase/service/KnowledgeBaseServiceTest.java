@@ -3,9 +3,11 @@ package com.lx.governance.knowledgebase.service;
 import com.lx.governance.knowledgebase.entity.KnowledgeBase;
 import com.lx.governance.knowledgebase.mapper.KnowledgeBaseMapper;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.annotation.Transactional;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -14,6 +16,8 @@ import static org.junit.jupiter.api.Assertions.*;
  * 知识库服务测试
  */
 @SpringBootTest
+@EnabledIfSystemProperty(named = "ai.external.tests", matches = "true")
+@ActiveProfiles("external-test")
 @Transactional  // 测试后回滚
 public class KnowledgeBaseServiceTest {
 

@@ -1,37 +1,39 @@
 package com.lx.governance.aichat.config;
 
+import java.util.Map;
+
 import org.junit.jupiter.api.Test;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.annotation.Import;
-import org.springframework.test.context.TestPropertySource;
+import org.springframework.boot.context.properties.bind.Bindable;
+import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@SpringBootTest
-@Import(TestConfig.class)
-@TestPropertySource(properties = {
-    "ai.context.total-budget=4000",
-    "ai.context.user-message-reserve=500",
-    "ai.context.core-profile-budget=800",
-    "ai.context.relevant-memories-budget=1200",
-    "ai.context.conversation-history-budget=600",
-    "ai.context.extended-profile-budget=400",
-    "ai.context.memory.max-count=10",
-    "ai.context.memory.similarity-threshold=0.7",
-    "ai.context.memory.short-term-days=3",
-    "ai.context.memory.mid-term-days=30",
-    "ai.context.memory.enable-deduplication=true",
-    "ai.context.conversation.max-rounds=5",
-    "ai.context.conversation.enabled=true",
-    "ai.context.alert.enabled=true",
-    "ai.context.alert.prompt-tokens-threshold=6000",
-    "ai.context.alert.total-tokens-threshold=28000"
-})
 class ContextBudgetPropertiesTest {
 
-    @Autowired
-    private ContextBudgetProperties properties;
+    private final ContextBudgetProperties properties = bind(Map.ofEntries(
+        Map.entry("ai.context.total-budget", "4000"),
+        Map.entry("ai.context.user-message-reserve", "500"),
+        Map.entry("ai.context.core-profile-budget", "800"),
+        Map.entry("ai.context.relevant-memories-budget", "1200"),
+        Map.entry("ai.context.conversation-history-budget", "600"),
+        Map.entry("ai.context.extended-profile-budget", "400"),
+        Map.entry("ai.context.memory.max-count", "10"),
+        Map.entry("ai.context.memory.similarity-threshold", "0.7"),
+        Map.entry("ai.context.memory.short-term-days", "3"),
+        Map.entry("ai.context.memory.mid-term-days", "30"),
+        Map.entry("ai.context.memory.enable-deduplication", "true"),
+        Map.entry("ai.context.conversation.max-rounds", "5"),
+        Map.entry("ai.context.conversation.enabled", "true"),
+        Map.entry("ai.context.alert.enabled", "true"),
+        Map.entry("ai.context.alert.prompt-tokens-threshold", "6000"),
+        Map.entry("ai.context.alert.total-tokens-threshold", "28000")
+    ));
+
+    private static ContextBudgetProperties bind(Map<String, Object> properties) {
+        return new Binder(new MapConfigurationPropertySource(properties))
+            .bindOrCreate("ai.context", Bindable.of(ContextBudgetProperties.class));
+    }
 
     @Test
     void shouldLoadBudgetConfiguration() {

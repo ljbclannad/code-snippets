@@ -38,6 +38,7 @@ import com.lx.governance.vectormemory.support.observability.MemoryLifecycleAudit
 import com.lx.governance.vectormemory.support.observability.MemoryLifecycleMetricsService;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -64,7 +65,8 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 @Slf4j
 @SpringBootTest
-@ActiveProfiles("test")
+@EnabledIfSystemProperty(named = "ai.external.tests", matches = "true")
+@ActiveProfiles("external-test")
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 @Disabled("需要真实的 Redis 和 Milvus 环境，CI/CD 环境中跳过")
 class VectorMemoryEndToEndTest {

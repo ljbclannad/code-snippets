@@ -12,8 +12,10 @@ import com.lx.governance.vectormemory.support.observability.*;
 
 import lombok.extern.slf4j.Slf4j;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -26,6 +28,8 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 @Slf4j
 @SpringBootTest
+@EnabledIfSystemProperty(named = "ai.external.tests", matches = "true")
+@ActiveProfiles("external-test")
 class EmbeddingServiceTest {
 
     @Autowired

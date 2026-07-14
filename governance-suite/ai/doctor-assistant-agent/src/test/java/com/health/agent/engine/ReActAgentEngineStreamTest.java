@@ -652,8 +652,9 @@ class ReActAgentEngineStreamTest {
         assertTrue(firstPrompt.contains("Current Patient Message"));
         assertTrue(firstPrompt.contains("Profile Snapshot Summary"));
         assertTrue(firstPrompt.contains("Session Context Summary"));
-        assertTrue(firstPrompt.contains("Short-term Memory Snapshot"));
-        assertTrue(firstPrompt.contains("Long-term Memory Snapshot"));
+        assertTrue(firstPrompt.contains("Memory Snapshot Summary"));
+        assertTrue(firstPrompt.contains("shortTerm"));
+        assertTrue(firstPrompt.contains("longTerm"));
         assertTrue(firstPrompt.contains("Task-specific Analysis Focus"));
         assertTrue(firstPrompt.contains("平台期风险"));
         assertTrue(firstPrompt.contains("近7天体重在68.4kg到68.7kg之间波动"));

@@ -48,8 +48,8 @@ public class ChatHistorySearchService {
             // 使用简单的文本匹配查询（More Like This 需要更复杂的配置）
             // 这里先实现基础版本，提取关键词进行搜索
             Criteria criteria = new Criteria("customerId").is(customerId)
-                    .and(new Criteria("userMessage").contains(message)
-                            .or("aiResponse").contains(message));
+                    .and(new Criteria("userMessage").matches(message)
+                            .or("aiResponse").matches(message));
 
             CriteriaQuery query = new CriteriaQuery(criteria);
             query.setPageable(PageRequest.of(0, limit));

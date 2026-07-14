@@ -5,6 +5,7 @@ import com.lx.governance.profile.dto.UserProfileDTO;
 import com.lx.governance.profile.service.RedisProfileService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
@@ -24,7 +25,8 @@ import static org.junit.jupiter.api.Assertions.*;
  * - 真实的 Redis 连接
  */
 @SpringBootTest
-@ActiveProfiles("test")
+@EnabledIfSystemProperty(named = "ai.external.tests", matches = "true")
+@ActiveProfiles("external-test")
 @Import(TestRedisConfig.class)
 class ProfileCacheIntegrationTest {
 

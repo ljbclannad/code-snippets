@@ -49,11 +49,17 @@ public class TaskTriggerRouter implements PlatformTaskRouter {
     );
 
     private static final List<String> HIGH_RISK_MEDICAL_KEYWORDS = List.of(
-        "胸痛", "呼吸困难", "昏迷", "抽搐", "自杀", "轻生", "急诊", "晕厥", "黑便", "呕血"
+        "胸痛", "胸闷", "呼吸困难", "喘不上气", "喘不过气", "昏迷", "抽搐", "自杀", "轻生", "急诊", "晕厥", "黑便", "呕血"
     );
 
     private static final List<String> MEDICAL_SENSITIVE_FACT_KEYWORDS = List.of(
         "停药", "换药", "加量", "减量", "禁忌", "处方", "确诊", "诊断", "急症"
+    );
+
+    private static final List<String> MEDICATION_KEYWORDS = List.of("药", "药物");
+
+    private static final List<String> MEDICATION_CHANGE_KEYWORDS = List.of(
+        "停", "换", "加", "减", "少吃", "少服", "减半", "改用", "自行"
     );
 
     private static final List<String> ANALYSIS_KEYWORDS = List.of(
@@ -118,7 +124,9 @@ public class TaskTriggerRouter implements PlatformTaskRouter {
         boolean medicalKnowledgeIntent = hasIntent(intent, INTENT_MEDICAL_KNOWLEDGE_QA);
         boolean medicalKnowledgeSignal = medicalKnowledgeIntent || containsAny(message, MEDICAL_KNOWLEDGE_KEYWORDS);
         boolean highRiskMedicalSignal = containsAny(message, HIGH_RISK_MEDICAL_KEYWORDS);
-        boolean medicalSensitiveFactSignal = containsAny(message, MEDICAL_SENSITIVE_FACT_KEYWORDS);
+        boolean medicalSensitiveFactSignal = containsAny(message, MEDICAL_SENSITIVE_FACT_KEYWORDS)
+            || (containsAny(message, MEDICATION_KEYWORDS)
+                && containsAny(message, MEDICATION_CHANGE_KEYWORDS));
 
         if (highRiskMedicalSignal) {
             return agent(

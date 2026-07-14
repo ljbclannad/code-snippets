@@ -1,0 +1,25 @@
+spring:
+  datasource:
+    url: ${AI_TEST_DB_URL}
+    username: ${AI_TEST_DB_USERNAME}
+    password: ${AI_TEST_DB_PASSWORD}
+  data:
+    redis:
+      host: ${AI_TEST_REDIS_HOST}
+      port: ${AI_TEST_REDIS_PORT}
+      password: ${AI_TEST_REDIS_PASSWORD:}
+  ai:
+    vectorstore:
+      milvus:
+        client:
+          host: ${AI_TEST_MILVUS_HOST}
+          port: ${AI_TEST_MILVUS_PORT}
+        database-name: ${AI_TEST_MILVUS_DATABASE}
+  cloud:
+    nacos:
+      discovery:
+        enabled: false
+
+knowledge-base:
+  storage:
+    base-path: ${AI_TEST_KNOWLEDGE_BASE_STORAGE_PATH}

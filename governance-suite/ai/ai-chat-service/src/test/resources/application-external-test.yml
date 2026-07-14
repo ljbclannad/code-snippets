@@ -1,0 +1,27 @@
+spring:
+  datasource:
+    url: ${AI_TEST_DB_URL}
+    username: ${AI_TEST_DB_USERNAME}
+    password: ${AI_TEST_DB_PASSWORD}
+  data:
+    redis:
+      host: ${AI_TEST_REDIS_HOST}
+      port: ${AI_TEST_REDIS_PORT}
+      password: ${AI_TEST_REDIS_PASSWORD:}
+  rabbitmq:
+    host: ${AI_TEST_RABBITMQ_HOST}
+    port: ${AI_TEST_RABBITMQ_PORT}
+    username: ${AI_TEST_RABBITMQ_USERNAME}
+    password: ${AI_TEST_RABBITMQ_PASSWORD}
+  elasticsearch:
+    uris: ${AI_TEST_ELASTICSEARCH_URIS}
+  cloud:
+    nacos:
+      discovery:
+        enabled: false
+
+ai-chat:
+  kb:
+    base-url: ${AI_TEST_KNOWLEDGE_BASE_SERVICE_BASE_URL}
+  agent:
+    base-url: ${AI_TEST_DOCTOR_ASSISTANT_AGENT_BASE_URL}

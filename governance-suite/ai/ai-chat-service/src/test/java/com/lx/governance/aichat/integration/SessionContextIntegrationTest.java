@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
@@ -30,7 +31,8 @@ import com.lx.governance.aichat.service.SessionContextService;
  * 验证从AiChatService到SessionContextService的完整流程
  */
 @SpringBootTest
-@ActiveProfiles("test")
+@EnabledIfSystemProperty(named = "ai.external.tests", matches = "true")
+@ActiveProfiles("external-test")
 class SessionContextIntegrationTest {
 
     @Autowired

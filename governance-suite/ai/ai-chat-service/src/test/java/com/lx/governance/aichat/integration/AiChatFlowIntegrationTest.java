@@ -4,6 +4,7 @@ import com.lx.governance.aichat.dto.SessionContext;
 import com.lx.governance.aichat.service.AiChatService;
 import com.lx.governance.aichat.service.SessionContextService;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -12,7 +13,8 @@ import org.springframework.test.context.ActiveProfiles;
 import static org.junit.jupiter.api.Assertions.*;
 
 @SpringBootTest
-@ActiveProfiles("test")
+@EnabledIfSystemProperty(named = "ai.external.tests", matches = "true")
+@ActiveProfiles("external-test")
 class AiChatFlowIntegrationTest {
 
     @Autowired(required = false)
