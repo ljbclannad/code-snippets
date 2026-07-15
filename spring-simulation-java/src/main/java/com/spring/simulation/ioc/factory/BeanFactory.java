@@ -14,6 +14,7 @@ import com.spring.simulation.ioc.aware.BeanNameAware;
 import com.spring.simulation.ioc.lifecycle.DisposableBean;
 import com.spring.simulation.ioc.lifecycle.InitializingBean;
 import com.spring.simulation.ioc.scope.BeanScopeHandler;
+import com.spring.simulation.ioc.scope.ScopedProxyFactory;
 import com.spring.simulation.spel.SpelExpressionParser;
 
 public class BeanFactory {
@@ -114,6 +115,19 @@ public class BeanFactory {
             throw new IllegalArgumentException("Dependency does not implement type: " + dependencyType.getName());
         }
         resolvableDependencies.put(dependencyType, dependency);
+    }
+
+    /**
+     * 注册按需获取的基础设施依赖。
+     *
+     * 与固定对象不同，请求、会话一类的依赖必须在注入发生时从当前线程取得，
+     * 不能在 refresh 阶段保存一个过期的实例。
+     */
+    public void registerResolvableDependencyProvider(Class<?> dependencyType, Supplier<?> dependencyProvider) {
+        if (dependencyProvider == null) {
+            throw new IllegalArgumentException("Dependency provider must not be null");
+        }
+        resolvableDependencies.put(dependencyType, dependencyProvider);
     }
 
     public void addBeanPostProcessor(BeanPostProcessor processor) {
@@ -542,9 +556,26 @@ public class BeanFactory {
      * 2. 回退到约定 beanName（兼容现有示例）
      */
     private Object resolveDependency(Class<?> dependencyType) throws Exception {
-        Object dependency = getBeanByType(dependencyType);
-        if (dependency != null) {
-            return dependency;
+        // 可解析依赖（BeanFactory、ServletContext 等）不需要 BeanDefinition。
+        if (resolvableDependencies.containsKey(dependencyType)) {
+            return getBeanByType(dependencyType);
+        }
+
+        String beanName = findBeanNameByType(dependencyType);
+        if (beanName != null) {
+            BeanDefinition beanDefinition = beanDefinitions.get(beanName);
+            if (!beanDefinition.isSingleton() && !beanDefinition.isPrototype()) {
+                // 不能将某次请求/会话的真实对象直接保存到 singleton 中；改为注入代理，
+                // 每次调用再回到当前 scope 获取目标。
+                return ScopedProxyFactory.createProxy(dependencyType, beanName, () -> {
+                    try {
+                        return getBean(beanName);
+                    } catch (Exception e) {
+                        throw new IllegalStateException("Failed to resolve scoped bean: " + beanName, e);
+                    }
+                });
+            }
+            return getBean(beanName);
         }
 
         String dependencyName = dependencyType.getSimpleName();
@@ -715,40 +746,47 @@ public class BeanFactory {
      * @param type 要查找的 Bean 类型
      * @return 匹配的 Bean 实例，如果找不到或找到多个则返回 null
      */
-    public Object getBeanByType(Class<?> type) throws Exception {
+    public <T> T getBeanByType(Class<T> type) throws Exception {
         Object resolvableDependency = resolvableDependencies.get(type);
         if (resolvableDependency != null) {
-            System.out.println("[IoC] Resolved infrastructure dependency by type: " + type.getSimpleName());
-            return resolvableDependency;
-        }
-
-        Object matchedBean = null;
-        String matchedBeanName = null;
-        int matchCount = 0;
-
-        // 遍历所有 Bean 定义，查找类型匹配的 Bean
-        for (Map.Entry<String, BeanDefinition> entry : beanDefinitions.entrySet()) {
-            String beanName = entry.getKey();
-            BeanDefinition beanDefinition = entry.getValue();
-
-            // 检查 Bean 类型是否匹配（包括子类和实现类）
-            if (type.isAssignableFrom(beanDefinition.getBeanClass())) {
-                matchCount++;
-                matchedBean = getBean(beanName);
-                matchedBeanName = beanName;
-
-                // 如果找到多个匹配的 Bean，抛出异常
-                if (matchCount > 1) {
-                    throw new RuntimeException("Expected single matching bean of type [" +
-                            type.getName() + "] but found " + matchCount);
+            if (resolvableDependency instanceof Supplier<?>) {
+                Object resolvedDependency = ((Supplier<?>) resolvableDependency).get();
+                if (!type.isInstance(resolvedDependency)) {
+                    throw new IllegalStateException("Resolvable dependency provider returned an incompatible type: "
+                            + type.getName());
                 }
+                System.out.println("[IoC] Resolved dynamic infrastructure dependency by type: "
+                        + type.getSimpleName());
+                return type.cast(resolvedDependency);
             }
+            System.out.println("[IoC] Resolved infrastructure dependency by type: " + type.getSimpleName());
+            return type.cast(resolvableDependency);
         }
 
-        if (matchedBean != null) {
-            System.out.println("[IoC] Found bean by type: " + type.getSimpleName() + " -> " + matchedBeanName);
+        String beanName = findBeanNameByType(type);
+        if (beanName == null) {
+            return null;
         }
+        Object matchedBean = getBean(beanName);
+        System.out.println("[IoC] Found bean by type: " + type.getSimpleName() + " -> " + beanName);
+        return type.cast(matchedBean);
+    }
 
-        return matchedBean;
+    /**
+     * 查找唯一的类型候选。先完成候选校验，再创建 Bean，避免多候选时产生无意义的实例。
+     */
+    private String findBeanNameByType(Class<?> type) {
+        String matchedBeanName = null;
+        for (Map.Entry<String, BeanDefinition> entry : beanDefinitions.entrySet()) {
+            if (!type.isAssignableFrom(entry.getValue().getBeanClass())) {
+                continue;
+            }
+            if (matchedBeanName != null) {
+                throw new RuntimeException("Expected single matching bean of type ["
+                        + type.getName() + "] but found multiple candidates");
+            }
+            matchedBeanName = entry.getKey();
+        }
+        return matchedBeanName;
     }
 }

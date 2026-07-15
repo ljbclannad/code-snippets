@@ -479,7 +479,10 @@ public class ApplicationContext {
 
     private void instantiateSingletons() throws Exception {
         for (String beanName : registeredBeanNames) {
-            beanFactory.getBean(beanName);
+            BeanDefinition beanDefinition = beanFactory.getBeanDefinition(beanName);
+            if (beanDefinition != null && beanDefinition.isSingleton()) {
+                beanFactory.getBean(beanName);
+            }
         }
     }
 
