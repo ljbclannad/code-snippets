@@ -66,6 +66,9 @@ public class BeanFactory {
     // 容器基础设施的按类型注入映射，不需要对应的 BeanDefinition。
     private final Map<Class<?>, Object> resolvableDependencies = new HashMap<>();
 
+    // 非 singleton/prototype 作用域的运行时处理策略。
+    private final Map<String, BeanScopeHandler> scopeHandlers = new HashMap<>();
+
     public void registerBeanDefinition(String beanName, BeanDefinition beanDefinition) {
         if (beanDefinitions.containsKey(beanName)) {
             throw new IllegalStateException(
@@ -109,6 +112,20 @@ public class BeanFactory {
 
     public void addBeanPostProcessor(BeanPostProcessor processor) {
         beanPostProcessors.add(processor);
+    }
+
+    /**
+     * 注册指定 scope 名称对应的运行时处理策略。
+     */
+    public void registerScope(String scopeName, BeanScopeHandler scopeHandler) {
+        if (scopeName == null || scopeName.isEmpty()) {
+            throw new IllegalArgumentException("Scope name must not be empty");
+        }
+        if (scopeHandler == null) {
+            throw new IllegalArgumentException("Scope handler must not be null");
+        }
+        scopeHandlers.put(scopeName, scopeHandler);
+        System.out.println("[IoC] Registered scope: " + scopeName);
     }
 
     /**
@@ -179,11 +196,17 @@ public class BeanFactory {
             System.out.println("[IoC] Creating new prototype instance: " + beanName);
             return createBean(beanName, beanDefinition);
         } else {
-            // 其他作用域（request、session、application）
-            // 简化实现：当作 prototype 处理
-            System.out
-                    .println("[IoC] Creating new instance for scope '" + beanDefinition.getScope() + "': " + beanName);
-            return createBean(beanName, beanDefinition);
+            BeanScopeHandler scopeHandler = scopeHandlers.get(beanDefinition.getScope());
+            if (scopeHandler == null) {
+                throw new IllegalStateException("No scope handler registered for: " + beanDefinition.getScope());
+            }
+            return scopeHandler.get(beanName, () -> {
+                try {
+                    return createBean(beanName, beanDefinition);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            });
         }
     }
 

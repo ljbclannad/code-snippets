@@ -275,41 +275,13 @@ public class ApplicationContext {
     /**
      * 阶段 4: BeanFactory 后置处理
      *
-     * 设计原因：子类扩展点
-     * 例如：Web 容器会在这里注册 Servlet 相关的作用域（request、session）
-     *
-     * 案例：模拟 Web 容器注册自定义作用域和环境 Bean
-     * 1. 注册 request/session 作用域（Web 环境特有）
-     * 2. 注册 ServletContext、ServletConfig 等 Web 环境 Bean
-     * 3. 添加 Web 相关的依赖解析器
+     * 设计原因：为具体 ApplicationContext 子类保留扩展钩子。
+     * 基类只提供通用 refresh 流程，不判断或处理 Web、Reactive 等具体运行环境；
+     * 子类可在这里注册场景专属的 Scope、可解析依赖或 BeanPostProcessor。
      */
     protected void postProcessBeanFactory() {
         System.out.println("\n[Phase 4] postProcessBeanFactory()");
         System.out.println("  - Hook for subclasses to modify BeanFactory");
-
-        // 案例：模拟 Web 容器的后置处理
-        if (isWebEnvironment()) {
-            System.out.println("  - [Web Container] Registering web-specific scopes:");
-            System.out.println("    * request scope (每个 HTTP 请求一个实例)");
-            System.out.println("    * session scope (每个 HTTP 会话一个实例)");
-            System.out.println("    * application scope (整个 Web 应用一个实例)");
-
-            System.out.println("  - [Web Container] Registering web environment beans:");
-            System.out.println("    * ServletContext (Servlet 上下文)");
-            System.out.println("    * ServletConfig (Servlet 配置)");
-            System.out.println("    * HttpServletRequest (请求对象，request 作用域)");
-            System.out.println("    * HttpSession (会话对象，session 作用域)");
-
-            System.out.println("  - [Web Container] Adding web-aware dependency resolvers");
-        }
-    }
-
-    /**
-     * 判断是否为 Web 环境
-     * 实际 Spring 会检查 classpath 中是否存在 Servlet 相关类
-     */
-    protected boolean isWebEnvironment() {
-        return false;
     }
 
     /**
