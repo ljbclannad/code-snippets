@@ -1,6 +1,8 @@
-package com.spring.simulation.ioc;
+package com.spring.simulation.ioc.factory;
 
 import java.lang.reflect.Method;
+
+import com.spring.simulation.ioc.scope.BeanScope;
 
 /**
  * Bean 定义，存储 Bean 的元数据

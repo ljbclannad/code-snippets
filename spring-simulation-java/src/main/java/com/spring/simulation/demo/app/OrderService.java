@@ -1,6 +1,10 @@
 package com.spring.simulation.demo.app;
 
-import com.spring.simulation.ioc.*;
+import com.spring.simulation.ioc.annotation.Autowired;
+import com.spring.simulation.ioc.annotation.Component;
+import com.spring.simulation.ioc.aware.BeanNameAware;
+import com.spring.simulation.ioc.lifecycle.DisposableBean;
+import com.spring.simulation.ioc.lifecycle.InitializingBean;
 import com.spring.simulation.transaction.Transactional;
 
 @Component

@@ -1,4 +1,7 @@
-package com.spring.simulation.ioc;
+package com.spring.simulation.ioc.aware;
+
+import com.spring.simulation.ioc.context.ApplicationContext;
+import com.spring.simulation.ioc.factory.BeanPostProcessor;
 
 /**
  * 在 Bean 初始化前处理 ApplicationContextAware 回调。

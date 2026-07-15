@@ -12,7 +12,7 @@ import com.spring.simulation.demo.listener.StartupListener;
 import com.spring.simulation.event.ApplicationEventMulticaster;
 import com.spring.simulation.event.ContextClosedEvent;
 import com.spring.simulation.event.ContextRefreshedEvent;
-import com.spring.simulation.ioc.ApplicationContext;
+import com.spring.simulation.ioc.context.ApplicationContext;
 import com.spring.simulation.transaction.TransactionInterceptor;
 
 public class SpringAdvancedDemo {

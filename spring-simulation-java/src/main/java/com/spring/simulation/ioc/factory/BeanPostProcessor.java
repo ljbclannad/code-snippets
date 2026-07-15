@@ -1,4 +1,4 @@
-package com.spring.simulation.ioc;
+package com.spring.simulation.ioc.factory;
 
 public interface BeanPostProcessor {
     Object postProcessBeforeInitialization(Object bean, String beanName) throws Exception;

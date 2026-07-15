@@ -1,7 +1,12 @@
 package com.spring.simulation.constructor;
 
 import com.spring.simulation.environment.Environment;
-import com.spring.simulation.ioc.*;
+import com.spring.simulation.ioc.annotation.Component;
+import com.spring.simulation.ioc.aware.ApplicationContextAware;
+import com.spring.simulation.ioc.aware.BeanFactoryAware;
+import com.spring.simulation.ioc.aware.BeanNameAware;
+import com.spring.simulation.ioc.context.ApplicationContext;
+import com.spring.simulation.ioc.factory.BeanFactory;
 
 /**
  * Aware 接口使用场景演示

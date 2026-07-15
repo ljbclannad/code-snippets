@@ -1,4 +1,4 @@
-package com.spring.simulation.ioc;
+package com.spring.simulation.ioc.scope;
 
 import java.util.Map;
 import java.util.function.Supplier;

@@ -1,6 +1,6 @@
 package com.spring.simulation.demo.app;
 
-import com.spring.simulation.ioc.Component;
+import com.spring.simulation.ioc.annotation.Component;
 import java.util.HashMap;
 import java.util.Map;
 

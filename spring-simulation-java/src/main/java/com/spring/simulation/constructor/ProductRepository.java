@@ -1,6 +1,6 @@
 package com.spring.simulation.constructor;
 
-import com.spring.simulation.ioc.Component;
+import com.spring.simulation.ioc.annotation.Component;
 
 @Component
 public class ProductRepository {

@@ -6,7 +6,7 @@ import com.spring.simulation.aop.BeforeAdvice;
 import com.spring.simulation.aop.JdkDynamicAopProxy;
 import com.spring.simulation.demo.app.UserRepository;
 import com.spring.simulation.demo.app.UserService;
-import com.spring.simulation.ioc.AnnotationConfigWebApplicationContext;
+import com.spring.simulation.ioc.context.AnnotationConfigWebApplicationContext;
 
 /**
  * 主线容器 Demo。

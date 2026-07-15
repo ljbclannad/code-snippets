@@ -1,4 +1,10 @@
-package com.spring.simulation.ioc;
+package com.spring.simulation.ioc.context;
+
+import com.spring.simulation.ioc.scope.BeanScope;
+import com.spring.simulation.ioc.scope.RequestScope;
+import com.spring.simulation.ioc.scope.RequestScopeContextHolder;
+import com.spring.simulation.ioc.scope.SessionScope;
+import com.spring.simulation.ioc.scope.SessionScopeContextHolder;
 
 /**
  * 更贴近 Spring Web 场景的注解配置上下文。
@@ -30,7 +36,8 @@ public class AnnotationConfigWebApplicationContext extends AnnotationConfigAppli
         System.out.println("  - [Web Container] Registering web-specific scopes:");
         getBeanFactory().registerScope(BeanScope.REQUEST, new RequestScope());
         System.out.println("    * request scope (每个 HTTP 请求一个实例，已注册)");
-        System.out.println("    * session scope (每个 HTTP 会话一个实例，待实现)");
+        getBeanFactory().registerScope(BeanScope.SESSION, new SessionScope());
+        System.out.println("    * session scope (每个 HTTP 会话一个实例，已注册)");
         System.out.println("    * application scope (整个 Web 应用一个实例，待实现)");
 
         System.out.println("  - [Web Container] Registering web environment beans:");
@@ -54,6 +61,27 @@ public class AnnotationConfigWebApplicationContext extends AnnotationConfigAppli
      */
     public void endRequest() {
         RequestScopeContextHolder.endRequest();
+    }
+
+    /**
+     * 模拟 Web 容器依据 sessionId 将当前请求线程关联到 HTTP 会话。
+     */
+    public void beginSession(String sessionId) {
+        SessionScopeContextHolder.beginSession(sessionId);
+    }
+
+    /**
+     * 模拟当前请求处理完成后解除线程与 HTTP 会话的关联，但保留 Session Bean。
+     */
+    public void endSession() {
+        SessionScopeContextHolder.endSession();
+    }
+
+    /**
+     * 模拟 HTTP Session 失效，释放该会话缓存的全部 session-scoped Bean。
+     */
+    public void invalidateSession(String sessionId) {
+        SessionScopeContextHolder.invalidateSession(sessionId);
     }
 
     @Override

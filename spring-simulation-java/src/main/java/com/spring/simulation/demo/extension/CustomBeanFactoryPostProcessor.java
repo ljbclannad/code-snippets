@@ -1,8 +1,8 @@
 package com.spring.simulation.demo.extension;
 
-import com.spring.simulation.ioc.BeanDefinition;
-import com.spring.simulation.ioc.BeanFactory;
-import com.spring.simulation.ioc.BeanFactoryPostProcessor;
+import com.spring.simulation.ioc.factory.BeanDefinition;
+import com.spring.simulation.ioc.factory.BeanFactory;
+import com.spring.simulation.ioc.factory.BeanFactoryPostProcessor;
 
 public class CustomBeanFactoryPostProcessor implements BeanFactoryPostProcessor {
     @Override

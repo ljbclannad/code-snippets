@@ -1,7 +1,7 @@
 package com.spring.simulation.circular;
 
-import com.spring.simulation.ioc.Autowired;
-import com.spring.simulation.ioc.Component;
+import com.spring.simulation.ioc.annotation.Autowired;
+import com.spring.simulation.ioc.annotation.Component;
 
 @Component
 public class ServiceB {

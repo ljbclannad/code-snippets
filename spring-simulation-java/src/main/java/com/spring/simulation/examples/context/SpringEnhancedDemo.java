@@ -1,11 +1,11 @@
 package com.spring.simulation.examples.context;
 
 import com.spring.simulation.aop.PointcutExpressionParser;
-import com.spring.simulation.ioc.Bean;
-import com.spring.simulation.ioc.BeanDefinition;
-import com.spring.simulation.ioc.BeanFactory;
-import com.spring.simulation.ioc.BeanScope;
-import com.spring.simulation.ioc.Configuration;
+import com.spring.simulation.ioc.annotation.Bean;
+import com.spring.simulation.ioc.annotation.Configuration;
+import com.spring.simulation.ioc.factory.BeanDefinition;
+import com.spring.simulation.ioc.factory.BeanFactory;
+import com.spring.simulation.ioc.scope.BeanScope;
 import com.spring.simulation.spel.SpelExpressionParser;
 import com.spring.simulation.transaction.Propagation;
 import com.spring.simulation.transaction.Transactional;

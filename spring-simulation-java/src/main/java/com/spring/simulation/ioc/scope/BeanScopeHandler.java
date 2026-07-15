@@ -1,6 +1,8 @@
-package com.spring.simulation.ioc;
+package com.spring.simulation.ioc.scope;
 
 import java.util.function.Supplier;
+
+import com.spring.simulation.ioc.annotation.Scope;
 
 /**
  * BeanFactory 处理非单例作用域的运行时策略。

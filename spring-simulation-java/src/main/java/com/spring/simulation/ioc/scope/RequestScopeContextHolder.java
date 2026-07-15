@@ -1,4 +1,4 @@
-package com.spring.simulation.ioc;
+package com.spring.simulation.ioc.scope;
 
 import java.util.HashMap;
 import java.util.Map;

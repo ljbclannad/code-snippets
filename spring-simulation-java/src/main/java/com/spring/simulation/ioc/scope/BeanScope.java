@@ -1,4 +1,4 @@
-package com.spring.simulation.ioc;
+package com.spring.simulation.ioc.scope;
 
 /**
  * Bean 作用域常量

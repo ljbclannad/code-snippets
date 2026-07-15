@@ -1,6 +1,6 @@
 package com.spring.simulation.demo.extension;
 
-import com.spring.simulation.ioc.BeanPostProcessor;
+import com.spring.simulation.ioc.factory.BeanPostProcessor;
 
 public class LoggingBeanPostProcessor implements BeanPostProcessor {
     @Override

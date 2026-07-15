@@ -1,6 +1,6 @@
 package com.spring.simulation.constructor;
 
-import com.spring.simulation.ioc.AnnotationConfigApplicationContext;
+import com.spring.simulation.ioc.context.AnnotationConfigApplicationContext;
 
 public class ConstructorInjectionDemo {
     public static void main(String[] args) throws Exception {

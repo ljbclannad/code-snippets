@@ -1,4 +1,4 @@
-package com.spring.simulation.ioc;
+package com.spring.simulation.ioc.annotation;
 
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;

@@ -1,9 +1,14 @@
-package com.spring.simulation.ioc;
+package com.spring.simulation.ioc.scanner;
 
 import java.io.File;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
+
+import com.spring.simulation.ioc.annotation.Component;
+import com.spring.simulation.ioc.annotation.Configuration;
+import com.spring.simulation.ioc.annotation.Scope;
+import com.spring.simulation.ioc.scope.BeanScope;
 
 public class ComponentScanner {
     private String[] basePackages;

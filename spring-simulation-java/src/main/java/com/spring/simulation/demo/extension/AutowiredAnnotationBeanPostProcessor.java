@@ -3,9 +3,9 @@ package com.spring.simulation.demo.extension;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
-import com.spring.simulation.ioc.Autowired;
-import com.spring.simulation.ioc.BeanFactory;
-import com.spring.simulation.ioc.BeanPostProcessor;
+import com.spring.simulation.ioc.annotation.Autowired;
+import com.spring.simulation.ioc.factory.BeanFactory;
+import com.spring.simulation.ioc.factory.BeanPostProcessor;
 
 /**
  * 模拟 Spring 的 AutowiredAnnotationBeanPostProcessor
