@@ -3,7 +3,9 @@ package com.spring.simulation.demo.extension;
 import com.spring.simulation.ioc.factory.BeanDefinition;
 import com.spring.simulation.ioc.factory.BeanFactory;
 import com.spring.simulation.ioc.factory.BeanFactoryPostProcessor;
+import com.spring.simulation.ioc.annotation.Component;
 
+@Component
 public class CustomBeanFactoryPostProcessor implements BeanFactoryPostProcessor {
     @Override
     public void postProcessBeanFactory(BeanFactory beanFactory) throws Exception {

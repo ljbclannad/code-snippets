@@ -3,12 +3,12 @@ package com.spring.simulation.ioc.context;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.spring.simulation.environment.Environment;
 import com.spring.simulation.ioc.aware.ApplicationContextAwareProcessor;
 import com.spring.simulation.ioc.factory.BeanDefinition;
 import com.spring.simulation.ioc.factory.BeanFactory;
 import com.spring.simulation.ioc.factory.BeanFactoryPostProcessor;
 import com.spring.simulation.ioc.factory.BeanPostProcessor;
-import com.spring.simulation.environment.Environment;
 
 public class ApplicationContext {
     // 在这里创建的目的是保证：当前 Context 内，按 Bean 名称从容器取环境对象，身份完全一致。
@@ -280,9 +280,10 @@ public class ApplicationContext {
     /**
      * 阶段 4: BeanFactory 后置处理
      *
-     * 设计原因：为具体 ApplicationContext 子类保留扩展钩子。
-     * 基类只提供通用 refresh 流程，不判断或处理 Web、Reactive 等具体运行环境；
-     * 子类可在这里注册场景专属的 Scope、可解析依赖或 BeanPostProcessor。
+     * 与 prepareBeanFactory() 的区别：前者由父类统一执行，装配类加载器、Environment 等
+     * 所有 Context 都需要的基础设施；本方法紧随其后，作为子类钩子补充运行环境专属能力，
+     * 避免父类依赖 Web、Reactive 等具体环境。随后才执行 BeanFactoryPostProcessor。
+     * 例如 Web Context 可在这里注册 Scope、Servlet 可解析依赖或专属 BeanPostProcessor。
      */
     protected void postProcessBeanFactory() {
         System.out.println("\n[Phase 4] postProcessBeanFactory()");
@@ -290,27 +291,50 @@ public class ApplicationContext {
     }
 
     /**
-     * 阶段 5: 调用 BeanFactoryPostProcessor
+     * 阶段 5: 发现并执行 BeanFactoryPostProcessor。
      *
-     * 设计原因：这是修改 Bean 定义的最后机会！
-     * 1. BeanDefinitionRegistryPostProcessor：可以动态注册新的 Bean 定义
-     * 2. BeanFactoryPostProcessor：可以修改已有的 Bean 定义（如修改属性值）
-     * 3. @Configuration 类的处理就在这里（ConfigurationClassPostProcessor）
+     * 设计目的：把“修改 Bean 创建配方”的扩展能力从 BeanFactory 核心逻辑中抽离出来。
+     * 后处理器操作的是 BeanDefinition（Bean 的“配方”），可统一替换属性占位符、调整 scope
+     * 或补充定义；新增这类框架能力时无需改动具体 Bean 的创建流程。
      *
-     * 为什么要在实例化 Bean 之前执行？
-     * 因为这里修改的是 Bean 的"配方"（BeanDefinition），必须在"做菜"（实例化）之前改
+     * 执行时机：必须在阶段 11 实例化 singleton Bean 前完成。Bean 一旦创建，其构造参数、
+     * 注入属性和生命周期回调已按旧定义执行；此后再改 BeanDefinition 会造成“定义与实例不一致”。
+     * 本阶段只允许创建后处理器自身，普通业务 Bean 仍延迟到阶段 11，避免过早实例化而错过修改。
      *
-     * 应用场景：
-     * - PropertyPlaceholderConfigurer：替换 ${...} 占位符
-     * - @Configuration 类的解析和注册
+     * 当前实现先执行编程式注册的处理器，再从 BeanDefinition 自动发现并执行处理器。
+     * 完整 Spring 还会优先、多轮执行可注册新定义的 BeanDefinitionRegistryPostProcessor，
+     * 并按 PriorityOrdered、Ordered 和普通处理器排序，保证配置解析等基础设施先就绪。
      */
     protected void invokeBeanFactoryPostProcessors() throws Exception {
         System.out.println("\n[Phase 5] invokeBeanFactoryPostProcessors()");
         System.out.println("  - Invoking BeanDefinitionRegistryPostProcessors");
         System.out.println("  - Invoking BeanFactoryPostProcessors");
-        System.out.println("  - Number of BeanFactoryPostProcessors: " + beanFactoryPostProcessors.size());
+        System.out.println("  - Number of programmatically added BeanFactoryPostProcessors: "
+                + beanFactoryPostProcessors.size());
+
+        // 1. 执行 ApplicationContext.addBeanFactoryPostProcessor(...) 手动添加的处理器。
         for (BeanFactoryPostProcessor processor : beanFactoryPostProcessors) {
-            System.out.println("    - Executing: " + processor.getClass().getSimpleName());
+            System.out.println("    - Executing programmatic processor: " + processor.getClass().getSimpleName());
+            processor.postProcessBeanFactory(beanFactory);
+        }
+
+        // 2. 模拟 Spring：从已注册的 BeanDefinition 中发现 BeanFactoryPostProcessor 类型的 Bean。
+        // 此时只创建后处理器本身，普通业务 Bean 仍要留到阶段 11 才实例化。
+        List<BeanFactoryPostProcessor> discoveredProcessors = new ArrayList<>();
+        for (BeanDefinition beanDefinition : beanFactory.getBeanDefinitions().values()) {
+            if (BeanFactoryPostProcessor.class.isAssignableFrom(beanDefinition.getBeanClass())) {
+                BeanFactoryPostProcessor processor = (BeanFactoryPostProcessor) beanFactory
+                        .getBean(beanDefinition.getBeanName());
+                discoveredProcessors.add(processor);
+                System.out.println("    - Discovered BeanFactoryPostProcessor bean: "
+                        + beanDefinition.getBeanName());
+            }
+        }
+
+        // 3. 执行自动发现的处理器。完整 Spring 还会处理
+        // BeanDefinitionRegistryPostProcessor 及 PriorityOrdered / Ordered 排序。
+        for (BeanFactoryPostProcessor processor : discoveredProcessors) {
+            System.out.println("    - Executing discovered processor: " + processor.getClass().getSimpleName());
             processor.postProcessBeanFactory(beanFactory);
         }
         System.out.println("  - Processing @Configuration classes");
