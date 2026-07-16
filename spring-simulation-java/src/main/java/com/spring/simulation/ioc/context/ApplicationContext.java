@@ -1,8 +1,11 @@
 package com.spring.simulation.ioc.context;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
+import com.spring.simulation.aop.Ordered;
+import com.spring.simulation.aop.PriorityOrdered;
 import com.spring.simulation.environment.Environment;
 import com.spring.simulation.ioc.aware.ApplicationContextAwareProcessor;
 import com.spring.simulation.ioc.factory.BeanDefinition;
@@ -302,8 +305,8 @@ public class ApplicationContext {
      * 本阶段只允许创建后处理器自身，普通业务 Bean 仍延迟到阶段 11，避免过早实例化而错过修改。
      *
      * 当前实现先执行编程式注册的处理器，再从 BeanDefinition 自动发现并执行处理器。
-     * 完整 Spring 还会优先、多轮执行可注册新定义的 BeanDefinitionRegistryPostProcessor，
-     * 并按 PriorityOrdered、Ordered 和普通处理器排序，保证配置解析等基础设施先就绪。
+     * 自动发现的处理器按 PriorityOrdered、Ordered 和普通处理器分组，前两组按 order 值升序执行。
+     * 完整 Spring 还会优先、多轮执行可注册新定义的 BeanDefinitionRegistryPostProcessor。
      */
     protected void invokeBeanFactoryPostProcessors() throws Exception {
         System.out.println("\n[Phase 5] invokeBeanFactoryPostProcessors()");
@@ -320,24 +323,48 @@ public class ApplicationContext {
 
         // 2. 模拟 Spring：从已注册的 BeanDefinition 中发现 BeanFactoryPostProcessor 类型的 Bean。
         // 此时只创建后处理器本身，普通业务 Bean 仍要留到阶段 11 才实例化。
-        List<BeanFactoryPostProcessor> discoveredProcessors = new ArrayList<>();
+        List<BeanFactoryPostProcessor> priorityOrderedProcessors = new ArrayList<>();
+        List<BeanFactoryPostProcessor> orderedProcessors = new ArrayList<>();
+        List<BeanFactoryPostProcessor> regularProcessors = new ArrayList<>();
         for (BeanDefinition beanDefinition : beanFactory.getBeanDefinitions().values()) {
             if (BeanFactoryPostProcessor.class.isAssignableFrom(beanDefinition.getBeanClass())) {
                 BeanFactoryPostProcessor processor = (BeanFactoryPostProcessor) beanFactory
                         .getBean(beanDefinition.getBeanName());
-                discoveredProcessors.add(processor);
+                if (processor instanceof PriorityOrdered) {
+                    priorityOrderedProcessors.add(processor);
+                } else if (processor instanceof Ordered) {
+                    orderedProcessors.add(processor);
+                } else {
+                    regularProcessors.add(processor);
+                }
                 System.out.println("    - Discovered BeanFactoryPostProcessor bean: "
                         + beanDefinition.getBeanName());
             }
         }
 
-        // 3. 执行自动发现的处理器。完整 Spring 还会处理
-        // BeanDefinitionRegistryPostProcessor 及 PriorityOrdered / Ordered 排序。
-        for (BeanFactoryPostProcessor processor : discoveredProcessors) {
-            System.out.println("    - Executing discovered processor: " + processor.getClass().getSimpleName());
+        // 3. PriorityOrdered 和 Ordered 组内按 getOrder() 升序；普通处理器最后执行。
+        sortByOrder(priorityOrderedProcessors);
+        sortByOrder(orderedProcessors);
+        invokeDiscoveredBeanFactoryPostProcessors("PriorityOrdered", priorityOrderedProcessors);
+        invokeDiscoveredBeanFactoryPostProcessors("Ordered", orderedProcessors);
+        invokeDiscoveredBeanFactoryPostProcessors("Regular", regularProcessors);
+        System.out.println("  - Processing @Configuration classes");
+    }
+
+    /**
+     * order 值越小优先级越高，因此采用升序排列。
+     */
+    private void sortByOrder(List<BeanFactoryPostProcessor> processors) {
+        processors.sort(Comparator.comparingInt(processor -> ((Ordered) processor).getOrder()));
+    }
+
+    private void invokeDiscoveredBeanFactoryPostProcessors(
+            String priorityGroup, List<BeanFactoryPostProcessor> processors) throws Exception {
+        for (BeanFactoryPostProcessor processor : processors) {
+            System.out.println("    - Executing discovered [" + priorityGroup + "] processor: "
+                    + processor.getClass().getSimpleName());
             processor.postProcessBeanFactory(beanFactory);
         }
-        System.out.println("  - Processing @Configuration classes");
     }
 
     /**
