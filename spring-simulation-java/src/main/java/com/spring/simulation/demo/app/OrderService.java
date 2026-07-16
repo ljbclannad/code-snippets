@@ -8,12 +8,13 @@ import com.spring.simulation.ioc.lifecycle.InitializingBean;
 import com.spring.simulation.transaction.Transactional;
 
 @Component
-public class OrderService implements InitializingBean, DisposableBean, BeanNameAware {
+public class OrderService implements OrderOperations, InitializingBean, DisposableBean, BeanNameAware {
     @Autowired
     private UserRepository userRepository;
 
     private String beanName;
 
+    @Override
     @Transactional(propagation = "REQUIRED", isolation = "READ_COMMITTED")
     public void createOrder(String username, String product) {
         System.out.println("    [OrderService] Creating order for " + username + ": " + product);

@@ -6,6 +6,7 @@ import java.util.List;
 
 import com.spring.simulation.aop.Ordered;
 import com.spring.simulation.aop.PriorityOrdered;
+import com.spring.simulation.aop.AopAutoProxyCreator;
 import com.spring.simulation.environment.Environment;
 import com.spring.simulation.ioc.aware.ApplicationContextAwareProcessor;
 import com.spring.simulation.ioc.factory.BeanDefinition;
@@ -385,14 +386,18 @@ public class ApplicationContext {
     protected void registerBeanPostProcessors() throws Exception {
         System.out.println("\n[Phase 6] registerBeanPostProcessors()");
 
-        // 步骤 1: 注册手动添加的 BeanPostProcessor（编程式添加的）
+        // 步骤 1: 注册内建自动代理创建器。它会在后续业务 Bean 初始化完成后识别
+        // @Transactional 与 @Aspect 通知，并在匹配时将原始 Bean 替换为代理对象。
+        registerAopAutoProxyCreator();
+
+        // 步骤 2: 注册手动添加的 BeanPostProcessor（编程式添加的）
         System.out.println("  - Registering programmatically added BeanPostProcessors");
         for (BeanPostProcessor processor : beanPostProcessors) {
             beanFactory.addBeanPostProcessor(processor);
             System.out.println("    - Registered: " + processor.getClass().getSimpleName());
         }
 
-        // 步骤 2: 从 BeanFactory 中查找所有 BeanPostProcessor 类型的 Bean
+        // 步骤 3: 从 BeanFactory 中查找所有 BeanPostProcessor 类型的 Bean
         System.out.println("  - Discovering BeanPostProcessor beans from BeanFactory");
         List<String> postProcessorNames = new ArrayList<>();
         for (String beanName : registeredBeanNames) {
@@ -402,7 +407,7 @@ public class ApplicationContext {
             }
         }
 
-        // 步骤 3: 按优先级分类（模拟 PriorityOrdered > Ordered > 普通）
+        // 步骤 4: 按优先级分类（模拟 PriorityOrdered > Ordered > 普通）
         List<BeanPostProcessor> priorityOrderedPostProcessors = new ArrayList<>();
         List<BeanPostProcessor> orderedPostProcessors = new ArrayList<>();
         List<BeanPostProcessor> regularPostProcessors = new ArrayList<>();
@@ -420,7 +425,7 @@ public class ApplicationContext {
             }
         }
 
-        // 步骤 4: 按优先级顺序注册 (通过 List 顺序实现优先级)
+        // 步骤 5: 按优先级顺序注册 (通过 List 顺序实现优先级)
         System.out.println("  - Registering BeanPostProcessors by priority:");
 
         // 先注册 PriorityOrdered
@@ -442,8 +447,15 @@ public class ApplicationContext {
         }
 
         System.out.println("  - Total BeanPostProcessors registered: " +
-                (beanPostProcessors.size() + priorityOrderedPostProcessors.size() +
+                (1 + beanPostProcessors.size() + priorityOrderedPostProcessors.size() +
                         orderedPostProcessors.size() + regularPostProcessors.size()));
+    }
+
+    private void registerAopAutoProxyCreator() {
+        AopAutoProxyCreator autoProxyCreator = new AopAutoProxyCreator();
+        autoProxyCreator.setBeanFactory(beanFactory);
+        beanFactory.addBeanPostProcessor(autoProxyCreator);
+        System.out.println("  - Registered built-in AopAutoProxyCreator");
     }
 
     /**

@@ -6,6 +6,7 @@ import com.spring.simulation.aop.BeforeAdvice;
 import com.spring.simulation.aop.JdkDynamicAopProxy;
 import com.spring.simulation.demo.app.UserRepository;
 import com.spring.simulation.demo.app.UserService;
+import com.spring.simulation.demo.app.OrderOperations;
 import com.spring.simulation.ioc.context.AnnotationConfigWebApplicationContext;
 
 /**
@@ -38,6 +39,10 @@ public class SpringRefreshDemo {
         userService.createUser("Alice");
         String info = userService.getUserInfo("Alice");
         System.out.println("Retrieved: " + info);
+
+        System.out.println("\n========== Testing Automatic Transaction AOP ==========");
+        OrderOperations orderOperations = (OrderOperations) context.getBean("orderService");
+        orderOperations.createOrder("Alice", "Laptop");
 
         System.out.println("\n========== Testing AOP Integration ==========");
         JdkDynamicAopProxy aopProxy = new JdkDynamicAopProxy(userRepository);

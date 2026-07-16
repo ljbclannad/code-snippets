@@ -14,8 +14,8 @@ public class TransactionInterceptor implements MethodInterceptor {
 
     @Override
     public Object invoke(Object proxy, Method method, Object[] args, MethodInvocation invocation) throws Throwable {
-        if (method.isAnnotationPresent(Transactional.class)) {
-            Transactional tx = method.getAnnotation(Transactional.class);
+        Transactional tx = findTransactionalAnnotation(method, invocation.getTarget().getClass());
+        if (tx != null) {
             Propagation propagation = Propagation.valueOf(tx.propagation());
 
             System.out.println("[Transaction] Method: " + method.getName());
@@ -44,5 +44,24 @@ public class TransactionInterceptor implements MethodInterceptor {
             // 方法没有 @Transactional 注解，直接执行
             return invocation.proceed();
         }
+    }
+
+    /**
+     * JDK 代理传入的是接口方法，事务注解通常标在实现类方法或实现类上，
+     * 因此需要回到目标类解析，并让方法级注解覆盖类级注解。
+     */
+    private Transactional findTransactionalAnnotation(Method invokedMethod, Class<?> targetClass) {
+        try {
+            Method targetMethod = targetClass.getMethod(invokedMethod.getName(), invokedMethod.getParameterTypes());
+            if (targetMethod.isAnnotationPresent(Transactional.class)) {
+                return targetMethod.getAnnotation(Transactional.class);
+            }
+        } catch (NoSuchMethodException ignored) {
+            // 目标类未公开该方法时，继续尝试接口方法与类级注解。
+        }
+        if (invokedMethod.isAnnotationPresent(Transactional.class)) {
+            return invokedMethod.getAnnotation(Transactional.class);
+        }
+        return targetClass.getAnnotation(Transactional.class);
     }
 }

@@ -1,6 +1,7 @@
 package com.spring.simulation.aop;
 
 import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
@@ -228,7 +229,11 @@ public class JdkDynamicAopProxy implements InvocationHandler {
         public Object proceed() throws Throwable {
             // 所有拦截器都执行完了，调用目标方法
             if (currentInterceptorIndex == interceptors.size() - 1) {
-                return method.invoke(target, arguments);
+                try {
+                    return method.invoke(target, arguments);
+                } catch (InvocationTargetException e) {
+                    throw e.getTargetException();
+                }
             }
 
             // 执行下一个拦截器

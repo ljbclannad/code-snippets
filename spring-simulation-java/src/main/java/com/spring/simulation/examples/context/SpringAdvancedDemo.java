@@ -4,6 +4,7 @@ import com.spring.simulation.aop.AroundAdvice;
 import com.spring.simulation.aop.JdkDynamicAopProxy;
 import com.spring.simulation.circular.ServiceA;
 import com.spring.simulation.circular.ServiceB;
+import com.spring.simulation.demo.app.OrderOperations;
 import com.spring.simulation.demo.app.OrderService;
 import com.spring.simulation.demo.app.UserRepositoryImpl;
 import com.spring.simulation.demo.extension.CustomBeanFactoryPostProcessor;
@@ -43,13 +44,13 @@ public class SpringAdvancedDemo {
         serviceA.doSomething();
 
         System.out.println("\n========== 3. 事务管理演示 ==========");
-        OrderService orderService = (OrderService) context.getBean("orderService");
+        OrderOperations orderService = (OrderOperations) context.getBean("orderService");
 
         JdkDynamicAopProxy txProxy = new JdkDynamicAopProxy(orderService);
         txProxy.addInterceptor(new TransactionInterceptor());
         txProxy.addInterceptor(new AroundAdvice("PerformanceMonitor"));
 
-        OrderService proxiedOrderService = (OrderService) txProxy.getProxy();
+        OrderOperations proxiedOrderService = (OrderOperations) txProxy.getProxy();
         System.out.println("\n[Test] Executing transactional method:");
         proxiedOrderService.createOrder("Alice", "Laptop");
 
