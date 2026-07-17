@@ -11,6 +11,10 @@ public class BeanDefinition {
     private String beanName;
     private Class<?> beanClass;
     private String scope = BeanScope.SINGLETON;
+    private boolean primary;
+    private boolean lazyInit;
+    private String initMethodName;
+    private String destroyMethodName;
 
     // 用于 @Bean 方法
     private Method factoryMethod;
@@ -43,6 +47,38 @@ public class BeanDefinition {
 
     public boolean isPrototype() {
         return BeanScope.PROTOTYPE.equals(scope);
+    }
+
+    public boolean isPrimary() {
+        return primary;
+    }
+
+    public void setPrimary(boolean primary) {
+        this.primary = primary;
+    }
+
+    public boolean isLazyInit() {
+        return lazyInit;
+    }
+
+    public void setLazyInit(boolean lazyInit) {
+        this.lazyInit = lazyInit;
+    }
+
+    public String getInitMethodName() {
+        return initMethodName;
+    }
+
+    public void setInitMethodName(String initMethodName) {
+        this.initMethodName = initMethodName;
+    }
+
+    public String getDestroyMethodName() {
+        return destroyMethodName;
+    }
+
+    public void setDestroyMethodName(String destroyMethodName) {
+        this.destroyMethodName = destroyMethodName;
     }
 
     public Method getFactoryMethod() {

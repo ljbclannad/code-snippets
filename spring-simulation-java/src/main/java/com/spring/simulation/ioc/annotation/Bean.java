@@ -30,4 +30,10 @@ public @interface Bean {
      * Bean 作用域
      */
     String scope() default BeanScope.SINGLETON;
+
+    boolean lazyInit() default false;
+
+    String initMethod() default "";
+
+    String destroyMethod() default "";
 }

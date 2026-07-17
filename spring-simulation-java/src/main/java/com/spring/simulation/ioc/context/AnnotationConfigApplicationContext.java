@@ -6,6 +6,8 @@ import com.spring.simulation.ioc.annotation.Bean;
 import com.spring.simulation.ioc.annotation.Component;
 import com.spring.simulation.ioc.annotation.Configuration;
 import com.spring.simulation.ioc.annotation.Scope;
+import com.spring.simulation.ioc.annotation.Primary;
+import com.spring.simulation.ioc.annotation.Lazy;
 import com.spring.simulation.ioc.factory.BeanDefinition;
 import com.spring.simulation.ioc.scanner.ComponentScanner;
 
@@ -60,6 +62,12 @@ public class AnnotationConfigApplicationContext extends ApplicationContext {
             String scope = beanClass.getAnnotation(Scope.class).value();
             beanDefinition.setScope(scope);
         }
+        if (beanClass.isAnnotationPresent(Primary.class)) {
+            beanDefinition.setPrimary(true);
+        }
+        if (beanClass.isAnnotationPresent(Lazy.class)) {
+            beanDefinition.setLazyInit(beanClass.getAnnotation(Lazy.class).value());
+        }
         return beanDefinition;
     }
 
@@ -94,6 +102,13 @@ public class AnnotationConfigApplicationContext extends ApplicationContext {
 
                 BeanDefinition beanDefinition = new BeanDefinition(beanName, method.getReturnType());
                 beanDefinition.setScope(beanAnnotation.scope());
+                beanDefinition.setLazyInit(beanAnnotation.lazyInit());
+                beanDefinition.setInitMethodName(beanAnnotation.initMethod());
+                beanDefinition.setDestroyMethodName(beanAnnotation.destroyMethod());
+                beanDefinition.setPrimary(method.isAnnotationPresent(Primary.class));
+                if (method.isAnnotationPresent(Lazy.class)) {
+                    beanDefinition.setLazyInit(method.getAnnotation(Lazy.class).value());
+                }
                 beanDefinition.setFactoryMethod(method);
                 beanDefinition.setFactoryBeanName(configBeanName);
 

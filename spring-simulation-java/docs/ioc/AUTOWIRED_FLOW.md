@@ -4,14 +4,15 @@
 
 答案：**分两个阶段**
 
-### 阶段 6: registerBeanPostProcessors()
+### 阶段 3: prepareBeanFactory()
 **作用：注册 AutowiredAnnotationBeanPostProcessor**
 
 ```java
-protected void registerBeanPostProcessors() throws Exception {
+protected void prepareBeanFactory() {
     // 注册 AutowiredAnnotationBeanPostProcessor
     // 这个处理器负责解析 @Autowired、@Value、@Inject 注解
-    beanFactory.addBeanPostProcessor(new AutowiredAnnotationBeanPostProcessor(beanFactory));
+    // ApplicationContext.prepareBeanFactory() 会内建注册
+    // com.spring.simulation.ioc.postprocessor.AutowiredAnnotationBeanPostProcessor
 }
 ```
 
@@ -28,7 +29,7 @@ protected void finishBeanFactoryInitialization() throws Exception {
 }
 ```
 
-**在这个阶段，AutowiredAnnotationBeanPostProcessor 真正执行依赖注入！**
+**在这个阶段，处理器会在 Bean 的“属性填充”步骤真正执行依赖注入。**
 
 ---
 
@@ -40,16 +41,13 @@ Bean 创建流程：
    └─ 调用构造函数创建对象
 
 2. 填充属性 (Populate Properties)
-   └─ 处理 XML 配置的属性注入
+   └─ InstantiationAwareBeanPostProcessor.postProcessProperties()
+      └─ AutowiredAnnotationBeanPostProcessor 扫描 @Autowired 并注入依赖
 
 3. 调用 Aware 接口
    └─ BeanNameAware, BeanFactoryAware 等
 
-4. ★ BeanPostProcessor.postProcessBeforeInitialization() ★
-   └─ AutowiredAnnotationBeanPostProcessor 在这里执行！
-       ├─ 扫描字段上的 @Autowired
-       ├─ 扫描方法上的 @Autowired
-       └─ 通过反射注入依赖
+4. BeanPostProcessor.postProcessBeforeInitialization()
 
 5. 初始化方法 (Initialization)
    └─ InitializingBean.afterPropertiesSet()
@@ -82,14 +80,10 @@ private void injectFields(Object bean, String beanName) throws Exception {
     for (Field field : clazz.getDeclaredFields()) {
         // 检查是否有 @Autowired 注解
         if (field.isAnnotationPresent(Autowired.class)) {
-            // 1. 先按名称查找
-            String beanName = field.getName();
-            Object dependency = beanFactory.getBean(beanName);
-            
-            // 2. 如果找不到，按类型查找
-            if (dependency == null) {
-                dependency = beanFactory.getBeanByType(field.getType());
-            }
+            // 1. 按类型选择唯一候选
+            // 2. 多候选时优先选择 @Primary
+            // 3. 可使用 @Qualifier("beanName") 指定候选
+            Object dependency = beanFactory.resolveDependency(field.getType(), null);
             
             // 3. 通过反射注入
             field.setAccessible(true);

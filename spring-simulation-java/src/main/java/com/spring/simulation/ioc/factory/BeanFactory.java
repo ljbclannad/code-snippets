@@ -1,6 +1,7 @@
 package com.spring.simulation.ioc.factory;
 
-import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.lang.reflect.Parameter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -8,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
+import com.spring.simulation.ioc.annotation.Qualifier;
 import com.spring.simulation.ioc.annotation.Autowired;
 import com.spring.simulation.ioc.aware.BeanFactoryAware;
 import com.spring.simulation.ioc.aware.BeanNameAware;
@@ -58,7 +60,7 @@ public class BeanFactory {
 
     // 需要在容器关闭时执行销毁回调的 Bean 注册表
     // 设计原因：不是所有单例 Bean 都需要 destroy()，单独维护更符合职责划分
-    private Map<String, DisposableBean> disposableBeans = new LinkedHashMap<>();
+    private Map<String, DisposableBeanAdapter> disposableBeans = new LinkedHashMap<>();
 
     // 标志位：是否正在创建 BeanPostProcessor
     // 设计原因：BeanPostProcessor 的创建不应该被其他 BeanPostProcessor 处理，避免循环依赖
@@ -204,13 +206,20 @@ public class BeanFactory {
             }
 
             // 缓存中都没有，创建新的 Bean
-            return getSingleton(beanName, () -> {
-                try {
-                    return createBean(beanName, beanDefinition);
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
+            try {
+                return getSingleton(beanName, () -> {
+                    try {
+                        return createBean(beanName, beanDefinition);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                });
+            } catch (RuntimeException ex) {
+                if (ex.getCause() instanceof Exception) {
+                    throw (Exception) ex.getCause();
                 }
-            });
+                throw ex;
+            }
         } else if (beanDefinition.isPrototype()) {
             // Prototype 作用域：每次都创建新实例
             System.out.println("[IoC] Creating new prototype instance: " + beanName);
@@ -343,7 +352,7 @@ public class BeanFactory {
         // ========== 步骤 2: 属性填充（依赖注入）==========
         // 设计原因：实例化和属性填充分离，是解决循环依赖的关键
         System.out.println("[Bean Lifecycle] 2. Populate properties (dependency injection)");
-        populateBean(bean);
+        populateBean(bean, beanName);
 
         // ========== 步骤 3: Aware 接口回调 ==========
         // 设计原因：让 Bean 感知 BeanFactory 自身对象（BeanName、BeanFactory）
@@ -358,7 +367,7 @@ public class BeanFactory {
         // ========== 步骤 5: 初始化回调 ==========
         // 设计原因：Bean 的自定义初始化逻辑（如连接数据库、加载配置等）
         System.out.println("[Bean Lifecycle] 5. Invoke InitializingBean.afterPropertiesSet");
-        invokeInitMethods(bean);
+        invokeInitMethods(bean, beanDefinition);
 
         // ========== 步骤 6: BeanPostProcessor 后置处理 ==========
         // 设计原因：初始化后的扩展点，这是 AOP 代理创建的关键时机！
@@ -452,15 +461,16 @@ public class BeanFactory {
      * 2. 重新设计类结构，消除循环依赖
      */
     private Object[] resolveConstructorArguments(java.lang.reflect.Constructor<?> constructor) throws Exception {
-        Class<?>[] parameterTypes = constructor.getParameterTypes();
-        Object[] args = new Object[parameterTypes.length];
+        Parameter[] parameters = constructor.getParameters();
+        Object[] args = new Object[parameters.length];
 
-        for (int i = 0; i < parameterTypes.length; i++) {
-            Class<?> paramType = parameterTypes[i];
+        for (int i = 0; i < parameters.length; i++) {
+            Class<?> paramType = parameters[i].getType();
 
             // 递归获取依赖（可能触发依赖的创建）
             // 注意：这里无法从三级缓存获取早期引用，因为对象还未创建
-            args[i] = resolveDependency(paramType);
+            Qualifier qualifier = parameters[i].getAnnotation(Qualifier.class);
+            args[i] = resolveDependency(paramType, qualifier == null ? null : qualifier.value());
             System.out.println("      - Resolved constructor parameter [" + i + "]: " +
                     paramType.getSimpleName());
         }
@@ -516,36 +526,10 @@ public class BeanFactory {
      * 2. 通过 getBean() 获取依赖对象（可能触发依赖对象的创建）
      * 3. 通过反射设置字段值
      */
-    private void populateBean(Object bean) throws Exception {
-        // 1. 字段注入
-        Field[] fields = bean.getClass().getDeclaredFields();
-        for (Field field : fields) {
-            if (field.isAnnotationPresent(Autowired.class)) {
-                field.setAccessible(true);
-                Object dependency = resolveDependency(field.getType());
-                field.set(bean, dependency);
-                System.out.println(
-                        "   [Autowired] Injected " + field.getType().getSimpleName() + " into "
-                                + bean.getClass().getSimpleName()
-                                + " (field)");
-            }
-        }
-
-        // 2. Setter 方法注入
-        java.lang.reflect.Method[] methods = bean.getClass().getDeclaredMethods();
-        for (java.lang.reflect.Method method : methods) {
-            if (method.isAnnotationPresent(Autowired.class)) {
-                // 验证是否为 setter 方法（方法名以 set 开头，且只有一个参数）
-                if (method.getName().startsWith("set") && method.getParameterCount() == 1) {
-                    method.setAccessible(true);
-                    Class<?> paramType = method.getParameterTypes()[0];
-                    Object dependency = resolveDependency(paramType);
-                    method.invoke(bean, dependency);
-                    System.out.println(
-                            "   [Autowired] Injected " + paramType.getSimpleName() + " into "
-                                    + bean.getClass().getSimpleName() +
-                                    " (setter: " + method.getName() + ")");
-                }
+    private void populateBean(Object bean, String beanName) throws Exception {
+        for (BeanPostProcessor processor : beanPostProcessors) {
+            if (processor instanceof InstantiationAwareBeanPostProcessor) {
+                ((InstantiationAwareBeanPostProcessor) processor).postProcessProperties(bean, beanName);
             }
         }
     }
@@ -555,37 +539,48 @@ public class BeanFactory {
      * 1. 优先按类型查找唯一候选（支持接口注入）
      * 2. 回退到约定 beanName（兼容现有示例）
      */
-    private Object resolveDependency(Class<?> dependencyType) throws Exception {
+    public Object resolveDependency(Class<?> dependencyType, String qualifier) throws Exception {
+        if (qualifier != null && !qualifier.trim().isEmpty()) {
+            BeanDefinition qualifiedBean = beanDefinitions.get(qualifier);
+            if (qualifiedBean == null) {
+                throw new IllegalStateException("No bean named '" + qualifier + "' for @Qualifier on type "
+                        + dependencyType.getName());
+            }
+            if (!dependencyType.isAssignableFrom(qualifiedBean.getBeanClass())) {
+                throw new IllegalStateException("Bean '" + qualifier + "' of type "
+                        + qualifiedBean.getBeanClass().getName() + " is not assignable to "
+                        + dependencyType.getName());
+            }
+            return resolveBeanReference(qualifier, dependencyType);
+        }
+
         // 可解析依赖（BeanFactory、ServletContext 等）不需要 BeanDefinition。
         if (resolvableDependencies.containsKey(dependencyType)) {
             return getBeanByType(dependencyType);
         }
 
         String beanName = findBeanNameByType(dependencyType);
-        if (beanName != null) {
-            BeanDefinition beanDefinition = beanDefinitions.get(beanName);
-            if (!beanDefinition.isSingleton() && !beanDefinition.isPrototype()) {
-                // 不能将某次请求/会话的真实对象直接保存到 singleton 中；改为注入代理，
-                // 每次调用再回到当前 scope 获取目标。
-                return ScopedProxyFactory.createProxy(dependencyType, beanName, () -> {
-                    try {
-                        return getBean(beanName);
-                    } catch (Exception e) {
-                        throw new IllegalStateException("Failed to resolve scoped bean: " + beanName, e);
-                    }
-                });
-            }
-            return getBean(beanName);
+        if (beanName == null) {
+            throw new IllegalStateException("No qualifying bean of type " + dependencyType.getName()
+                    + " is available for autowiring");
         }
+        return resolveBeanReference(beanName, dependencyType);
+    }
 
-        String dependencyName = dependencyType.getSimpleName();
-        dependencyName = Character.toLowerCase(dependencyName.charAt(0)) + dependencyName.substring(1);
-
-        if (!beanDefinitions.containsKey(dependencyName)) {
-            throw new Exception("No bean found for dependency type: " + dependencyType.getName());
+    private Object resolveBeanReference(String beanName, Class<?> dependencyType) throws Exception {
+        BeanDefinition beanDefinition = beanDefinitions.get(beanName);
+        if (!beanDefinition.isSingleton() && !beanDefinition.isPrototype()) {
+            // 不能将某次请求/会话的真实对象直接保存到 singleton 中；改为注入代理，
+            // 每次调用再回到当前 scope 获取目标。
+            return ScopedProxyFactory.createProxy(dependencyType, beanName, () -> {
+                try {
+                    return getBean(beanName);
+                } catch (Exception e) {
+                    throw new IllegalStateException("Failed to resolve scoped bean: " + beanName, e);
+                }
+            });
         }
-
-        return getBean(dependencyName);
+        return getBean(beanName);
     }
 
     /**
@@ -647,11 +642,12 @@ public class BeanFactory {
      * 1. 构造器执行时，依赖注入还未完成，无法使用注入的对象
      * 2. 初始化回调执行时，所有依赖都已注入，可以安全使用
      */
-    private void invokeInitMethods(Object bean) throws Exception {
+    private void invokeInitMethods(Object bean, BeanDefinition beanDefinition) throws Exception {
         if (bean instanceof InitializingBean) {
             System.out.println("   [InitializingBean] Invoking afterPropertiesSet");
             ((InitializingBean) bean).afterPropertiesSet();
         }
+        invokeLifecycleMethod(bean, beanDefinition.getInitMethodName(), "init");
     }
 
     /**
@@ -694,8 +690,9 @@ public class BeanFactory {
      * prototype Bean 的生命周期由调用方管理，容器通常不负责回调 destroy。
      */
     private void registerDisposableBeanIfNecessary(String beanName, BeanDefinition beanDefinition, Object bean) {
-        if (beanDefinition.isSingleton() && bean instanceof DisposableBean) {
-            disposableBeans.put(beanName, (DisposableBean) bean);
+        if (beanDefinition.isSingleton()
+                && (bean instanceof DisposableBean || hasText(beanDefinition.getDestroyMethodName()))) {
+            disposableBeans.put(beanName, new DisposableBeanAdapter(bean, beanDefinition.getDestroyMethodName()));
             System.out.println("   [DisposableBean] Registered for destroy callback: " + beanName);
         }
     }
@@ -711,9 +708,9 @@ public class BeanFactory {
      */
     private void destroyDisposableBeans() throws Exception {
         // 按注册逆序销毁更贴近真实容器行为：后创建的对象通常更先销毁
-        List<Map.Entry<String, DisposableBean>> entries = new ArrayList<>(disposableBeans.entrySet());
+        List<Map.Entry<String, DisposableBeanAdapter>> entries = new ArrayList<>(disposableBeans.entrySet());
         for (int i = entries.size() - 1; i >= 0; i--) {
-            Map.Entry<String, DisposableBean> entry = entries.get(i);
+            Map.Entry<String, DisposableBeanAdapter> entry = entries.get(i);
             System.out.println("[DisposableBean] Destroying: " + entry.getKey());
             entry.getValue().destroy();
         }
@@ -767,7 +764,7 @@ public class BeanFactory {
         if (beanName == null) {
             return null;
         }
-        Object matchedBean = getBean(beanName);
+        Object matchedBean = resolveBeanReference(beanName, type);
         System.out.println("[IoC] Found bean by type: " + type.getSimpleName() + " -> " + beanName);
         return type.cast(matchedBean);
     }
@@ -776,17 +773,81 @@ public class BeanFactory {
      * 查找唯一的类型候选。先完成候选校验，再创建 Bean，避免多候选时产生无意义的实例。
      */
     private String findBeanNameByType(Class<?> type) {
-        String matchedBeanName = null;
+        List<String> candidates = new ArrayList<>();
+        List<String> primaryCandidates = new ArrayList<>();
         for (Map.Entry<String, BeanDefinition> entry : beanDefinitions.entrySet()) {
             if (!type.isAssignableFrom(entry.getValue().getBeanClass())) {
                 continue;
             }
-            if (matchedBeanName != null) {
-                throw new RuntimeException("Expected single matching bean of type ["
-                        + type.getName() + "] but found multiple candidates");
+            candidates.add(entry.getKey());
+            if (entry.getValue().isPrimary()) {
+                primaryCandidates.add(entry.getKey());
             }
-            matchedBeanName = entry.getKey();
         }
-        return matchedBeanName;
+        if (candidates.isEmpty()) {
+            return null;
+        }
+        if (candidates.size() == 1) {
+            return candidates.get(0);
+        }
+        if (primaryCandidates.size() == 1) {
+            return primaryCandidates.get(0);
+        }
+        candidates.sort(String::compareTo);
+        if (primaryCandidates.size() > 1) {
+            primaryCandidates.sort(String::compareTo);
+            throw new IllegalStateException("No unique primary bean of type " + type.getName()
+                    + "; primary candidates: " + primaryCandidates);
+        }
+        throw new IllegalStateException("No unique bean of type " + type.getName()
+                + "; candidates: " + candidates + ". Mark one bean with @Primary or use @Qualifier.");
+    }
+
+    private void invokeLifecycleMethod(Object bean, String methodName, String phase) throws Exception {
+        if (!hasText(methodName)) {
+            return;
+        }
+        Method method = findNoArgMethod(bean.getClass(), methodName);
+        if (method == null) {
+            throw new IllegalStateException("Configured " + phase + " method '" + methodName
+                    + "' was not found on bean class " + bean.getClass().getName());
+        }
+        method.setAccessible(true);
+        System.out.println("   [Lifecycle] Invoking custom " + phase + " method: " + methodName);
+        method.invoke(bean);
+    }
+
+    private Method findNoArgMethod(Class<?> beanClass, String methodName) {
+        Class<?> currentClass = beanClass;
+        while (currentClass != null) {
+            try {
+                Method method = currentClass.getDeclaredMethod(methodName);
+                return method.getParameterCount() == 0 ? method : null;
+            } catch (NoSuchMethodException ex) {
+                currentClass = currentClass.getSuperclass();
+            }
+        }
+        return null;
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.trim().isEmpty();
+    }
+
+    private final class DisposableBeanAdapter {
+        private final Object bean;
+        private final String destroyMethodName;
+
+        private DisposableBeanAdapter(Object bean, String destroyMethodName) {
+            this.bean = bean;
+            this.destroyMethodName = destroyMethodName;
+        }
+
+        private void destroy() throws Exception {
+            if (bean instanceof DisposableBean) {
+                ((DisposableBean) bean).destroy();
+            }
+            invokeLifecycleMethod(bean, destroyMethodName, "destroy");
+        }
     }
 }

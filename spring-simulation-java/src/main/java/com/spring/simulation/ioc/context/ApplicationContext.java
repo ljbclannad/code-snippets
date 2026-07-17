@@ -9,6 +9,7 @@ import com.spring.simulation.aop.PriorityOrdered;
 import com.spring.simulation.aop.AopAutoProxyCreator;
 import com.spring.simulation.environment.Environment;
 import com.spring.simulation.ioc.aware.ApplicationContextAwareProcessor;
+import com.spring.simulation.ioc.postprocessor.AutowiredAnnotationBeanPostProcessor;
 import com.spring.simulation.ioc.factory.BeanDefinition;
 import com.spring.simulation.ioc.factory.BeanFactory;
 import com.spring.simulation.ioc.factory.BeanFactoryPostProcessor;
@@ -231,6 +232,7 @@ public class ApplicationContext {
         configureExpressionParser();
         // 注册容器自身，供业务 Bean 通过 @Autowired 按类型获取基础设施对象。
         registerResolvableDependencies();
+        registerAutowiredAnnotationBeanPostProcessor();
         // 注册上下文级后处理器；后续每个业务 Bean 创建时都会经过它，按需触发 ApplicationContextAware 回调。
         registerApplicationContextAwareProcessor();
         // 案例：注册环境相关的 Bean
@@ -277,6 +279,11 @@ public class ApplicationContext {
     private void registerApplicationContextAwareProcessor() {
         beanFactory.addBeanPostProcessor(new ApplicationContextAwareProcessor(this));
         System.out.println("  - Registering ApplicationContextAwareProcessor");
+    }
+
+    private void registerAutowiredAnnotationBeanPostProcessor() {
+        beanFactory.addBeanPostProcessor(new AutowiredAnnotationBeanPostProcessor(beanFactory));
+        System.out.println("  - Registering built-in AutowiredAnnotationBeanPostProcessor");
     }
 
     /**
@@ -633,7 +640,7 @@ public class ApplicationContext {
     private void instantiateSingletons() throws Exception {
         for (String beanName : registeredBeanNames) {
             BeanDefinition beanDefinition = beanFactory.getBeanDefinition(beanName);
-            if (beanDefinition != null && beanDefinition.isSingleton()) {
+            if (beanDefinition != null && beanDefinition.isSingleton() && !beanDefinition.isLazyInit()) {
                 beanFactory.getBean(beanName);
             }
         }
