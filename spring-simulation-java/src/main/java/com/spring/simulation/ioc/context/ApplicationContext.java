@@ -13,14 +13,29 @@ import com.spring.simulation.ioc.factory.BeanDefinition;
 import com.spring.simulation.ioc.factory.BeanFactory;
 import com.spring.simulation.ioc.factory.BeanFactoryPostProcessor;
 import com.spring.simulation.ioc.factory.BeanPostProcessor;
+import com.spring.simulation.i18n.MessageSource;
+import com.spring.simulation.i18n.ResourceBundleMessageSource;
+import com.spring.simulation.event.ApplicationEvent;
+import com.spring.simulation.event.ApplicationEventMulticaster;
+import com.spring.simulation.event.ApplicationListener;
+import com.spring.simulation.event.ContextClosedEvent;
+import com.spring.simulation.event.ContextRefreshedEvent;
+
+import java.util.Locale;
 
 public class ApplicationContext {
+    public static final String MESSAGE_SOURCE_BEAN_NAME = "messageSource";
+    public static final String APPLICATION_EVENT_MULTICASTER_BEAN_NAME = "applicationEventMulticaster";
+
     // 在这里创建的目的是保证：当前 Context 内，按 Bean 名称从容器取环境对象，身份完全一致。
     private final Environment environment = new Environment();
     private BeanFactory beanFactory = new BeanFactory();
     private List<BeanPostProcessor> beanPostProcessors = new ArrayList<>();
     private List<BeanFactoryPostProcessor> beanFactoryPostProcessors = new ArrayList<>();
     private List<String> registeredBeanNames = new ArrayList<>();
+    private List<ApplicationListener<? extends ApplicationEvent>> applicationListeners = new ArrayList<>();
+    private MessageSource messageSource;
+    private ApplicationEventMulticaster applicationEventMulticaster;
 
     /**
      * Spring 容器初始化的核心方法：refresh()
@@ -466,7 +481,44 @@ public class ApplicationContext {
      */
     protected void initMessageSource() {
         System.out.println("\n[Phase 7] initMessageSource()");
-        System.out.println("  - Initializing MessageSource for i18n");
+        if (beanFactory.containsBean(MESSAGE_SOURCE_BEAN_NAME)) {
+            try {
+                Object candidate = beanFactory.getBean(MESSAGE_SOURCE_BEAN_NAME);
+                if (!(candidate instanceof MessageSource)) {
+                    throw new IllegalStateException("Bean '" + MESSAGE_SOURCE_BEAN_NAME
+                            + "' must implement " + MessageSource.class.getName());
+                }
+                this.messageSource = (MessageSource) candidate;
+                System.out.println("  - Using user-defined MessageSource: "
+                        + candidate.getClass().getSimpleName());
+            } catch (Exception ex) {
+                throw new IllegalStateException("Failed to initialize MessageSource", ex);
+            }
+            return;
+        }
+
+        ResourceBundleMessageSource defaultMessageSource = new ResourceBundleMessageSource();
+        defaultMessageSource.setBasenames("messages");
+        beanFactory.registerSingleton(MESSAGE_SOURCE_BEAN_NAME, defaultMessageSource);
+        this.messageSource = defaultMessageSource;
+        System.out.println("  - Registered default ResourceBundleMessageSource (basename: messages)");
+    }
+
+    /**
+     * 从当前上下文的 MessageSource 获取国际化消息。
+     */
+    public String getMessage(String code, Object[] args, String defaultMessage, Locale locale) {
+        if (messageSource == null) {
+            throw new IllegalStateException("MessageSource is not initialized; call refresh() first");
+        }
+        return messageSource.getMessage(code, args, defaultMessage, locale);
+    }
+
+    public MessageSource getMessageSource() {
+        if (messageSource == null) {
+            throw new IllegalStateException("MessageSource is not initialized; call refresh() first");
+        }
+        return messageSource;
     }
 
     /**
@@ -477,7 +529,25 @@ public class ApplicationContext {
      */
     protected void initApplicationEventMulticaster() {
         System.out.println("\n[Phase 8] initApplicationEventMulticaster()");
-        System.out.println("  - Initializing event multicaster");
+        if (beanFactory.containsBean(APPLICATION_EVENT_MULTICASTER_BEAN_NAME)) {
+            try {
+                Object candidate = beanFactory.getBean(APPLICATION_EVENT_MULTICASTER_BEAN_NAME);
+                if (!(candidate instanceof ApplicationEventMulticaster)) {
+                    throw new IllegalStateException("Bean '" + APPLICATION_EVENT_MULTICASTER_BEAN_NAME
+                            + "' must be an " + ApplicationEventMulticaster.class.getName());
+                }
+                this.applicationEventMulticaster = (ApplicationEventMulticaster) candidate;
+                System.out.println("  - Using user-defined ApplicationEventMulticaster: "
+                        + candidate.getClass().getSimpleName());
+            } catch (Exception ex) {
+                throw new IllegalStateException("Failed to initialize ApplicationEventMulticaster", ex);
+            }
+        } else {
+            this.applicationEventMulticaster = new ApplicationEventMulticaster();
+            beanFactory.registerSingleton(APPLICATION_EVENT_MULTICASTER_BEAN_NAME, applicationEventMulticaster);
+            System.out.println("  - Registered default ApplicationEventMulticaster");
+        }
+        applicationEventMulticaster.setBeanFactory(beanFactory);
     }
 
     /**
@@ -488,7 +558,9 @@ public class ApplicationContext {
      */
     protected void onRefresh() {
         System.out.println("\n[Phase 9] onRefresh()");
-        System.out.println("  - Hook for subclasses (e.g., web container startup)");
+        // 对应 Spring AbstractApplicationContext 的默认空钩子；通用 Context 不启动具体运行时。
+        // Web Context 等子类可在这里创建 DispatcherServlet、启动嵌入式服务器等。
+        System.out.println("  - No context-specific refresh work in the base context");
     }
 
     /**
@@ -499,7 +571,24 @@ public class ApplicationContext {
      */
     protected void registerListeners() {
         System.out.println("\n[Phase 10] registerListeners()");
-        System.out.println("  - Registering application listeners");
+        requireApplicationEventMulticaster();
+
+        // Spring 先注册通过 API 添加的监听器；这些对象已经由调用方提供，可立即加入多播器。
+        System.out.println("  - Registering programmatic listeners: " + applicationListeners.size());
+        for (ApplicationListener<? extends ApplicationEvent> listener : applicationListeners) {
+            applicationEventMulticaster.addApplicationListener(listener);
+        }
+
+        // Spring 的 getBeanNamesForType(ApplicationListener.class, true, false) 只找 Bean 名称，
+        // 随后 addApplicationListenerBean(name) 延迟到事件真正发布时才创建对应 Bean。
+        int listenerBeanCount = 0;
+        for (BeanDefinition beanDefinition : beanFactory.getBeanDefinitions().values()) {
+            if (ApplicationListener.class.isAssignableFrom(beanDefinition.getBeanClass())) {
+                applicationEventMulticaster.addApplicationListenerBean(beanDefinition.getBeanName());
+                listenerBeanCount++;
+            }
+        }
+        System.out.println("  - Registered listener beans lazily: " + listenerBeanCount);
     }
 
     /**
@@ -537,6 +626,7 @@ public class ApplicationContext {
     protected void finishRefresh() {
         System.out.println("\n[Phase 12] finishRefresh()");
         System.out.println("  - Publishing ContextRefreshedEvent");
+        publishEvent(new ContextRefreshedEvent(this));
         System.out.println("  - Starting lifecycle processors");
     }
 
@@ -568,6 +658,34 @@ public class ApplicationContext {
         beanFactoryPostProcessors.add(processor);
     }
 
+    /**
+     * 以编程方式添加监听器；会在阶段 10 注册到事件多播器。
+     */
+    public void addApplicationListener(ApplicationListener<? extends ApplicationEvent> listener) {
+        if (listener == null) {
+            throw new IllegalArgumentException("ApplicationListener must not be null");
+        }
+        applicationListeners.add(listener);
+    }
+
+    public void publishEvent(ApplicationEvent event) {
+        if (event == null) {
+            throw new IllegalArgumentException("ApplicationEvent must not be null");
+        }
+        requireApplicationEventMulticaster().multicastEvent(event);
+    }
+
+    public ApplicationEventMulticaster getApplicationEventMulticaster() {
+        return requireApplicationEventMulticaster();
+    }
+
+    private ApplicationEventMulticaster requireApplicationEventMulticaster() {
+        if (applicationEventMulticaster == null) {
+            throw new IllegalStateException("ApplicationEventMulticaster is not initialized; call refresh() first");
+        }
+        return applicationEventMulticaster;
+    }
+
     public Object getBean(String beanName) throws Exception {
         return beanFactory.getBean(beanName);
     }
@@ -578,6 +696,9 @@ public class ApplicationContext {
 
     public void close() throws Exception {
         System.out.println("\n========== Closing Application Context ==========");
+        if (applicationEventMulticaster != null) {
+            publishEvent(new ContextClosedEvent(this));
+        }
         beanFactory.destroySingletons();
     }
 }
