@@ -53,41 +53,75 @@ public class ApplicationContext {
         System.out.println("\n========== Spring Container Initialization Started ==========");
         System.out.println("Simulating org.springframework.context.support.AbstractApplicationContext.refresh()");
 
-        // 阶段 1: 准备刷新
+        // 阶段 1：准备刷新。
+        // 设计原因：先建立本轮启动的边界与运行环境，避免后续读取配置或创建 Bean 时才暴露
+        // 环境缺失的问题。处理目标：初始化/校验 PropertySource、记录启动信息，并让失败尽早发生。
         prepareRefresh();
 
-        // 阶段 2: 获取 BeanFactory
+        // 阶段 2：获取一个全新的 BeanFactory。
+        // 设计原因：BeanFactory 同时保存 BeanDefinition 和单例、三级缓存、后处理器等运行时状态；
+        // 若沿用旧工厂，上一轮 refresh 的对象会污染本轮。处理目标：销毁旧单例及其资源、
+        // 创建干净工厂，并从配置源重新加载“如何创建 Bean”的定义，但此处不创建业务 Bean。
         obtainFreshBeanFactory();
 
-        // 阶段 3: 准备 BeanFactory
+        // 阶段 3：为 BeanFactory 装配上下文基础设施。
+        // 设计原因：业务 Bean 创建前，工厂必须先具备统一的类加载、表达式解析和上下文感知能力；
+        // 否则 @Autowired、@Value、Aware 等机制会因基础设施尚未就绪而失效。
+        // 处理目标：注册 Environment、可解析依赖和内建后处理器，配置 ClassLoader 与表达式解析器。
         prepareBeanFactory();
 
-        // 阶段 4: BeanFactory 后置处理（子类扩展点）
+        // 阶段 4：执行特定 Context 的 BeanFactory 扩展钩子。
+        // 设计原因：Web、Reactive 等上下文需要额外能力，但基类不应依赖具体运行环境，
+        // 因此通过模板方法隔离差异。处理目标：让子类注册 Scope、Web 基础设施或专属处理器；
+        // 必须早于后处理器执行和普通 Bean 创建。
         postProcessBeanFactory();
 
-        // 阶段 5: 调用 BeanFactoryPostProcessor（修改 Bean 定义的最后机会）
-        // 阶段1到阶段5都是在做BeanFactory和
+        // 阶段 5：调用 BeanFactoryPostProcessor，完成 BeanDefinition 的最终加工。
+        // 设计原因：配置占位符替换、扫描补充定义、scope 调整等只应修改“创建配方”，不应混入
+        // BeanFactory 核心流程。处理目标：在任何普通单例实例化前执行全部定义级扩展，保证
+        // 后续 Bean 都按最终定义创建；阶段 1～5 至此完成容器和 Bean 定义的准备工作。
         invokeBeanFactoryPostProcessors();
 
-        // 阶段 6: 注册 BeanPostProcessor（AOP 代理创建的关键）
+        // 阶段 6：发现、排序并注册 BeanPostProcessor。
+        // 设计原因：依赖注入、生命周期回调与 AOP 代理作用于“Bean 实例”，而不是定义；
+        // 所有此类处理器都必须在首个业务 Bean 创建前就绪。处理目标：按优先级把处理器放入
+        // BeanFactory 的创建链，使阶段 11 创建的每个 Bean 都经历一致的增强流程。
         registerBeanPostProcessors();
 
-        // 阶段 7: 初始化消息源（国际化）
+        // 阶段 7：初始化 MessageSource（国际化基础设施）。
+        // 设计原因：消息解析是 Context 级服务，不应由每个业务 Bean 自行创建或维护。
+        // 处理目标：优先采用用户提供的 messageSource；若不存在则注册默认实现，供容器和
+        // 业务代码在后续阶段稳定地按 Locale 获取消息。
         initMessageSource();
 
-        // 阶段 8: 初始化事件多播器（事件发布机制）
+        // 阶段 8：初始化 ApplicationEventMulticaster（事件分发基础设施）。
+        // 设计原因：事件发布者与监听器不应直接耦合，需要一个 Context 统一持有的分发中心。
+        // 处理目标：优先使用用户定义的多播器，否则创建默认实现，并将当前 BeanFactory 注入它，
+        // 为下一阶段登记延迟创建的监听器 Bean 做准备。
         initApplicationEventMulticaster();
 
-        // 阶段 9: 子类扩展点（如 Web 容器启动）
+        // 阶段 9：执行 Context 刷新完成前的运行环境扩展。
+        // 设计原因：某些上下文需要启动嵌入式服务器、创建 DispatcherServlet 等运行时组件，
+        // 这些行为不能由通用 Context 强制承担。处理目标：为子类提供启动专属运行时的时机，
+        // 此时 BeanFactory 与事件基础设施已可用，但尚未对外声明容器已就绪。
         onRefresh();
 
-        // 阶段 10: 注册监听器
+        // 阶段 10：注册应用监听器。
+        // 设计原因：ContextRefreshedEvent 会在最后发布，监听器必须先进入多播器；同时不应为了
+        // 注册监听器而过早实例化所有监听器 Bean。处理目标：立即登记编程式监听器，并以 Bean 名称
+        // 延迟登记容器内监听器，确保它们能接收到阶段 12 的刷新完成事件。
         registerListeners();
 
-        // 阶段 11: 实例化所有单例 Bean（最重要的阶段）
+        // 阶段 11：实例化剩余的非懒加载单例 Bean。
+        // 设计原因：此前的定义、扩展点和基础设施均已准备完成，此时创建才能保证 Bean 经历完整的
+        // 注入、Aware 回调、初始化方法和 AOP 增强链。处理目标：及早暴露配置、依赖和初始化错误，
+        // 并使容器在对外可用前完成核心单例的构建。
         finishBeanFactoryInitialization();
 
-        // 阶段 12: 完成刷新，发布事件
+        // 阶段 12：完成刷新并发布 ContextRefreshedEvent。
+        // 设计原因：只有所有非懒加载单例都可用后，监听器、定时任务等协作组件才能安全启动。
+        // 处理目标：通知外部“容器已经就绪”，并执行最终的生命周期收尾；此后 Context 才进入
+        // 可供业务代码使用的稳定状态。
         finishRefresh();
 
         System.out.println("\n========== Spring Container Initialization Completed ==========\n");
