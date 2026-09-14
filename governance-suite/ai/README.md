@@ -44,8 +44,7 @@ ai/
 
 整合后详细时序图见：
 
-- [AI Chat x Doctor Assistant Agent 整合时序图](AI_CHAT_AGENT_INTEGRATION_SEQUENCE.md)
-- [患者对话 Agent 协同系统](../docs/patient-dialog-agent/README.md)
+- [AI Chat x Doctor Assistant Agent 整合时序图](智能对话与医生助手整合时序图.md)
 
 ## Part 1: AI 记忆系统
 
@@ -155,13 +154,8 @@ curl http://localhost:8088/actuator/health
 
 ### 相关文档
 
-- [AI 服务体系文档](../docs/ai-services/README.md)
-- [AI Chat x Doctor Assistant Agent 整合时序图](AI_CHAT_AGENT_INTEGRATION_SEQUENCE.md)
-- [AI Chat Flow 详解](ai-chat-service/README-CHAT-FLOW.md)
+- [AI Chat x Doctor Assistant Agent 整合时序图](智能对话与医生助手整合时序图.md)
 - [Vector Memory Service 说明](vector-memory-service/README.md)
-- [降级指南](../docs/ai-services/guides/degradation-guide.md)
-- [动态 Token Budget](../docs/analysis/dynamic-token-budget.md)
-- [记忆检索重排序](../docs/analysis/memory-retrieval-rerank.md)
 
 ## Part 2: 医生助手 Agent
 
@@ -205,11 +199,8 @@ mvn -q -pl ai/knowledge-base-service spring-boot:run
 
 ### 相关文档
 
-- [AI Chat x Doctor Assistant Agent 整合时序图](AI_CHAT_AGENT_INTEGRATION_SEQUENCE.md)
-- [患者对话 Agent 协同系统](../docs/patient-dialog-agent/README.md)
-- [演进计划完整文档](../docs/patient-dialog-agent/evolution-plan.md)
+- [AI Chat x Doctor Assistant Agent 整合时序图](智能对话与医生助手整合时序图.md)
 - [Doctor Assistant Agent 说明](doctor-assistant-agent/README.md)
-- [Agent Platform 完整监控与步骤质量判断说明书](AGENT-PLATFORM-STEP-QUALITY-MANUAL.md)
 
 ## 监控与可观测性
 
@@ -379,4 +370,4 @@ bash sh/test/test-03-ai-chat.sh
 
 ## 贡献指南
 
-请参考项目根目录的 [CLAUDE.md](../CLAUDE.md) 和 [ai/CLAUDE.md](CLAUDE.md) 了解开发规范。
+请参考 [ai/CLAUDE.md](AGENTS.md) 了解开发规范。

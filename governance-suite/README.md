@@ -188,23 +188,17 @@ governance-suite/
 
 - [分布式系统治理文档](distributed/README.md) - Seata、Nacos、Sentinel、Outbox
 - [AI 服务体系文档](ai/README.md) - 对话管理、记忆检索、Agent 协同
-- [完整文档中心](docs/README.md) - 按主题分类的详细文档索引
 
 ### 🏗️ 架构与设计
 
-- [架构文档](docs/architecture/README.md) - 系统架构与时序图
-- [患者对话 Agent 协同](docs/patient-dialog-agent/README.md) - Agent 改造专题
-- [技术分析](docs/analysis/) - 专题分析与优化方案
+- [智能对话与医生助手整合时序图](ai/智能对话与医生助手整合时序图.md) - 对话与 Agent 协同链路
 
 ### 🔧 运维与监控
 
-- [监控手册](docs/runbooks/MONITORING.md) - Prometheus + Grafana
-- [读写分离验证](docs/runbooks/MYSQL_READ_WRITE_SPLIT_VERIFICATION.md)
 - [验证脚本](sh/verify/) - 环境和监控验证
 
 ### 📖 API 文档
 
-- [API 文档中心](docs/api/) - 各服务 API 说明
 
 ## 开发指南
 
@@ -217,8 +211,8 @@ governance-suite/
 
 ### 开发规范
 
-- **分布式系统**：参考 [distributed/CLAUDE.md](distributed/CLAUDE.md)
-- **AI 服务**：参考 [ai/CLAUDE.md](ai/CLAUDE.md)
+- **分布式系统**：参考 [distributed/CLAUDE.md](distributed/AGENTS.md)
+- **AI 服务**：参考 [ai/CLAUDE.md](ai/AGENTS.md)
 
 ### 常用命令
 

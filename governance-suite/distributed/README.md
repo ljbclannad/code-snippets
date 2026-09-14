@@ -306,7 +306,6 @@ spring:
 bash sh/verify/verify-read-write-split.sh
 ```
 
-详细文档：[数据库读写分离配置分析](../docs/analysis/数据库读写分离配置分析.md)
 
 ## 6. 医院挂号场景（Redis Lua）
 
@@ -350,11 +349,6 @@ mvn -q -pl distributed/appointment-service spring-boot:run
 bash sh/test/test-appointment.sh
 bash sh/test/test-grab-flow.sh
 ```
-
-### 相关文档
-
-- [热门科室缓存维护方案](../docs/analysis/热门科室缓存维护方案.md)
-- [限流过滤器优化总结](../docs/analysis/AppointmentRateLimitFilter优化总结.md)
 
 ## 监控与可观测性
 
@@ -407,13 +401,6 @@ cat logs/pids.txt
 # 停止所有服务
 bash sh/run/stop-all-services.sh
 ```
-
-## 相关文档
-
-- [架构文档](../docs/architecture/README.md)
-- [数据库读写分离分析](../docs/analysis/数据库读写分离配置分析.md)
-- [读写分离验证手册](../docs/runbooks/MYSQL_READ_WRITE_SPLIT_VERIFICATION.md)
-- [API 文档](../docs/api/)
 
 ## 常见问题
 
@@ -557,4 +544,4 @@ bash sh/test/test-create-order.sh
 
 ## 贡献指南
 
-请参考 [distributed/CLAUDE.md](CLAUDE.md) 了解开发规范。
+请参考 [distributed/CLAUDE.md](AGENTS.md) 了解开发规范。

@@ -530,4 +530,3 @@ LAB_FAIL_PAYMENT_PREPARE=true mvn -q -pl distributed/payment-service spring-boot
 - [Nacos 官方文档](https://nacos.io/zh-cn/docs/what-is-nacos.html)
 - [Sentinel 官方文档](https://sentinelguard.io/zh-cn/docs/introduction.html)
 - [ShardingSphere 官方文档](https://shardingsphere.apache.org/document/current/cn/overview/)
-- [项目根目录 CLAUDE.md](../CLAUDE.md)

@@ -10,9 +10,9 @@
 
 ## 文档入口
 
-- [产品导向说明](./PRODUCT_OVERVIEW.md)
-- [工程导向说明](./ENGINEERING_GUIDE.md)
-- [流式链路架构说明](./AGENT_STREAMING_ARCHITECTURE.md)
+- [产品导向说明](docs/减重管理医生助手产品概览.md)
+- [工程导向说明](docs/减重管理医生助手工程指南.md)
+- [流式链路架构说明](docs/医生助手智能体流式链路架构说明.md)
 
 ## 快速开始
 
@@ -44,5 +44,4 @@ mvn -f pom.xml spring-boot:run
 
 ## 重要补充文档
 
-- [API 使用指南](./docs/api/API_USAGE_GUIDE.md)
 - 患者任务升级与 Agent 增强事项当前已收敛在仓库级平台/运行时设计文档中，当前目录下未单独维护 `PATIENT_TASK_AGENT_EXECUTION_TODO.md`

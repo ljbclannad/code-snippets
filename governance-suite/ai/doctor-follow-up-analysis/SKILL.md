@@ -99,17 +99,17 @@ description: 面向减重管理随访场景的通用 Agent 技能说明。用于
 
 ## 参考资料
 
-- 工具目录与分级：见 `references/tool-catalog.md`
-- 工具调用规定与边界：见 `references/tool-invocation-policy.md`
-- 场景化工作流与示例：见 `references/workflow-examples.md`
+- 工具目录与分级：见 `references/工具清单.md`
+- 工具调用规定与边界：见 `references/工具调用规定与边界.md`
+- 场景化工作流与示例：见 `references/工作流示例.md`
 - 标准输出 JSON 模板：见 `references/output-schema.json`
 - 如果需要最新工具入参与风险等级，以项目源码为准：
   `doctor-assistant-agent/src/main/java/com/health/agent/scene/doctor/tool/DoctorToolDefinitionRegistry.java`
 
 ## 使用建议
 
-- 先读 `references/tool-catalog.md`，确认有哪些工具可用。
-- 涉及真实写操作或高风险动作前，先读 `references/tool-invocation-policy.md`。
-- 再按 `references/workflow-examples.md` 选择最接近当前任务的流程。
+- 先读 `references/工具清单.md`，确认有哪些工具可用。
+- 涉及真实写操作或高风险动作前，先读 `references/工具调用规定与边界.md`。
+- 再按 `references/工作流示例.md` 选择最接近当前任务的流程。
 - 需要结构化返回结果时，按 `references/output-schema.json` 输出。
 - 仅在任务确实需要时才进入中风险和高风险工具。

@@ -80,12 +80,6 @@
 - `data/medical-governance/document-governance-audit.ndjson`
   - 审核/失效动作审计
 
-离线评测资产：
-
-- [docs/medical-evaluation/README.md](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/knowledge-base-service/docs/medical-evaluation/README.md)
-- [docs/medical-evaluation/qa-eval-set.jsonl](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/knowledge-base-service/docs/medical-evaluation/qa-eval-set.jsonl)
-- [docs/medical-evaluation/retrieval-judgments.jsonl](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/knowledge-base-service/docs/medical-evaluation/retrieval-judgments.jsonl)
-
 ## 医疗元数据约定
 
 推荐标签与字段：
@@ -210,5 +204,5 @@ mvn -f knowledge-base-service/pom.xml test
 
 ## 说明
 
-- 当前数据库初始化脚本仍以 [src/main/resources/db/init_kb_service.sql](/Users/lejinbo/LLM/code-snippets/governance-suite/ai/knowledge-base-service/src/main/resources/db/init_kb_service.sql) 为准。
+- 当前数据库初始化脚本仍以 [src/main/resources/db/init_kb_service.sql](src/main/resources/db/init_kb_service.sql) 为准。
 - 这一版已经能支撑 `ai-chat-service` 的 KB QA 路由和 `doctor-assistant-agent` 的证据检索工具。

@@ -282,7 +282,5 @@ AI 服务体系包含以下模块：
 
 ## 参考资源
 
-- [AI 服务体系文档](../docs/ai-services/README.md)
 - [Spring AI 官方文档](https://docs.spring.io/spring-ai/reference/)
 - [Milvus 官方文档](https://milvus.io/docs)
-- [项目根目录 CLAUDE.md](../CLAUDE.md)

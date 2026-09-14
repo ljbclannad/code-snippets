@@ -36,7 +36,7 @@ mvn -f distributed/nacos-simulator/pom.xml spring-boot:run
 http://localhost:8095
 ```
 
-关键配置在 [application.yml](/Users/lejinbo/LLM/code-snippets/governance-suite/distributed/nacos-simulator/src/main/resources/application.yml)：
+关键配置在 [application.yml](src/main/resources/application.yml)：
 
 - `simulator.config.long-poll-timeout-ms`
 - `simulator.registry.default-ttl-ms`
@@ -248,13 +248,13 @@ mvn -f distributed/nacos-simulator/pom.xml -Dtest=ConfigControllerTest,RegistryC
 
 ## 代码结构
 
-- [controller](/Users/lejinbo/LLM/code-snippets/governance-suite/distributed/nacos-simulator/src/main/java/com/lx/governance/nacossimulator/controller)
+- [controller](src/main/java/com/lx/governance/nacossimulator/controller/)
   - HTTP 接口
-- [service](/Users/lejinbo/LLM/code-snippets/governance-suite/distributed/nacos-simulator/src/main/java/com/lx/governance/nacossimulator/service)
+- [service](src/main/java/com/lx/governance/nacossimulator/service/)
   - 配置、长轮询、注册、管理视图
-- [store](/Users/lejinbo/LLM/code-snippets/governance-suite/distributed/nacos-simulator/src/main/java/com/lx/governance/nacossimulator/store)
+- [store](src/main/java/com/lx/governance/nacossimulator/store/)
   - 内存态并发存储
-- [scheduler](/Users/lejinbo/LLM/code-snippets/governance-suite/distributed/nacos-simulator/src/main/java/com/lx/governance/nacossimulator/scheduler)
+- [scheduler](src/main/java/com/lx/governance/nacossimulator/scheduler/)
   - 实例过期扫描
 
 ## 当前实现边界
