@@ -20,6 +20,7 @@ import reactor.core.publisher.Mono;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import static net.logstash.logback.argument.StructuredArguments.kv;
 
@@ -36,18 +37,28 @@ public class AuthTokenGlobalFilter implements GlobalFilter, Ordered {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         String path = exchange.getRequest().getPath().value();
+        ServerHttpRequest sanitized = exchange.getRequest().mutate()
+                .headers(headers -> {
+                    headers.remove(AuthHeaders.USER_ID);
+                    headers.remove(AuthHeaders.USERNAME);
+                    headers.remove(AuthHeaders.USER_ROLES);
+                })
+                .build();
         if (skip(path)) {
-            return chain.filter(exchange);
+            return chain.filter(exchange.mutate().request(sanitized).build());
         }
 
         try {
             AuthTokenClaims claims = authTokenService.verify(resolveToken(exchange));
-            ServerHttpRequest mutated = exchange.getRequest().mutate()
+            ServerHttpRequest mutated = sanitized.mutate()
                     .headers(headers -> {
-                        headers.remove(AuthHeaders.USER_ID);
-                        headers.remove(AuthHeaders.USERNAME);
                         headers.set(AuthHeaders.USER_ID, String.valueOf(claims.getUserId()));
                         headers.set(AuthHeaders.USERNAME, claims.getUsername());
+                        if (!claims.getRoles().isEmpty()) {
+                            headers.set(AuthHeaders.USER_ROLES, claims.getRoles().stream()
+                                    .sorted()
+                                    .collect(Collectors.joining(",")));
+                        }
                     })
                     .build();
 
@@ -83,10 +94,11 @@ public class AuthTokenGlobalFilter implements GlobalFilter, Ordered {
     }
 
     private boolean skip(String path) {
-        return path.startsWith("/api/user/register")
-                || path.startsWith("/api/user/login")
-                || path.startsWith("/api/user/auth/validate")
-                || path.startsWith("/actuator");
+        return path.equals("/api/user/register")
+                || path.equals("/api/user/login")
+                || path.equals("/api/user/auth/validate")
+                || path.equals("/actuator")
+                || path.startsWith("/actuator/");
     }
 
     private Mono<Void> unauthorized(ServerWebExchange exchange, String message) {

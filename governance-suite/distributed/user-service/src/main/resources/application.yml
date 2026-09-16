@@ -32,8 +32,10 @@ spring:
               standard:
                 sharding-column: user_id
                 sharding-algorithm-name: user-inline
-          t_user_account:
-            actual-data-nodes: ds0.t_user_account
+          t_user_auth_account:
+            actual-data-nodes: ds0.t_user_auth_account
+          t_user_admin_role:
+            actual-data-nodes: ds0.t_user_admin_role
         sharding-algorithms:
           user-inline:
             type: INLINE

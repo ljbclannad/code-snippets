@@ -16,6 +16,7 @@ import com.lx.governance.user.domain.UserPaymentDto;
 import com.lx.governance.user.domain.UserProfile;
 import com.lx.governance.user.repo.UserAccountRepository;
 import com.lx.governance.user.repo.UserProfileRepository;
+import com.lx.governance.user.repo.UserAdminRoleRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
@@ -30,6 +31,7 @@ import java.util.List;
 public class UserAppService {
     private final UserAccountRepository userAccountRepository;
     private final UserProfileRepository userProfileRepository;
+    private final UserAdminRoleRepository userAdminRoleRepository;
     private final PaymentQueryClient paymentQueryClient;
     private final AuthTokenService authTokenService;
     private final IdGenerator userIdGenerator;
@@ -38,6 +40,7 @@ public class UserAppService {
 
     public UserAppService(UserAccountRepository userAccountRepository,
                           UserProfileRepository userProfileRepository,
+                          UserAdminRoleRepository userAdminRoleRepository,
                           PaymentQueryClient paymentQueryClient,
                           AuthTokenService authTokenService,
                           @Value("${id.mode:segment}") String mode,
@@ -47,6 +50,7 @@ public class UserAppService {
                           MeterRegistry meterRegistry) {
         this.userAccountRepository = userAccountRepository;
         this.userProfileRepository = userProfileRepository;
+        this.userAdminRoleRepository = userAdminRoleRepository;
         this.paymentQueryClient = paymentQueryClient;
         this.authTokenService = authTokenService;
         this.userIdGenerator = "snowflake".equalsIgnoreCase(mode) ? userIdSnowflakeGenerator : userIdSegmentGenerator;
@@ -90,7 +94,8 @@ public class UserAppService {
             throw new IllegalArgumentException("invalid username or password");
         }
         UserProfile profile = userProfileRepository.findByUserId(account.getUserId());
-        String token = authTokenService.issueToken(account.getUserId(), account.getUsername());
+        String token = authTokenService.issueToken(account.getUserId(), account.getUsername(),
+                userAdminRoleRepository.findRoleNamesByUserId(account.getUserId()));
         meterRegistry.counter("user.token.issued").increment();
         LoginResponse response = new LoginResponse();
         response.setToken(token);

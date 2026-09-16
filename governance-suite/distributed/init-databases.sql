@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS `t_order_0` (
   `quantity` INT NOT NULL COMMENT '数量',
   `amount_cents` BIGINT NOT NULL COMMENT '金额(分)',
   `status` VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT '状态: PENDING-待支付 PAID-已支付 CANCELLED-已取消',
+  `version` BIGINT NOT NULL DEFAULT 1 COMMENT '订单事实版本',
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`),
@@ -40,16 +41,39 @@ CREATE TABLE IF NOT EXISTS `t_order_0` (
 CREATE TABLE IF NOT EXISTS `t_order_1` LIKE `t_order_0`;
 ALTER TABLE `t_order_1` COMMENT='订单表 - 分片1';
 
+-- 订单后台读模型（独立非分片查询表）
+CREATE TABLE IF NOT EXISTS `t_order_admin_read_model` (
+  `order_no` VARCHAR(64) NOT NULL COMMENT '订单号',
+  `customer_id` VARCHAR(64) NOT NULL COMMENT '客户标识',
+  `product_id` VARCHAR(64) NOT NULL COMMENT '商品ID',
+  `quantity` INT NOT NULL COMMENT '商品数量',
+  `amount_cents` BIGINT NOT NULL COMMENT '金额（分）',
+  `status` VARCHAR(16) NOT NULL COMMENT '订单状态',
+  `order_version` BIGINT NOT NULL COMMENT '订单事件版本',
+  `event_id` VARCHAR(64) NOT NULL COMMENT '最后应用的事件ID',
+  `occurred_at` TIMESTAMP NOT NULL COMMENT '事件发生时间',
+  `projected_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '投影写入时间',
+  PRIMARY KEY (`order_no`),
+  KEY `idx_status_created_at` (`status`, `occurred_at`),
+  KEY `idx_projected_at` (`projected_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='订单后台读模型';
+
 -- Outbox 消息表
 CREATE TABLE IF NOT EXISTS `t_outbox` (
   `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  `event_id` VARCHAR(64) NOT NULL COMMENT '事件ID',
+  `aggregate_type` VARCHAR(64) NOT NULL COMMENT '聚合类型',
+  `aggregate_id` VARCHAR(64) NOT NULL COMMENT '聚合ID',
   `event_type` VARCHAR(100) NOT NULL COMMENT '事件类型',
   `payload` TEXT NOT NULL COMMENT '消息体(JSON)',
-  `status` VARCHAR(20) NOT NULL DEFAULT 'PENDING' COMMENT '状态: PENDING-待发送 SENT-已发送 FAILED-失败',
+  `status` VARCHAR(20) NOT NULL DEFAULT 'NEW' COMMENT '状态: NEW-待发送 SENT-已发送 FAILED-失败 DEAD-死信',
   `retry_count` INT NOT NULL DEFAULT 0 COMMENT '重试次数',
+  `next_retry_at` TIMESTAMP NULL DEFAULT NULL COMMENT '下次重试时间',
+  `error_reason` VARCHAR(1000) DEFAULT NULL COMMENT '失败原因',
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `sent_at` TIMESTAMP NULL DEFAULT NULL COMMENT '发送时间',
   PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_event_id` (`event_id`),
   KEY `idx_status_created` (`status`, `created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Outbox 消息表';
 
@@ -317,15 +341,15 @@ USE `user_db`;
 
 -- 用户表 (分片表 t_user_0, t_user_1)
 CREATE TABLE IF NOT EXISTS `t_user_0` (
-  `id` BIGINT NOT NULL COMMENT '主键ID',
+  `user_id` BIGINT NOT NULL COMMENT '用户ID',
   `username` VARCHAR(64) NOT NULL COMMENT '用户名',
-  `password_hash` VARCHAR(128) NOT NULL COMMENT '密码哈希',
   `display_name` VARCHAR(64) DEFAULT NULL COMMENT '显示名称',
+  `status` VARCHAR(16) NOT NULL COMMENT 'ACTIVE/DISABLED',
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-  PRIMARY KEY (`id`),
+  PRIMARY KEY (`user_id`),
   UNIQUE KEY `uk_username` (`username`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户表 - 分片0';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户资料表 - 分片0';
 
 CREATE TABLE IF NOT EXISTS `t_user_1` LIKE `t_user_0`;
 ALTER TABLE `t_user_1` COMMENT='用户表 - 分片1';
@@ -340,6 +364,26 @@ CREATE TABLE IF NOT EXISTS `t_user_account` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_user_id` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户账户表';
+
+CREATE TABLE IF NOT EXISTS `t_user_auth_account` (
+  `user_id` BIGINT NOT NULL COMMENT '用户ID',
+  `username` VARCHAR(64) NOT NULL COMMENT '用户名',
+  `password_hash` VARCHAR(128) NOT NULL COMMENT '密码哈希',
+  `password_salt` VARCHAR(128) NOT NULL COMMENT '密码盐',
+  `status` VARCHAR(16) NOT NULL COMMENT 'ACTIVE/DISABLED',
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`user_id`),
+  UNIQUE KEY `uk_user_auth_username` (`username`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户认证账户表';
+
+CREATE TABLE IF NOT EXISTS `t_user_admin_role` (
+  `user_id` BIGINT NOT NULL COMMENT '用户ID',
+  `role` VARCHAR(32) NOT NULL COMMENT '后台角色',
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  PRIMARY KEY (`user_id`, `role`),
+  CONSTRAINT `ck_user_admin_role` CHECK (`role` IN ('ORDER_OPERATOR', 'FINANCE_VIEWER', 'INVENTORY_VIEWER'))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户后台角色表';
 
 CREATE TABLE IF NOT EXISTS `t_id_segment` (
   `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',

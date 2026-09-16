@@ -49,6 +49,7 @@ public class OrderAppService {
     private final UserReadWriteContext readWriteContext;
     private final MeterRegistry meterRegistry;
     private final Tracer tracer;
+    private final OrderFactEventPublisher orderFactEventPublisher;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private static final String STREAM_KEY = "seckill:stream:orders";
     private static final String CREATE_V2_LUA = """
@@ -83,7 +84,8 @@ public class OrderAppService {
                            OrderNoGenerator orderNoGenerator,
                            UserReadWriteContext readWriteContext,
                            MeterRegistry meterRegistry,
-                           Tracer tracer) {
+                           Tracer tracer,
+                           OrderFactEventPublisher orderFactEventPublisher) {
         this.orderRepository = orderRepository;
         this.outboxRepository = outboxRepository;
         this.inventoryClient = inventoryClient;
@@ -95,6 +97,7 @@ public class OrderAppService {
         this.readWriteContext = readWriteContext;
         this.meterRegistry = meterRegistry;
         this.tracer = tracer;
+        this.orderFactEventPublisher = orderFactEventPublisher;
     }
 
     @Monitored(value = "order.create", description = "订单创建")
@@ -146,27 +149,11 @@ public class OrderAppService {
             throw new IllegalArgumentException("Payment prepare failed: " + (pay == null ? "null" : pay.getMessage()));
         }
 
-        // Outbox（和订单同库同事务）
-        String eventId = UUID.randomUUID().toString();
-        String payload;
-        try {
-            payload = objectMapper.writeValueAsString(Map.of(
-                    "orderNo", orderNo,
-                    "customerId", req.getCustomerId(),
-                    "productId", req.getProductId(),
-                    "quantity", req.getQuantity(),
-                    "amountCents", req.getAmountCents(),
-                    "traceId", Trace.getOrCreate()
-            ));
-        } catch (Exception e) {
-            throw new RuntimeException(e);
-        }
-        outboxRepository.insert(eventId, "ORDER", orderNo, "order.created", payload);
+        OrderDto result = orderRepository.findByOrderNo(orderNo);
+        orderFactEventPublisher.publish(result, "order.created");
 
         // 标记用户发生了写操作，3秒内该用户的查询将读主库
         readWriteContext.markUserWrite(parseUserId(req.getCustomerId()));
-
-        OrderDto result = orderRepository.findByOrderNo(orderNo);
 
         sample.stop(meterRegistry.timer("seata.transaction.duration", "name", "create-order", "status", "success"));
         meterRegistry.counter("seata.transaction.total", "name", "create-order", "status", "success").increment();
@@ -259,7 +246,10 @@ public class OrderAppService {
         if (!firstConsume) {
             return false;
         }
-        orderRepository.updateStatus(orderNo, "PAID");
+        if (orderRepository.updateStatus(orderNo, "PAID") == 0) {
+            return true;
+        }
+        orderFactEventPublisher.publish(orderRepository.findByOrderNo(orderNo), "order.updated");
         return true;
     }
 

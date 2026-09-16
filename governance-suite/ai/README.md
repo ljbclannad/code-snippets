@@ -370,4 +370,4 @@ bash sh/test/test-03-ai-chat.sh
 
 ## 贡献指南
 
-请参考 [ai/CLAUDE.md](AGENTS.md) 了解开发规范。
+请参考 [ai/AGENTS.md](AGENTS.md) 了解开发规范。

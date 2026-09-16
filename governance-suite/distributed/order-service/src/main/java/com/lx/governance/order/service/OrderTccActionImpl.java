@@ -18,11 +18,14 @@ public class OrderTccActionImpl implements OrderTccAction {
 
     private final OrderRepository orderRepository;
     private final OrderTccLogRepository orderTccLogRepository;
+    private final OrderFactEventPublisher orderFactEventPublisher;
 
     public OrderTccActionImpl(OrderRepository orderRepository,
-                              OrderTccLogRepository orderTccLogRepository) {
+                              OrderTccLogRepository orderTccLogRepository,
+                              OrderFactEventPublisher orderFactEventPublisher) {
         this.orderRepository = orderRepository;
         this.orderTccLogRepository = orderTccLogRepository;
+        this.orderFactEventPublisher = orderFactEventPublisher;
     }
 
     @Override
@@ -71,7 +74,9 @@ public class OrderTccActionImpl implements OrderTccAction {
             return true;
         }
 
-        orderRepository.updateStatus(orderNo, "CREATED");
+        if (orderRepository.updateStatus(orderNo, "CREATED") > 0) {
+            orderFactEventPublisher.publish(orderRepository.findByOrderNo(orderNo), "order.created");
+        }
         orderTccLogRepository.updateState(orderNo, STATE_COMMITTED);
         return true;
     }
@@ -93,7 +98,9 @@ public class OrderTccActionImpl implements OrderTccAction {
             return true;
         }
 
-        orderRepository.updateStatus(orderNo, "CANCELLED");
+        if (orderRepository.updateStatus(orderNo, "CANCELLED") > 0) {
+            orderFactEventPublisher.publish(orderRepository.findByOrderNo(orderNo), "order.cancelled");
+        }
         orderTccLogRepository.updateState(orderNo, STATE_ROLLBACKED);
         return true;
     }

@@ -10,6 +10,7 @@ public class OrderDto {
     private Integer quantity;
     private Integer amountCents;
     private String status;
+    private Long version;
     private Instant createdAt;
 
     public Long getId() {
@@ -66,6 +67,14 @@ public class OrderDto {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public Long getVersion() {
+        return version;
+    }
+
+    public void setVersion(Long version) {
+        this.version = version;
     }
 
     public Instant getCreatedAt() {

@@ -9,6 +9,7 @@ import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.Collection;
 
 @Component
 public class AuthTokenService {
@@ -25,11 +26,16 @@ public class AuthTokenService {
     }
 
     public String issueToken(long userId, String username) {
+        return issueToken(userId, username, java.util.List.of());
+    }
+
+    public String issueToken(long userId, String username, Collection<String> roles) {
         try {
             AuthTokenClaims claims = new AuthTokenClaims();
             claims.setUserId(userId);
             claims.setUsername(username);
             claims.setExpireAt(Instant.now().getEpochSecond() + tokenTtlSeconds);
+            claims.setRoles(AdminRole.normalize(roles));
 
             String payload = Base64.getUrlEncoder()
                     .withoutPadding()
@@ -55,6 +61,7 @@ public class AuthTokenService {
             }
             byte[] decoded = Base64.getUrlDecoder().decode(payload);
             AuthTokenClaims claims = objectMapper.readValue(decoded, AuthTokenClaims.class);
+            claims.setRoles(AdminRole.normalize(claims.getRoles()));
             if (claims.getExpireAt() < Instant.now().getEpochSecond()) {
                 throw new IllegalArgumentException("token expired");
             }

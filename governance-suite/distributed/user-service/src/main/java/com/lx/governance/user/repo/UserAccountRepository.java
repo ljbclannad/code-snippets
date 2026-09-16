@@ -14,14 +14,14 @@ public class UserAccountRepository {
 
     public int insert(long userId, String username, String passwordHash, String passwordSalt, String status) {
         return jdbcTemplate.update(
-                "INSERT INTO t_user_account(user_id, username, password_hash, password_salt, status, created_at) VALUES (?,?,?,?,?,NOW())",
+                "INSERT INTO t_user_auth_account(user_id, username, password_hash, password_salt, status, created_at) VALUES (?,?,?,?,?,NOW())",
                 userId, username, passwordHash, passwordSalt, status
         );
     }
 
     public UserAccount findByUsername(String username) {
         return jdbcTemplate.query(
-                "SELECT user_id, username, password_hash, password_salt, status FROM t_user_account WHERE username=? LIMIT 1",
+                "SELECT user_id, username, password_hash, password_salt, status FROM t_user_auth_account WHERE username=? LIMIT 1",
                 (rs, n) -> {
                     UserAccount account = new UserAccount();
                     account.setUserId(rs.getLong("user_id"));
@@ -37,7 +37,7 @@ public class UserAccountRepository {
 
     public UserAccount findByUserId(long userId) {
         return jdbcTemplate.query(
-                "SELECT user_id, username, password_hash, password_salt, status FROM t_user_account WHERE user_id=? LIMIT 1",
+                "SELECT user_id, username, password_hash, password_salt, status FROM t_user_auth_account WHERE user_id=? LIMIT 1",
                 (rs, n) -> {
                     UserAccount account = new UserAccount();
                     account.setUserId(rs.getLong("user_id"));

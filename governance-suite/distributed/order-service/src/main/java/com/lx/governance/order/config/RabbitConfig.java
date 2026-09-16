@@ -12,6 +12,8 @@ public class RabbitConfig {
     public static final String RK_PAYMENT_SUCCEEDED = "payment.succeeded";
     public static final String QUEUE_PAYMENT_CALLBACK = "q.order.payment.callback";
     public static final String RK_PAYMENT_CALLBACK = "payment.callback.pass";
+    public static final String QUEUE_ORDER_ADMIN_PROJECTION = "q.order.admin.projection";
+    public static final String RK_ORDER_PROJECTION = "order.#";
 
     @Bean
     public TopicExchange bizExchange() {
@@ -36,5 +38,15 @@ public class RabbitConfig {
     @Bean
     public Binding paymentCallbackBinding(TopicExchange bizExchange, Queue paymentCallbackQueue) {
         return BindingBuilder.bind(paymentCallbackQueue).to(bizExchange).with(RK_PAYMENT_CALLBACK);
+    }
+
+    @Bean
+    public Queue orderAdminProjectionQueue() {
+        return QueueBuilder.durable(QUEUE_ORDER_ADMIN_PROJECTION).build();
+    }
+
+    @Bean
+    public Binding orderAdminProjectionBinding(TopicExchange bizExchange, Queue orderAdminProjectionQueue) {
+        return BindingBuilder.bind(orderAdminProjectionQueue).to(bizExchange).with(RK_ORDER_PROJECTION);
     }
 }

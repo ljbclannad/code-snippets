@@ -15,8 +15,10 @@ rules:
         standard:
           shardingColumn: user_id
           shardingAlgorithmName: user-inline
-    t_user_account:
-      actualDataNodes: ds0.t_user_account
+    t_user_auth_account:
+      actualDataNodes: ds0.t_user_auth_account
+    t_user_admin_role:
+      actualDataNodes: ds0.t_user_admin_role
     t_id_segment:
       actualDataNodes: ds0.t_id_segment
   shardingAlgorithms:

@@ -114,6 +114,20 @@ curl -X POST http://localhost:8080/api/order/order \
   -d '{"productId":"p1","quantity":1,"amountCents":100}'
 ```
 
+## 后台角色与可信检索范围
+
+后台检索角色为 `ORDER_OPERATOR`、`FINANCE_VIEWER` 与 `INVENTORY_VIEWER`。角色仅由受控运维流程写入用户角色表；公开注册接口不会接收或授予后台角色。
+
+登录令牌携带经过白名单校验的角色。Gateway 会删除客户端提供的 `X-User-Id`、`X-Username` 与 `X-User-Roles`，并只根据验签后的令牌重建这些 Header。下游后台检索入口仍会再次验证 `Authorization` 令牌，不能把 Header、查询参数或请求体中的角色声明作为授权依据。
+
+旧令牌没有角色时仍可用于既有普通认证流程，但不能访问后台检索能力。管理员角色变更通过受控数据库迁移或运维操作执行，公开接口不提供自助提权能力。
+
+## 订单后台读模型
+
+`order-service` 将 `order.created`、`order.updated` 与 `order.cancelled` 的完整订单事实快照经 Outbox 投递到 `biz.events`。订单后台读模型消费者订阅独立队列 `q.order.admin.projection`，并使用直连 MySQL 的非分片数据源写入 `t_order_admin_read_model`，不会经由订单写模型的 ShardingSphere 路由。
+
+读模型按同一订单的 `order_version` 条件写入：重复事件和较旧事件不会覆盖较新快照；取消事件仅将状态投影为 `CANCELLED`，历史订单记录不会删除。该模型是异步最终一致的，初始化环境需要使用 `distributed/init-databases.sql` 创建表结构。
+
 ## 核心能力详解
 
 ## 1. 分布式事务（Seata AT 模式）
@@ -544,4 +558,4 @@ bash sh/test/test-create-order.sh
 
 ## 贡献指南
 
-请参考 [distributed/CLAUDE.md](AGENTS.md) 了解开发规范。
+请参考 [distributed/AGENTS.md](AGENTS.md) 了解开发规范。
