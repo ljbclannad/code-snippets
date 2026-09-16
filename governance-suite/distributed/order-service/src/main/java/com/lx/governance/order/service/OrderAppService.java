@@ -149,7 +149,7 @@ public class OrderAppService {
             throw new IllegalArgumentException("Payment prepare failed: " + (pay == null ? "null" : pay.getMessage()));
         }
 
-        OrderDto result = orderRepository.findByOrderNo(orderNo);
+        OrderDto result = ReadMasterHelper.readFromMaster(() -> orderRepository.findByOrderNo(orderNo));
         orderFactEventPublisher.publish(result, "order.created");
 
         // 标记用户发生了写操作，3秒内该用户的查询将读主库
@@ -247,9 +247,14 @@ public class OrderAppService {
             return false;
         }
         if (orderRepository.updateStatus(orderNo, "PAID") == 0) {
+            OrderDto order = ReadMasterHelper.readFromMaster(() -> orderRepository.findByOrderNo(orderNo));
+            if (order == null || !"PAID".equals(order.getStatus())) {
+                throw new IllegalStateException("payment event did not update order: " + orderNo);
+            }
             return true;
         }
-        orderFactEventPublisher.publish(orderRepository.findByOrderNo(orderNo), "order.updated");
+        OrderDto paidOrder = ReadMasterHelper.readFromMaster(() -> orderRepository.findByOrderNo(orderNo));
+        orderFactEventPublisher.publish(paidOrder, "order.updated");
         return true;
     }
 

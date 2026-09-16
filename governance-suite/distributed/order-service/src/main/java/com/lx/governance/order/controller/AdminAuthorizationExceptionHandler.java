@@ -1,5 +1,7 @@
 package com.lx.governance.order.controller;
 
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -11,6 +13,7 @@ import com.lx.governance.order.adminauth.AdminAuthenticationException;
 import com.lx.governance.order.adminauth.AdminRoleRequiredException;
 
 @RestControllerAdvice(basePackages = "com.lx.governance.order.controller")
+@Order(Ordered.HIGHEST_PRECEDENCE)
 public class AdminAuthorizationExceptionHandler {
     @ExceptionHandler(AdminAuthenticationException.class)
     public ResponseEntity<ApiResponse<?>> unauthorized(AdminAuthenticationException exception) {

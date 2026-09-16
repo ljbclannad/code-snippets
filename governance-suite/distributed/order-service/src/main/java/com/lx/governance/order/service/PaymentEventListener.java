@@ -46,6 +46,9 @@ public class PaymentEventListener {
             }
             log.info("Received payment.succeeded for orderNo={} message={}", orderNo, message);
             ack(channel, tag);
+        } catch (IllegalArgumentException e) {
+            log.error("Reject invalid payment.succeeded message={}", message, e);
+            nackDiscard(channel, tag);
         } catch (Exception e) {
             log.error("Failed to handle payment.succeeded message={}", message, e);
             nackRequeue(channel, tag);
@@ -92,6 +95,14 @@ public class PaymentEventListener {
     private void nackRequeue(Channel channel, long tag) {
         try {
             channel.basicNack(tag, false, true);
+        } catch (Exception ex) {
+            throw new RuntimeException(ex);
+        }
+    }
+
+    private void nackDiscard(Channel channel, long tag) {
+        try {
+            channel.basicNack(tag, false, false);
         } catch (Exception ex) {
             throw new RuntimeException(ex);
         }

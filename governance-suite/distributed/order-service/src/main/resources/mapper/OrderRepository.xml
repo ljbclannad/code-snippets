@@ -32,6 +32,6 @@
         UPDATE t_order
         SET status = #{status}, version = version + 1
         WHERE order_no = #{orderNo}
-          AND status <> #{status}
+          AND status &lt;&gt; #{status}
     </update>
 </mapper>
