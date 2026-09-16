@@ -44,17 +44,25 @@ ALTER TABLE `t_order_1` COMMENT='订单表 - 分片1';
 -- 订单后台读模型（独立非分片查询表）
 CREATE TABLE IF NOT EXISTS `t_order_admin_read_model` (
   `order_no` VARCHAR(64) NOT NULL COMMENT '订单号',
-  `customer_id` VARCHAR(64) NOT NULL COMMENT '客户标识',
-  `product_id` VARCHAR(64) NOT NULL COMMENT '商品ID',
-  `quantity` INT NOT NULL COMMENT '商品数量',
-  `amount_cents` BIGINT NOT NULL COMMENT '金额（分）',
-  `status` VARCHAR(16) NOT NULL COMMENT '订单状态',
-  `order_version` BIGINT NOT NULL COMMENT '订单事件版本',
-  `event_id` VARCHAR(64) NOT NULL COMMENT '最后应用的事件ID',
-  `occurred_at` TIMESTAMP NOT NULL COMMENT '事件发生时间',
+  `customer_id` VARCHAR(64) NULL COMMENT '客户标识',
+  `product_id` VARCHAR(64) NULL COMMENT '商品ID',
+  `quantity` INT NULL COMMENT '商品数量',
+  `amount_cents` BIGINT NULL COMMENT '金额（分）',
+  `status` VARCHAR(16) NULL COMMENT '订单状态',
+  `order_version` BIGINT NOT NULL DEFAULT 0 COMMENT '订单事件版本，0表示未知',
+  `order_event_id` VARCHAR(64) NULL COMMENT '最后应用的订单事件ID',
+  `occurred_at` TIMESTAMP NULL COMMENT '订单事件发生时间',
+  `payment_status` VARCHAR(16) NULL COMMENT '支付状态，NULL表示未知',
+  `pay_no` VARCHAR(64) NULL COMMENT '支付单号',
+  `payment_updated_at` TIMESTAMP NULL COMMENT '支付更新时间',
+  `payment_version` BIGINT NOT NULL DEFAULT 0 COMMENT '支付事件版本，0表示未知',
+  `payment_event_id` VARCHAR(64) NULL COMMENT '最后应用的支付事件ID',
+  `payment_occurred_at` TIMESTAMP NULL COMMENT '支付事件发生时间',
   `projected_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '投影写入时间',
   PRIMARY KEY (`order_no`),
   KEY `idx_status_created_at` (`status`, `occurred_at`),
+  KEY `idx_payment_status_updated_at` (`payment_status`, `payment_updated_at`),
+  KEY `idx_pay_no` (`pay_no`),
   KEY `idx_projected_at` (`projected_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='订单后台读模型';
 
@@ -254,6 +262,7 @@ CREATE TABLE IF NOT EXISTS `t_payment_0` (
   `pay_no` VARCHAR(64) NOT NULL COMMENT '支付单号',
   `amount_cents` BIGINT NOT NULL COMMENT '金额(分)',
   `status` VARCHAR(16) NOT NULL DEFAULT 'PENDING' COMMENT '状态: PENDING-待支付 PREPARED-预扣款 SUCCEEDED-已支付 CANCELLED-已取消',
+  `version` BIGINT NOT NULL DEFAULT 1 COMMENT '支付事实版本',
   `idempotency_key` VARCHAR(128) DEFAULT NULL COMMENT '幂等键',
   `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -266,6 +275,24 @@ CREATE TABLE IF NOT EXISTS `t_payment_0` (
 
 CREATE TABLE IF NOT EXISTS `t_payment_1` LIKE `t_payment_0`;
 ALTER TABLE `t_payment_1` COMMENT='支付表 - 分片1';
+
+CREATE TABLE IF NOT EXISTS `t_outbox` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+  `event_id` VARCHAR(64) NOT NULL COMMENT '事件ID',
+  `aggregate_type` VARCHAR(64) NOT NULL COMMENT '聚合类型',
+  `aggregate_id` VARCHAR(64) NOT NULL COMMENT '聚合ID',
+  `event_type` VARCHAR(100) NOT NULL COMMENT '事件类型',
+  `payload` TEXT NOT NULL COMMENT '消息体(JSON)',
+  `status` VARCHAR(20) NOT NULL DEFAULT 'NEW' COMMENT '状态',
+  `retry_count` INT NOT NULL DEFAULT 0 COMMENT '重试次数',
+  `next_retry_at` TIMESTAMP NULL DEFAULT NULL COMMENT '下次重试时间',
+  `error_reason` VARCHAR(1000) DEFAULT NULL COMMENT '失败原因',
+  `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+  `sent_at` TIMESTAMP NULL DEFAULT NULL COMMENT '发送时间',
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_event_id` (`event_id`),
+  KEY `idx_status_next_retry_at` (`status`, `next_retry_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='支付Outbox消息表';
 
 CREATE TABLE IF NOT EXISTS `t_id_segment` (
   `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键ID',

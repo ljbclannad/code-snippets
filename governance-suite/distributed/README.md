@@ -559,3 +559,10 @@ bash sh/test/test-create-order.sh
 ## 贡献指南
 
 请参考 [distributed/AGENTS.md](AGENTS.md) 了解开发规范。
+# 订单后台读模型支付投影
+
+订单后台读模型分别维护 `order_version` 与 `payment_version`：订单与支付事件只能更新各自拥有的字段，任一事件先到都会以占位行或补全行的方式收敛。`payment_status IS NULL` 表示支付投影尚未知，不能解释为未支付；`PREPARED`、`SUCCEEDED`、`CANCELLED` 才是支付事实源明确给出的状态。
+
+支付服务对 `PREPARED`、`SUCCEEDED` 和 `CANCELLED` 的真实状态变化以本地 `payment_db.t_outbox` 记录 `payment.status.changed` 事件。outbox-consumer 在 broker publisher confirm 后才将订单库或支付库的 Outbox 记录标记为 `SENT`。
+
+后台管理员可调用 `GET /admin/orders?paymentStatus=SUCCEEDED&payNo=P...&paymentKnown=true&limit=20` 筛选读模型；支付先到创建的占位行不会出现在该查询结果中。

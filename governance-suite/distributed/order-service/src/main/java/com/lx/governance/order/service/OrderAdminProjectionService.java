@@ -14,7 +14,7 @@ public class OrderAdminProjectionService {
 
     public boolean project(OrderProjectionEvent event) {
         validate(event);
-        return repository.upsertIfNewer(event) > 0;
+        return repository.upsertOrderIfNewer(event) > 0;
     }
 
     private void validate(OrderProjectionEvent event) {

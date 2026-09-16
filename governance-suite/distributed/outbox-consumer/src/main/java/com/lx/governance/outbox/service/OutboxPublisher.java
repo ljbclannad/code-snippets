@@ -2,6 +2,7 @@ package com.lx.governance.outbox.service;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import static net.logstash.logback.argument.StructuredArguments.kv;
 
@@ -11,6 +12,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageProperties;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.amqp.rabbit.connection.CorrelationData;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -81,7 +83,12 @@ public class OutboxPublisher {
                 props.setHeader("eventId", r.eventId);
                 Message msg = new Message(r.payload.getBytes(StandardCharsets.UTF_8), props);
 
-                rabbitTemplate.send(EXCHANGE, r.eventType, msg);
+                CorrelationData correlationData = new CorrelationData(r.eventId);
+                rabbitTemplate.send(EXCHANGE, r.eventType, msg, correlationData);
+                CorrelationData.Confirm confirm = correlationData.getFuture().get(3, TimeUnit.SECONDS);
+                if (confirm == null || !confirm.isAck()) {
+                    throw new IllegalStateException("outbox publish was not acknowledged");
+                }
                 repo.markSent(r.id);
 
                 meterRegistry.counter("outbox.publish.total", "status", "success").increment();

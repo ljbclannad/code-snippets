@@ -14,7 +14,7 @@ public class PaymentRepository {
 
     public int insert(long userId, String payNo, String orderNo, int amountCents, String status, String idempotencyKey) {
         return jdbcTemplate.update(
-                "INSERT INTO t_payment(user_id, pay_no, order_no, amount_cents, status, idempotency_key, created_at) VALUES (?,?,?,?,?,?,NOW())",
+            "INSERT INTO t_payment(user_id, pay_no, order_no, amount_cents, status, idempotency_key, version, created_at) VALUES (?,?,?,?,?,?,1,NOW())",
                 userId, payNo, orderNo, amountCents, status, idempotencyKey
         );
     }
@@ -30,7 +30,7 @@ public class PaymentRepository {
                     p.setOrderNo(rs.getString("order_no"));
                     p.setAmountCents(rs.getInt("amount_cents"));
                     p.setStatus(rs.getString("status"));
-                    p.setCreatedAt(rs.getTimestamp("created_at").toInstant());
+                    populateTimestampsAndVersion(rs, p);
                     return p;
                 },
                 orderNo
@@ -48,7 +48,7 @@ public class PaymentRepository {
                     p.setOrderNo(rs.getString("order_no"));
                     p.setAmountCents(rs.getInt("amount_cents"));
                     p.setStatus(rs.getString("status"));
-                    p.setCreatedAt(rs.getTimestamp("created_at").toInstant());
+                    populateTimestampsAndVersion(rs, p);
                     return p;
                 },
                 userId, orderNo
@@ -56,11 +56,11 @@ public class PaymentRepository {
     }
 
     public int updateStatusByOrderNo(String orderNo, String status) {
-        return jdbcTemplate.update("UPDATE t_payment SET status=? WHERE order_no=?", status, orderNo);
+        return jdbcTemplate.update("UPDATE t_payment SET status=?, version=version+1 WHERE order_no=? AND status<>?", status, orderNo, status);
     }
 
     public int updateStatusByUserIdAndOrderNo(long userId, String orderNo, String status) {
-        return jdbcTemplate.update("UPDATE t_payment SET status=? WHERE user_id=? AND order_no=?", status, userId, orderNo);
+        return jdbcTemplate.update("UPDATE t_payment SET status=?, version=version+1 WHERE user_id=? AND order_no=? AND status<>?", status, userId, orderNo, status);
     }
 
     public java.util.List<PaymentDto> findByUserId(long userId) {
@@ -74,10 +74,16 @@ public class PaymentRepository {
                     p.setOrderNo(rs.getString("order_no"));
                     p.setAmountCents(rs.getInt("amount_cents"));
                     p.setStatus(rs.getString("status"));
-                    p.setCreatedAt(rs.getTimestamp("created_at").toInstant());
+                    populateTimestampsAndVersion(rs, p);
                     return p;
                 },
                 userId
         );
+    }
+
+    private void populateTimestampsAndVersion(java.sql.ResultSet rs, PaymentDto payment) throws java.sql.SQLException {
+        payment.setCreatedAt(rs.getTimestamp("created_at").toInstant());
+        payment.setUpdatedAt(rs.getTimestamp("updated_at").toInstant());
+        payment.setVersion(rs.getLong("version"));
     }
 }

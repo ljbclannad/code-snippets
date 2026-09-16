@@ -7,7 +7,7 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class RabbitConfig {
     public static final String EXCHANGE = "biz.events";
-    public static final String RK_PAYMENT_SUCCEEDED = "payment.succeeded";
+    public static final String RK_PAYMENT_STATUS_CHANGED = "payment.status.changed";
 
     @Bean
     public TopicExchange bizExchange() {

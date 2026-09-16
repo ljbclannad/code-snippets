@@ -20,13 +20,16 @@ public class PaymentTccActionImpl implements PaymentTccAction {
 
     private final PaymentRepository paymentRepository;
     private final PaymentTccLogRepository paymentTccLogRepository;
+    private final PaymentFactEventPublisher paymentFactEventPublisher;
     private final IdGenerator payNoGenerator;
 
     public PaymentTccActionImpl(PaymentRepository paymentRepository,
-                                PaymentTccLogRepository paymentTccLogRepository,
-                                IdGenerator payNoSegmentGenerator) {
+                                 PaymentTccLogRepository paymentTccLogRepository,
+                                 PaymentFactEventPublisher paymentFactEventPublisher,
+                                 IdGenerator payNoSegmentGenerator) {
         this.paymentRepository = paymentRepository;
         this.paymentTccLogRepository = paymentTccLogRepository;
+        this.paymentFactEventPublisher = paymentFactEventPublisher;
         this.payNoGenerator = payNoSegmentGenerator;
     }
 
@@ -46,6 +49,7 @@ public class PaymentTccActionImpl implements PaymentTccAction {
         PaymentDto existing = paymentRepository.findByOrderNo(orderNo);
         if (existing == null) {
             paymentRepository.insert(userId, "P" + payNoGenerator.nextId(), orderNo, amountCents, "PREPARED", "tcc:" + orderNo);
+            paymentFactEventPublisher.publish(paymentRepository.findByOrderNo(orderNo));
         } else if (!"PREPARED".equals(existing.getStatus()) && !"SUCCEEDED".equals(existing.getStatus())) {
             throw new IllegalStateException("unexpected payment status for TCC try: " + existing.getStatus());
         }
@@ -71,7 +75,9 @@ public class PaymentTccActionImpl implements PaymentTccAction {
             return true;
         }
 
-        paymentRepository.updateStatusByOrderNo(orderNo, "SUCCEEDED");
+        if (paymentRepository.updateStatusByOrderNo(orderNo, "SUCCEEDED") > 0) {
+            paymentFactEventPublisher.publish(paymentRepository.findByOrderNo(orderNo));
+        }
         paymentTccLogRepository.updateState(orderNo, STATE_COMMITTED);
         return true;
     }
@@ -93,7 +99,9 @@ public class PaymentTccActionImpl implements PaymentTccAction {
             return true;
         }
 
-        paymentRepository.updateStatusByOrderNo(orderNo, "CANCELLED");
+        if (paymentRepository.updateStatusByOrderNo(orderNo, "CANCELLED") > 0) {
+            paymentFactEventPublisher.publish(paymentRepository.findByOrderNo(orderNo));
+        }
         paymentTccLogRepository.updateState(orderNo, STATE_ROLLBACKED);
         return true;
     }

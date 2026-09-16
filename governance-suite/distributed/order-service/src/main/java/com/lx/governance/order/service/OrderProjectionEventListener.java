@@ -11,11 +11,12 @@ import org.springframework.stereotype.Component;
 
 @Component
 public class OrderProjectionEventListener {
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
     private final OrderAdminProjectionService projectionService;
 
-    public OrderProjectionEventListener(OrderAdminProjectionService projectionService) {
+    public OrderProjectionEventListener(OrderAdminProjectionService projectionService, ObjectMapper objectMapper) {
         this.projectionService = projectionService;
+        this.objectMapper = objectMapper;
     }
 
     @RabbitListener(queues = RabbitConfig.QUEUE_ORDER_ADMIN_PROJECTION)

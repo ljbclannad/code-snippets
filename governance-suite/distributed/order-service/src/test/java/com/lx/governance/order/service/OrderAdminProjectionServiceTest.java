@@ -26,34 +26,34 @@ class OrderAdminProjectionServiceTest {
     @Test
     void appliesCreatedOrderSnapshotToReadModel() {
         OrderProjectionEvent event = event("evt-created", "CREATED", 1L, 100, 2);
-        when(repository.upsertIfNewer(event)).thenReturn(1);
+        when(repository.upsertOrderIfNewer(event)).thenReturn(1);
 
         boolean applied = service.project(event);
 
         assertThat(applied).isTrue();
-        verify(repository).upsertIfNewer(event);
+        verify(repository).upsertOrderIfNewer(event);
     }
 
     @Test
     void keepsCancelledOrderAsHistoricalRecord() {
         OrderProjectionEvent event = event("evt-cancelled", "CANCELLED", 2L, 100, 2);
-        when(repository.upsertIfNewer(event)).thenReturn(1);
+        when(repository.upsertOrderIfNewer(event)).thenReturn(1);
 
         boolean applied = service.project(event);
 
         assertThat(applied).isTrue();
-        verify(repository).upsertIfNewer(event);
+        verify(repository).upsertOrderIfNewer(event);
     }
 
     @Test
     void skipsDuplicateOrOlderProjectionEvent() {
         OrderProjectionEvent event = event("evt-duplicate", "CREATED", 1L, 100, 2);
-        when(repository.upsertIfNewer(event)).thenReturn(0);
+        when(repository.upsertOrderIfNewer(event)).thenReturn(0);
 
         boolean applied = service.project(event);
 
         assertThat(applied).isFalse();
-        verify(repository).upsertIfNewer(event);
+        verify(repository).upsertOrderIfNewer(event);
         verifyNoMoreInteractions(repository);
     }
 
