@@ -1,6 +1,8 @@
 package com.lx.governance.inventory.service;
 
 import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,6 +14,8 @@ import org.springframework.transaction.annotation.Transactional;
 import com.alibaba.csp.sentinel.annotation.SentinelResource;
 import com.lx.governance.common.monitoring.annotation.Monitored;
 import com.lx.governance.inventory.domain.DeductRequest;
+import com.lx.governance.inventory.domain.InventorySnapshot;
+import com.lx.governance.inventory.domain.InventorySnapshotBatchRequest;
 import com.lx.governance.inventory.repo.StockRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 
@@ -106,5 +110,18 @@ public class InventoryAppService {
 
     public void fallbackDeduct(DeductRequest req, Throwable ex) {
         throw new IllegalArgumentException("inventory_deduct fallback: " + ex.getMessage());
+    }
+
+    public List<InventorySnapshot> snapshots(InventorySnapshotBatchRequest request) {
+        if (request == null || request.productIds() == null) {
+            throw new IllegalArgumentException("productIds must contain between 1 and 100 unique values");
+        }
+        List<String> productIds = request.productIds().stream().filter(id -> id != null && !id.isBlank()).distinct().toList();
+        if (productIds.isEmpty() || productIds.size() > 100) {
+            throw new IllegalArgumentException("productIds must contain between 1 and 100 unique values");
+        }
+        Instant observedAt = Instant.now();
+        return stockRepository.findByProductIds(productIds).stream()
+                .map(row -> new InventorySnapshot(row.productId, row.available, observedAt)).toList();
     }
 }

@@ -15,5 +15,6 @@ public record AdminOrderSearchItem(
         String paymentStatus,
         String payNo,
         Instant paymentUpdatedAt,
-        Instant createdAt) {
+        Instant createdAt,
+        InventoryAvailabilitySnapshot inventorySnapshot) {
 }

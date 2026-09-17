@@ -8,6 +8,7 @@ import com.lx.governance.common.auth.AuthHeaders;
 import com.lx.governance.common.trace.Trace;
 import com.lx.governance.order.adminauth.AdminOrderSearchItem;
 import com.lx.governance.order.adminauth.AdminOrderSearchViewPolicy;
+import com.lx.governance.order.adminauth.InventorySnapshotEnricher;
 import com.lx.governance.order.adminauth.AdminSearchScope;
 import com.lx.governance.order.adminauth.AdminSearchScopeResolver;
 import com.lx.governance.order.repo.AdminOrderReadModelQueryRepository;
@@ -29,14 +30,16 @@ public class AdminOrderReadModelController {
     private final AdminOrderReadModelQueryRepository repository;
     private final OrderOperatorSearchCursorCodec cursorCodec;
     private final AdminOrderSearchViewPolicy viewPolicy;
+    private final InventorySnapshotEnricher inventorySnapshotEnricher;
 
     public AdminOrderReadModelController(AdminSearchScopeResolver searchScopeResolver,
             AdminOrderReadModelQueryRepository repository, OrderOperatorSearchCursorCodec cursorCodec,
-            AdminOrderSearchViewPolicy viewPolicy) {
+            AdminOrderSearchViewPolicy viewPolicy, InventorySnapshotEnricher inventorySnapshotEnricher) {
         this.searchScopeResolver = searchScopeResolver;
         this.repository = repository;
         this.cursorCodec = cursorCodec;
         this.viewPolicy = viewPolicy;
+        this.inventorySnapshotEnricher = inventorySnapshotEnricher;
     }
 
     @GetMapping
@@ -66,6 +69,7 @@ public class AdminOrderReadModelController {
         String nextCursor = hasMore ? cursorCodec.encode(new OrderOperatorSearchCursor(sortValue(items.get(items.size() - 1), criteria),
                 items.get(items.size() - 1).orderNo()), criteria) : null;
         List<AdminOrderSearchItem> visibleItems = items.stream().map(item -> viewPolicy.view(scope.roles(), item)).toList();
+        if (viewPolicy.isInventoryView(scope.roles())) visibleItems = inventorySnapshotEnricher.enrich(visibleItems);
         return ApiResponse.ok(new OrderOperatorSearchPage(visibleItems, nextCursor), Trace.getOrCreate());
     }
 

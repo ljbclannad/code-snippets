@@ -16,6 +16,8 @@ import com.lx.governance.common.auth.AuthTokenService;
 import com.lx.governance.common.web.GlobalExceptionHandler;
 import com.lx.governance.order.adminauth.AdminSearchScopeResolver;
 import com.lx.governance.order.adminauth.AdminOrderSearchViewPolicy;
+import com.lx.governance.order.adminauth.InventorySnapshotEnricher;
+import com.lx.governance.order.client.InventorySnapshotClient;
 import com.lx.governance.order.repo.AdminOrderReadModelQueryRepository;
 import com.lx.governance.order.search.OrderOperatorSearchCursorCodec;
 import com.lx.governance.order.search.OrderOperatorOrder;
@@ -40,7 +42,8 @@ class AdminOrderReadModelAuthorizationHttpTest {
         AdminSearchScopeResolver resolver = new AdminSearchScopeResolver(authTokenService);
         repository = mock(AdminOrderReadModelQueryRepository.class);
         AdminOrderReadModelController controller = new AdminOrderReadModelController(resolver, repository,
-                new OrderOperatorSearchCursorCodec("cursor-secret"), new AdminOrderSearchViewPolicy());
+                new OrderOperatorSearchCursorCodec("cursor-secret"), new AdminOrderSearchViewPolicy(),
+                new InventorySnapshotEnricher(mock(InventorySnapshotClient.class)));
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setMessageConverters(new MappingJackson2HttpMessageConverter())
                 .setControllerAdvice(new GlobalExceptionHandler(), new AdminAuthorizationExceptionHandler())

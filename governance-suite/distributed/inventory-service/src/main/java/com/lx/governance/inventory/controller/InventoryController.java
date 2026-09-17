@@ -8,6 +8,9 @@ import org.springframework.web.bind.annotation.RestController;
 import com.lx.governance.common.api.ApiResponse;
 import com.lx.governance.common.trace.Trace;
 import com.lx.governance.inventory.domain.DeductRequest;
+import com.lx.governance.inventory.domain.InventorySnapshot;
+import com.lx.governance.inventory.domain.InventorySnapshotBatchRequest;
+import java.util.List;
 import com.lx.governance.inventory.service.InventoryAppService;
 import com.lx.governance.inventory.service.InventoryTccAction;
 
@@ -33,5 +36,10 @@ public class InventoryController {
     public ApiResponse<String> tryDeductTcc(@RequestBody DeductRequest req) {
         inventoryTccAction.prepare(null, req.getOrderNo(), req.getProductId(), req.getQuantity());
         return ApiResponse.ok("OK", Trace.getOrCreate());
+    }
+
+    @PostMapping("/snapshots")
+    public ApiResponse<List<InventorySnapshot>> snapshots(@RequestBody InventorySnapshotBatchRequest request) {
+        return ApiResponse.ok(appService.snapshots(request), Trace.getOrCreate());
     }
 }

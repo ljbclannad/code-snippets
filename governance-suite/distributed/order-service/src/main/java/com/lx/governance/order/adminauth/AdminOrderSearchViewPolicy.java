@@ -13,11 +13,11 @@ public class AdminOrderSearchViewPolicy {
         String customerId = searchView == SearchView.FINANCE ? order.customerId() : maskCustomerId(order.customerId());
         if (searchView == SearchView.INVENTORY) {
             return new AdminOrderSearchItem(order.orderNo(), customerId, order.productId(), order.quantity(), null,
-                    order.status(), null, null, null, order.createdAt());
+                    order.status(), null, null, null, order.createdAt(), null);
         }
         return new AdminOrderSearchItem(order.orderNo(), customerId, order.productId(), order.quantity(), order.amountCents(),
                 order.status(), order.paymentStatus(), order.payNo(),
-                order.paymentUpdatedAt(), order.createdAt());
+                order.paymentUpdatedAt(), order.createdAt(), null);
     }
 
     public void validateSearch(Set<String> roles, String sort, Long minAmountCents, Long maxAmountCents, String paymentStatus) {
@@ -26,6 +26,10 @@ public class AdminOrderSearchViewPolicy {
                 || "PAYMENT_UPDATED_AT".equals(sort)) {
             throw new IllegalArgumentException("inventory administrators cannot filter or sort by financial fields");
         }
+    }
+
+    public boolean isInventoryView(Set<String> roles) {
+        return resolve(roles) == SearchView.INVENTORY;
     }
 
     private SearchView resolve(Set<String> roles) {

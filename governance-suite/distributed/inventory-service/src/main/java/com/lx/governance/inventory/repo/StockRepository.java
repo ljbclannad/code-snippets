@@ -1,5 +1,8 @@
 package com.lx.governance.inventory.repo;
 
+import java.util.Collection;
+import java.util.List;
+import java.util.StringJoiner;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -18,6 +21,15 @@ public class StockRepository {
                 (rs, n) -> new StockRow(rs.getString("product_id"), rs.getInt("available"), rs.getLong("version")),
                 productId
         ).stream().findFirst().orElse(null);
+    }
+
+    public List<StockRow> findByProductIds(Collection<String> productIds) {
+        if (productIds.isEmpty()) return List.of();
+        StringJoiner placeholders = new StringJoiner(", ");
+        productIds.forEach(ignored -> placeholders.add("?"));
+        return jdbcTemplate.query("SELECT product_id, available, version FROM t_stock WHERE product_id IN (" + placeholders + ")",
+                (rs, n) -> new StockRow(rs.getString("product_id"), rs.getInt("available"), rs.getLong("version")),
+                productIds.toArray());
     }
 
     public int deductWithVersion(String productId, int qty, long version) {
