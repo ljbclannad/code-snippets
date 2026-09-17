@@ -45,12 +45,14 @@ ALTER TABLE `t_order_1` COMMENT='订单表 - 分片1';
 CREATE TABLE IF NOT EXISTS `t_order_admin_read_model` (
   `order_no` VARCHAR(64) NOT NULL COMMENT '订单号',
   `customer_id` VARCHAR(64) NULL COMMENT '客户标识',
+  `customer_search_token` VARCHAR(64) NULL COMMENT '运营客户检索令牌',
   `product_id` VARCHAR(64) NULL COMMENT '商品ID',
   `quantity` INT NULL COMMENT '商品数量',
   `amount_cents` BIGINT NULL COMMENT '金额（分）',
   `status` VARCHAR(16) NULL COMMENT '订单状态',
   `order_version` BIGINT NOT NULL DEFAULT 0 COMMENT '订单事件版本，0表示未知',
   `order_event_id` VARCHAR(64) NULL COMMENT '最后应用的订单事件ID',
+  `created_at` TIMESTAMP NULL COMMENT '订单创建时间',
   `occurred_at` TIMESTAMP NULL COMMENT '订单事件发生时间',
   `payment_status` VARCHAR(16) NULL COMMENT '支付状态，NULL表示未知',
   `pay_no` VARCHAR(64) NULL COMMENT '支付单号',
@@ -63,6 +65,7 @@ CREATE TABLE IF NOT EXISTS `t_order_admin_read_model` (
   KEY `idx_status_created_at` (`status`, `occurred_at`),
   KEY `idx_payment_status_updated_at` (`payment_status`, `payment_updated_at`),
   KEY `idx_pay_no` (`pay_no`),
+  KEY `idx_created_at_order_no` (`created_at`, `order_no`),
   KEY `idx_projected_at` (`projected_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='订单后台读模型';
 

@@ -90,6 +90,9 @@ id:
     max-backward-ms: ${SNOWFLAKE_MAX_BACKWARD_MS:5}
 
 app:
+  admin-search:
+    cursor-secret: ${ADMIN_SEARCH_CURSOR_SECRET:governance-suite-admin-search-secret}
+    customer-token-secret: ${ADMIN_SEARCH_CUSTOMER_TOKEN_SECRET:${app.auth.token-secret:governance-suite-dev-secret}}
   sentinel:
     order:
       create:

@@ -28,7 +28,7 @@ public class OrderFactEventPublisher {
         String eventId = UUID.randomUUID().toString();
         OrderProjectionEvent event = new OrderProjectionEvent(eventId, order.getOrderNo(), order.getCustomerId(),
                 order.getProductId(), order.getQuantity(), order.getAmountCents(), order.getStatus(), order.getVersion(),
-                Instant.now(), Trace.getOrCreate());
+                order.getCreatedAt(), Instant.now(), Trace.getOrCreate());
         try {
             outboxRepository.insert(eventId, "ORDER", order.getOrderNo(), eventType, objectMapper.writeValueAsString(event));
         } catch (JsonProcessingException e) {

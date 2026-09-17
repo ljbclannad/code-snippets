@@ -69,6 +69,6 @@ class OrderAdminProjectionServiceTest {
 
     private OrderProjectionEvent event(String eventId, String status, long version, int amountCents, int quantity) {
         return new OrderProjectionEvent(eventId, "O-100", "customer-1", "product-1", quantity, amountCents,
-                status, version, Instant.parse("2026-09-15T10:00:00Z"), "trace-1");
+                status, version, Instant.parse("2026-09-14T10:00:00Z"), Instant.parse("2026-09-15T10:00:00Z"), "trace-1");
     }
 }

@@ -565,4 +565,12 @@ bash sh/test/test-create-order.sh
 
 支付服务对 `PREPARED`、`SUCCEEDED` 和 `CANCELLED` 的真实状态变化以本地 `payment_db.t_outbox` 记录 `payment.status.changed` 事件。outbox-consumer 在 broker publisher confirm 后才将订单库或支付库的 Outbox 记录标记为 `SENT`。
 
-后台管理员可调用 `GET /admin/orders?paymentStatus=SUCCEEDED&payNo=P...&paymentKnown=true&limit=20` 筛选读模型；支付先到创建的占位行不会出现在该查询结果中。
+`ORDER_OPERATOR` 可调用 `GET /admin/orders` 检索订单后台读模型。请求必须提供 UTC 的
+`createdFrom` 与 `createdTo`，时间窗口不得超过 90 天；可组合使用 `orderNo`、
+`customerSearchToken`、`productId`、`status`、`paymentStatus`、金额范围和 `limit`（1–100）。
+结果固定按 `created_at DESC, order_no DESC` 排序，响应的 `nextCursor` 用于继续读取下一页；
+游标与全部筛选条件绑定，不能跨条件复用。运营响应只返回不可逆的客户检索令牌，不返回原始
+客户标识或支付单号。支付先到创建的占位行和未完成创建时间回填的历史行不会出现在该查询结果中。
+
+读模型是异步最终一致的：在同一稳定读模型状态下，游标分页不会重复或遗漏；不承诺投影更新
+期间跨多个请求形成绝对快照。

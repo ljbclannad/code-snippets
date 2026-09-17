@@ -109,7 +109,7 @@ class OrderAdminReadModelRepositoryIntegrationTest {
 
     private OrderProjectionEvent event(String eventId, String status, long version, int quantity, int amountCents) {
         return new OrderProjectionEvent(eventId, orderNo, "customer-1", "product-1", quantity, amountCents,
-                status, version, Instant.parse("2026-09-15T10:00:00Z"), "trace-1");
+                status, version, Instant.parse("2026-09-14T10:00:00Z"), Instant.parse("2026-09-15T10:00:00Z"), "trace-1");
     }
 
     private PaymentProjectionEvent paymentEvent(String eventId, String status, long version) {

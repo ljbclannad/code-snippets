@@ -19,8 +19,8 @@ public class OrderAdminProjectionService {
 
     private void validate(OrderProjectionEvent event) {
         if (event == null || isBlank(event.eventId()) || isBlank(event.orderNo()) || isBlank(event.customerId())
-                || isBlank(event.productId()) || isBlank(event.status()) || event.orderVersion() <= 0
-                || event.quantity() <= 0 || event.amountCents() < 0 || event.occurredAt() == null) {
+                 || isBlank(event.productId()) || isBlank(event.status()) || event.orderVersion() <= 0
+                || event.quantity() <= 0 || event.amountCents() < 0 || event.createdAt() == null || event.occurredAt() == null) {
             throw new IllegalArgumentException("invalid order projection event");
         }
     }

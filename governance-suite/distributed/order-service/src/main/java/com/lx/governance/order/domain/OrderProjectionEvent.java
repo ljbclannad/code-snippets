@@ -11,6 +11,7 @@ public record OrderProjectionEvent(
         int amountCents,
         String status,
         long orderVersion,
+        Instant createdAt,
         Instant occurredAt,
         String traceId) {
 }
