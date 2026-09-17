@@ -1,6 +1,7 @@
 package com.lx.governance.order.export;
 
 import java.io.StringWriter;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Duration;
@@ -16,6 +17,7 @@ import com.lx.governance.order.search.OrderOperatorSearchCriteria;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -39,11 +41,13 @@ public class FinanceExportService {
         this.clock = clock;
     }
 
-    @Transactional(transactionManager = "orderAdminReadModelTransactionManager", rollbackFor = Exception.class)
+    @Transactional(transactionManager = "orderAdminReadModelTransactionManager", isolation = Isolation.REPEATABLE_READ,
+            rollbackFor = Exception.class)
     public FinanceExportTask create(String authorization, OrderOperatorSearchCriteria criteria) {
         AdminSearchScope scope = financeScope(authorization);
         String id = UUID.randomUUID().toString();
-        repository.createAndMaterialize(id, scope.userId(), criteria, clock.instant());
+        FinanceExportSnapshot snapshot = FinanceExportSnapshot.from(scope, criteria, repository.readModelWatermark());
+        repository.createAndMaterialize(id, scope.userId(), criteria, snapshot, clock.instant());
         return taskFor(scope, id);
     }
 
@@ -64,7 +68,7 @@ public class FinanceExportService {
             throw new FinanceExportConflictException("export task is not ready");
         }
         Path file = fileStorage.read(task.fileKey());
-        if (!java.nio.file.Files.isRegularFile(file)) throw new FinanceExportConflictException("export file is unavailable");
+        if (!Files.isRegularFile(file)) throw new FinanceExportConflictException("export file is unavailable");
         return file;
     }
 
@@ -88,7 +92,7 @@ public class FinanceExportService {
 
     private void generate(FinanceExportTask task) {
         try (StringWriter writer = new StringWriter()) {
-            csvWriter.write(writer, repository.rows(task.id(), task));
+            csvWriter.write(writer, repository.rows(task.id(), task), task.fieldSet());
             Instant completedAt = clock.instant();
             String key = fileStorage.write(task.id(), writer.toString());
             repository.markReady(task.id(), key, completedAt, completedAt.plus(Duration.ofHours(24)));

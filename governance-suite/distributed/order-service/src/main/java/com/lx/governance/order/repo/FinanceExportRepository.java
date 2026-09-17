@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Optional;
 
 import com.lx.governance.order.export.FinanceExportRow;
+import com.lx.governance.order.export.FinanceExportSnapshot;
 import com.lx.governance.order.export.FinanceExportStatus;
 import com.lx.governance.order.export.FinanceExportTask;
 import com.lx.governance.order.search.AdminOrderSort;
@@ -24,19 +25,30 @@ public class FinanceExportRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
-    public void createAndMaterialize(String id, long ownerUserId, OrderOperatorSearchCriteria criteria, Instant createdAt) {
+    public Instant readModelWatermark() {
+        return jdbcTemplate.query("SELECT MAX(projected_at) FROM t_order_admin_read_model", rs ->
+                rs.next() && rs.getTimestamp(1) != null ? rs.getTimestamp(1).toInstant() : Instant.EPOCH);
+    }
+
+    public void createAndMaterialize(String id, long ownerUserId, OrderOperatorSearchCriteria criteria,
+            FinanceExportSnapshot snapshot, Instant createdAt) {
         jdbcTemplate.update("""
-                INSERT INTO t_order_admin_export_task (task_id, owner_user_id, criteria_fingerprint, sort_field, sort_direction,
-                  status, created_at) VALUES (?, ?, ?, ?, ?, 'PENDING', ?)
-                """, id, ownerUserId, criteria.fingerprint(), criteria.sort().name(), criteria.direction().name(), Timestamp.from(createdAt));
+                INSERT INTO t_order_admin_export_task (task_id, owner_user_id, criteria_fingerprint, criteria_snapshot, field_set,
+                  role_snapshot, search_scope, read_model_watermark, sort_field, sort_direction, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)
+                """, id, ownerUserId, criteria.fingerprint(), snapshot.criteria(), snapshot.fieldSet(), snapshot.roleSnapshot(),
+                snapshot.searchScope(), Timestamp.from(snapshot.readModelWatermark()), criteria.sort().name(),
+                criteria.direction().name(), Timestamp.from(createdAt));
         StringBuilder sql = new StringBuilder("""
                 INSERT INTO t_order_admin_export_row (task_id, order_no, customer_id, product_id, quantity, amount_cents, status,
                   payment_status, pay_no, payment_updated_at, created_at)
                 SELECT ?, order_no, customer_id, product_id, quantity, amount_cents, status, payment_status, pay_no,
                   payment_updated_at, created_at FROM t_order_admin_read_model WHERE order_version > 0 AND created_at IS NOT NULL
+                  AND projected_at <= ?
                 """);
         List<Object> args = new ArrayList<>();
         args.add(id);
+        args.add(Timestamp.from(snapshot.readModelWatermark()));
         appendEquals(sql, args, "order_no", criteria.orderNo());
         appendEquals(sql, args, "customer_search_token", criteria.customerSearchToken());
         appendEquals(sql, args, "product_id", criteria.productId());
@@ -60,8 +72,9 @@ public class FinanceExportRepository {
 
     public Optional<FinanceExportTask> find(String id) {
         return jdbcTemplate.query("""
-                SELECT task_id, owner_user_id, status, criteria_fingerprint, sort_field, sort_direction, row_count, file_key,
-                  failure_summary, created_at, completed_at, expires_at FROM t_order_admin_export_task WHERE task_id = ?
+                SELECT task_id, owner_user_id, status, criteria_fingerprint, criteria_snapshot, field_set, role_snapshot, search_scope,
+                  read_model_watermark, sort_field, sort_direction, row_count, file_key, failure_summary, created_at, completed_at,
+                  expires_at FROM t_order_admin_export_task WHERE task_id = ?
                 """, rs -> rs.next() ? Optional.of(task(rs)) : Optional.empty(), id);
     }
 
@@ -102,7 +115,7 @@ public class FinanceExportRepository {
     }
 
     public List<FinanceExportTask> expire(Instant now) {
-        List<FinanceExportTask> tasks = jdbcTemplate.query("SELECT task_id, owner_user_id, status, criteria_fingerprint, sort_field, sort_direction, row_count, file_key, failure_summary, created_at, completed_at, expires_at FROM t_order_admin_export_task WHERE status = 'READY' AND expires_at <= ?", (rs, rowNum) -> task(rs), Timestamp.from(now));
+        List<FinanceExportTask> tasks = jdbcTemplate.query("SELECT task_id, owner_user_id, status, criteria_fingerprint, criteria_snapshot, field_set, role_snapshot, search_scope, read_model_watermark, sort_field, sort_direction, row_count, file_key, failure_summary, created_at, completed_at, expires_at FROM t_order_admin_export_task WHERE status = 'READY' AND expires_at <= ?", (rs, rowNum) -> task(rs), Timestamp.from(now));
         for (FinanceExportTask task : tasks) jdbcTemplate.update("UPDATE t_order_admin_export_task SET status = 'EXPIRED' WHERE task_id = ? AND status = 'READY' AND expires_at <= ?", task.id(), Timestamp.from(now));
         return tasks;
     }
@@ -113,7 +126,9 @@ public class FinanceExportRepository {
 
     private FinanceExportTask task(java.sql.ResultSet rs) throws java.sql.SQLException {
         return new FinanceExportTask(rs.getString("task_id"), rs.getLong("owner_user_id"), FinanceExportStatus.valueOf(rs.getString("status")),
-                rs.getString("criteria_fingerprint"), AdminOrderSort.valueOf(rs.getString("sort_field")),
+                rs.getString("criteria_fingerprint"), rs.getString("criteria_snapshot"), rs.getString("field_set"),
+                rs.getString("role_snapshot"), rs.getString("search_scope"), instant(rs.getTimestamp("read_model_watermark")),
+                AdminOrderSort.valueOf(rs.getString("sort_field")),
                 AdminOrderSortDirection.valueOf(rs.getString("sort_direction")), rs.getInt("row_count"), rs.getString("file_key"),
                 rs.getString("failure_summary"), instant(rs.getTimestamp("created_at")), instant(rs.getTimestamp("completed_at")), instant(rs.getTimestamp("expires_at")));
     }

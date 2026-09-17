@@ -25,4 +25,13 @@ class FinanceCsvWriterTest {
         new FinanceCsvWriter().write(output, List.of(new FinanceExportRow(null, null, null, null, null, null, null, null, null, null)));
         assertThat(output.toString()).contains("\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\",\"\"\r\n");
     }
+
+    @Test
+    void usesTheTasksFrozenFieldSetInsteadOfTheCurrentDefault() throws Exception {
+        StringWriter output = new StringWriter();
+        new FinanceCsvWriter().write(output, List.of(new FinanceExportRow("O-1", "C-1", "P-1", 2, 123L, "PAID", null,
+                null, null, null)), "orderNo,amountCents");
+
+        assertThat(output.toString()).isEqualTo("\"orderNo\",\"amountCents\"\r\n\"O-1\",\"123\"\r\n");
+    }
 }

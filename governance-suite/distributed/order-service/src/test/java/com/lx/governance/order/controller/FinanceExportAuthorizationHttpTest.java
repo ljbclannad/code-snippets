@@ -41,8 +41,8 @@ class FinanceExportAuthorizationHttpTest {
 
     @Test
     void acceptsFinanceCreationAndReturnsAccepted() throws Exception {
-        FinanceExportTask task = new FinanceExportTask("task", 1L, FinanceExportStatus.PENDING, "fp", null, null, 0,
-                null, null, Instant.now(), null, null);
+        FinanceExportTask task = new FinanceExportTask("task", 1L, FinanceExportStatus.PENDING, "fp", null, null,
+                null, null, null, null, null, 0, null, null, Instant.now(), null, null);
         when(service.create(any(), any())).thenReturn(task);
         String token = tokenService.issueToken(1L, "finance", List.of("FINANCE_VIEWER"));
 

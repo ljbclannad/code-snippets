@@ -3,20 +3,36 @@ package com.lx.governance.order.export;
 import java.io.IOException;
 import java.io.Writer;
 import java.time.Instant;
-import java.util.Arrays;
 import java.util.List;
 
 public final class FinanceCsvWriter {
-    private static final List<String> HEADER = List.of("orderNo", "customerId", "productId", "quantity", "amountCents",
-            "status", "paymentStatus", "payNo", "paymentUpdatedAt", "createdAt");
-
     public void write(Writer writer, List<FinanceExportRow> rows) throws IOException {
-        writeRecord(writer, HEADER, false);
+        writeRecord(writer, FinanceExportSnapshot.financeFields(), false);
         for (FinanceExportRow row : rows) {
-            writeRecord(writer, Arrays.asList(row.orderNo(), row.customerId(), row.productId(), number(row.quantity()),
-                    number(row.amountCents()), row.status(), row.paymentStatus(), row.payNo(), time(row.paymentUpdatedAt()),
-                    time(row.createdAt())), true);
+            writeRecord(writer, values(row, FinanceExportSnapshot.financeFields()), true);
         }
+    }
+
+    public void write(Writer writer, List<FinanceExportRow> rows, String fieldSet) throws IOException {
+        List<String> fields = FinanceExportSnapshot.parseFinanceFields(fieldSet);
+        writeRecord(writer, fields, false);
+        for (FinanceExportRow row : rows) writeRecord(writer, values(row, fields), true);
+    }
+
+    private List<String> values(FinanceExportRow row, List<String> fields) {
+        return fields.stream().map(field -> switch (field) {
+            case "orderNo" -> row.orderNo();
+            case "customerId" -> row.customerId();
+            case "productId" -> row.productId();
+            case "quantity" -> number(row.quantity());
+            case "amountCents" -> number(row.amountCents());
+            case "status" -> row.status();
+            case "paymentStatus" -> row.paymentStatus();
+            case "payNo" -> row.payNo();
+            case "paymentUpdatedAt" -> time(row.paymentUpdatedAt());
+            case "createdAt" -> time(row.createdAt());
+            default -> throw new IllegalArgumentException("unsupported frozen finance field");
+        }).toList();
     }
 
     private void writeRecord(Writer writer, List<String> values, boolean sanitizeText) throws IOException {

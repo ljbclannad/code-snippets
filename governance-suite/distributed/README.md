@@ -140,7 +140,7 @@ curl -X POST http://localhost:8080/api/order/order \
 
 ### 财务 CSV 异步导出
 
-`POST /admin/orders/exports` 仅接受拥有 `FINANCE_VIEWER` 的有效令牌，并以与后台检索相同的筛选和排序参数创建任务（返回 `202`）。创建事务会把符合条件的财务字段复制到冻结快照行；后台生成 CSV 时只读取这些快照，因此后续读模型更新不会改变导出范围或内容。客户端不能指定字段集。
+`POST /admin/orders/exports` 仅接受拥有 `FINANCE_VIEWER` 的有效令牌，并以与后台检索相同的筛选和排序参数创建任务（返回 `202`）。创建事务以可重复读隔离级别冻结规范化条件、财务字段集、验签得到的角色与搜索范围，以及该事务快照中的读模型 `projected_at` 水位；随后将财务字段复制到快照行。后台生成 CSV 时只读取这些快照，因此后续读模型更新不会改变导出范围或内容。客户端不能指定字段集。
 
 `GET /admin/orders/exports/{id}`、`POST /admin/orders/exports/{id}/retry` 和 `GET /admin/orders/exports/{id}/download` 在每次调用时重新验签并要求 `FINANCE_VIEWER`；仅任务创建者可见，其他创建者与不存在任务统一返回 `404`。下载只在 `READY` 时可用，生成尚未完成时返回 `409`。文件自完成起保留 24 小时，到期后始终拒绝下载（`410`），清理器会删除受控存储中的 CSV/临时文件和快照行，保留任务审计元数据。
 
