@@ -87,6 +87,8 @@ mvn -q -pl distributed/outbox-consumer spring-boot:run
 
 ## 快速验证
 
+订单后台检索的角色权限、迁移、跨服务联调、性能采样及故障恢复见 [订单后台检索联调验收与运维](README-ORDER-ADMIN-SEARCH.md)。该验收会创建真实订单和任务，应在隔离测试环境运行。
+
 ### 端到端测试
 
 ```bash
@@ -593,3 +595,17 @@ bash sh/test/test-create-order.sh
 
 读模型是异步最终一致的：在同一稳定读模型状态下，游标分页不会重复或遗漏；不承诺投影更新
 期间跨多个请求形成绝对快照。
+
+### 订单后台读模型回填
+
+拥有 `ORDER_OPERATOR` 的管理员可调用 `POST /admin/orders/rebuilds` 创建异步回填任务，`GET /admin/orders/rebuilds/{id}` 查看状态和各分片进度，`POST /admin/orders/rebuilds/{id}/retry` 重跑失败任务。每次操作均由 `order-service` 验证 `Authorization`；失败重跑保留原水位和已完成游标，并写入任务审计表。任务记录订单、支付两侧各两个物理分片的最大 ID 水位、进度游标、处理数、成功数、失败数及失败原因。旧环境须先执行 `sql/migrations/20260917_07_order_admin_projection_rebuild.sql`。
+
+`order-service` 从本服务订单事实分片分页读取；支付事实由 `payment-service` 的 `/internal/rebuild/payments` 只读接口分页提供，不透传用户令牌。网关拒绝转发该内部路径，部署时还应限制支付服务端口的网络访问。回填复用在线投影的版本条件写入，在线较新版本不会被旧版本覆盖。水位限定任务扫描的事实记录 ID 上界；扫描期间更新的既有记录以读取时最新版本重放，并非历史时间点快照。
+
+### 后台订单审计与故障恢复
+
+先执行 `sql/migrations/20260917_08_order_admin_activity_audit.sql`。`t_order_admin_activity_audit` 记录检索、导出创建/重试/完成/失败/下载/过期、回填创建/重试/完成/失败及投影事件失败；包括操作者 ID（后台任务为空）、任务或事件 ID、筛选条件指纹、结果、追踪 ID 和时间，不保存原始筛选值或客户身份。订单服务暴露 `admin.order.activity.total`、`admin.order.export.tasks`、`admin.order.rebuild.tasks`、`admin.order.inventory.degraded.total`、`admin.order.payment.projection.lag.ms` 与 `admin.order.projection.events.total`；Outbox 消费者暴露 `outbox.payment.publish.total`、`outbox.payment.retry.total`、`outbox.payment.dead.total`。状态数量每 30 秒刷新一次，可用 `app.admin-observability.status-poll-ms` 调整。
+
+订单及支付投影分别消费 `q.order.admin.projection`、`q.order.admin.payment.projection`。处理失败时会带 `projection-retry-count` 头重新投递；默认最多重试 5 次，可用 `app.admin-observability.projection-max-retries` 调整。无效事件或耗尽重试的事件进入对应的持久队列 `q.order.admin.projection.dead`、`q.order.admin.payment.projection.dead`。转发获得 RabbitMQ 发布确认后才确认原消息；转发失败时原消息重新入队。上线需保留这些新队列并开启 RabbitMQ 发布确认。当前重试为立即重试，不提供时间退避；持续性故障会较快进入死信，应结合指标告警处理。
+
+发生投影死信、支付 Outbox `DEAD` 或读模型偏差时，先确认源事实及依赖服务恢复，再由 `ORDER_OPERATOR` 创建回填任务；任务失败时调用 `POST /admin/orders/rebuilds/{id}/retry`，复用原水位和游标。回填只读取订单事实和 `payment-service` 的只读接口，写入后台读模型，不修改订单或支付事实。死信队列保留失败原消息供排查，回填成功后按事件 ID 核对并由运维单独处置；不要未经核对直接重新发布或删除。财务导出失败由原创建者持 `FINANCE_VIEWER` 令牌调用对应导出重试接口。

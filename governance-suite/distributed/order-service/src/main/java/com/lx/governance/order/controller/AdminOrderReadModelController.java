@@ -12,6 +12,7 @@ import com.lx.governance.order.adminauth.InventorySnapshotEnricher;
 import com.lx.governance.order.adminauth.AdminSearchScope;
 import com.lx.governance.order.adminauth.AdminSearchScopeResolver;
 import com.lx.governance.order.repo.AdminOrderReadModelQueryRepository;
+import com.lx.governance.order.observability.AdminOrderActivity;
 import com.lx.governance.order.search.OrderOperatorOrder;
 import com.lx.governance.order.search.OrderOperatorSearchCriteria;
 import com.lx.governance.order.search.OrderOperatorSearchCursor;
@@ -31,15 +32,18 @@ public class AdminOrderReadModelController {
     private final OrderOperatorSearchCursorCodec cursorCodec;
     private final AdminOrderSearchViewPolicy viewPolicy;
     private final InventorySnapshotEnricher inventorySnapshotEnricher;
+    private final AdminOrderActivity activity;
 
     public AdminOrderReadModelController(AdminSearchScopeResolver searchScopeResolver,
             AdminOrderReadModelQueryRepository repository, OrderOperatorSearchCursorCodec cursorCodec,
-            AdminOrderSearchViewPolicy viewPolicy, InventorySnapshotEnricher inventorySnapshotEnricher) {
+            AdminOrderSearchViewPolicy viewPolicy, InventorySnapshotEnricher inventorySnapshotEnricher,
+            AdminOrderActivity activity) {
         this.searchScopeResolver = searchScopeResolver;
         this.repository = repository;
         this.cursorCodec = cursorCodec;
         this.viewPolicy = viewPolicy;
         this.inventorySnapshotEnricher = inventorySnapshotEnricher;
+        this.activity = activity;
     }
 
     @GetMapping
@@ -70,6 +74,7 @@ public class AdminOrderReadModelController {
                 items.get(items.size() - 1).orderNo()), criteria) : null;
         List<AdminOrderSearchItem> visibleItems = items.stream().map(item -> viewPolicy.view(scope.roles(), item)).toList();
         if (viewPolicy.isInventoryView(scope.roles())) visibleItems = inventorySnapshotEnricher.enrich(visibleItems);
+        activity.record("SEARCH", scope.userId(), criteria.fingerprint(), "SUCCESS", "rows=" + visibleItems.size());
         return ApiResponse.ok(new OrderOperatorSearchPage(visibleItems, nextCursor), Trace.getOrCreate());
     }
 

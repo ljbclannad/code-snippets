@@ -55,6 +55,13 @@ spring:
             - Path=/api/payment/**
           filters:
             - StripPrefix=2
+        - id: block-payment-rebuild
+          uri: no://op
+          order: -101
+          predicates:
+            - Path=/api/payment/internal/rebuild/**,/payment-service/internal/rebuild/**
+          filters:
+            - SetStatus=403
         - id: inventory
           uri: ${INVENTORY_SERVICE_URI:lb://inventory-service}
           predicates:

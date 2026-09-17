@@ -17,6 +17,8 @@ import com.lx.governance.order.export.FinanceExportService.FinanceExportConflict
 import com.lx.governance.order.export.FinanceExportService.FinanceExportExpiredException;
 import com.lx.governance.order.export.FinanceExportService.FinanceExportFinanceRoleRequiredException;
 import com.lx.governance.order.export.FinanceExportService.FinanceExportNotFoundException;
+import com.lx.governance.order.rebuild.ProjectionRebuildService.RebuildConflictException;
+import com.lx.governance.order.rebuild.ProjectionRebuildService.RebuildNotFoundException;
 
 @RestControllerAdvice(basePackages = "com.lx.governance.order.controller")
 @Order(Ordered.HIGHEST_PRECEDENCE)
@@ -61,6 +63,18 @@ public class AdminAuthorizationExceptionHandler {
     public ResponseEntity<ApiResponse<?>> exportConflict(FinanceExportConflictException exception) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiResponse.fail("EXPORT_CONFLICT", exception.getMessage(), Trace.getOrCreate()));
+    }
+
+    @ExceptionHandler(RebuildNotFoundException.class)
+    public ResponseEntity<ApiResponse<?>> rebuildNotFound(RebuildNotFoundException exception) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiResponse.fail("REBUILD_NOT_FOUND", "rebuild task not found", Trace.getOrCreate()));
+    }
+
+    @ExceptionHandler(RebuildConflictException.class)
+    public ResponseEntity<ApiResponse<?>> rebuildConflict(RebuildConflictException exception) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiResponse.fail("REBUILD_CONFLICT", "rebuild task is not failed", Trace.getOrCreate()));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

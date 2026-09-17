@@ -92,6 +92,39 @@ class OrderAdminReadModelRepositoryIntegrationTest {
         });
     }
 
+    @Test
+    void keepsUnknownPaymentNullAndIgnoresOlderRebuildAfterOnlinePayment() {
+        transactionTemplate.executeWithoutResult(status -> {
+            repository.upsertOrderIfNewer(event("order-created", "CREATED", 1, 2, 100));
+            jdbcTemplate.queryForObject("SELECT payment_status, pay_no, payment_updated_at FROM t_order_admin_read_model WHERE order_no = ?",
+                    (resultSet, rowNum) -> {
+                        assertThat(resultSet.getString("payment_status")).isNull();
+                        assertThat(resultSet.getString("pay_no")).isNull();
+                        assertThat(resultSet.getTimestamp("payment_updated_at")).isNull();
+                        return null;
+                    }, orderNo);
+
+            repository.upsertPaymentIfNewer(paymentEvent("online-success", "SUCCEEDED", 3));
+            assertThat(repository.upsertPaymentIfNewer(paymentEvent("rebuild-old", "PREPARED", 2))).isZero();
+            assertThat(repository.upsertPaymentIfNewer(paymentEvent("duplicate", "FAILED", 3))).isZero();
+
+            jdbcTemplate.queryForObject("SELECT customer_id, status, order_version, payment_status, pay_no, payment_version, payment_event_id, payment_updated_at FROM t_order_admin_read_model WHERE order_no = ?",
+                    (resultSet, rowNum) -> {
+                        assertThat(resultSet.getString("customer_id")).isEqualTo("customer-1");
+                        assertThat(resultSet.getString("status")).isEqualTo("CREATED");
+                        assertThat(resultSet.getLong("order_version")).isEqualTo(1);
+                        assertThat(resultSet.getString("payment_status")).isEqualTo("SUCCEEDED");
+                        assertThat(resultSet.getString("pay_no")).isEqualTo("P-100");
+                        assertThat(resultSet.getLong("payment_version")).isEqualTo(3);
+                        assertThat(resultSet.getString("payment_event_id")).isEqualTo("online-success");
+                        assertThat(resultSet.getTimestamp("payment_updated_at").toInstant())
+                                .isEqualTo(Instant.parse("2026-09-15T10:00:00Z"));
+                        return null;
+                    }, orderNo);
+            status.setRollbackOnly();
+        });
+    }
+
     private void assertProjection(String status, long version, String eventId, int quantity, long amountCents) {
         jdbcTemplate.queryForObject("""
                 SELECT status, order_version, order_event_id, quantity, amount_cents

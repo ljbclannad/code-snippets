@@ -13,12 +13,13 @@ import com.lx.governance.order.client.InventorySnapshotClient.InventorySnapshotR
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 class InventorySnapshotEnricherTest {
     @Test
     void readsRepeatedProductsOnceAndEnrichesEveryMatchingOrder() {
         InventorySnapshotClient client = Mockito.mock(InventorySnapshotClient.class);
-        InventorySnapshotEnricher enricher = new InventorySnapshotEnricher(client);
+        InventorySnapshotEnricher enricher = new InventorySnapshotEnricher(client, new SimpleMeterRegistry());
         Instant observedAt = Instant.parse("2026-09-17T10:00:00Z");
         when(client.snapshots(Mockito.any())).thenReturn(ApiResponse.ok(List.of(
                 new InventorySnapshotResponse("P-1", 0, observedAt), new InventorySnapshotResponse("P-2", 8, observedAt)), null));
@@ -36,7 +37,7 @@ class InventorySnapshotEnricherTest {
     @Test
     void returnsUnavailableWithoutBlockingOrdersWhenInventoryFails() {
         InventorySnapshotClient client = Mockito.mock(InventorySnapshotClient.class);
-        InventorySnapshotEnricher enricher = new InventorySnapshotEnricher(client);
+        InventorySnapshotEnricher enricher = new InventorySnapshotEnricher(client, new SimpleMeterRegistry());
         when(client.snapshots(Mockito.any())).thenThrow(new IllegalStateException("timeout"));
 
         List<AdminOrderSearchItem> result = enricher.enrich(List.of(item("O-1", "P-1")));
@@ -49,7 +50,7 @@ class InventorySnapshotEnricherTest {
     @Test
     void preservesAvailableSnapshotsWhenBatchResponseIsPartial() {
         InventorySnapshotClient client = Mockito.mock(InventorySnapshotClient.class);
-        InventorySnapshotEnricher enricher = new InventorySnapshotEnricher(client);
+        InventorySnapshotEnricher enricher = new InventorySnapshotEnricher(client, new SimpleMeterRegistry());
         Instant observedAt = Instant.parse("2026-09-17T10:00:00Z");
         when(client.snapshots(Mockito.any())).thenReturn(ApiResponse.ok(List.of(
                 new InventorySnapshotResponse("P-1", 8, observedAt)), null));
@@ -65,7 +66,7 @@ class InventorySnapshotEnricherTest {
     @Test
     void returnsUnavailableWithoutBlockingOrdersWhenFallbackReturnsFailureResponse() {
         InventorySnapshotClient client = Mockito.mock(InventorySnapshotClient.class);
-        InventorySnapshotEnricher enricher = new InventorySnapshotEnricher(client);
+        InventorySnapshotEnricher enricher = new InventorySnapshotEnricher(client, new SimpleMeterRegistry());
         when(client.snapshots(Mockito.any())).thenReturn(ApiResponse.fail("INVENTORY_UNAVAILABLE", "fallback", null));
 
         List<AdminOrderSearchItem> result = enricher.enrich(List.of(item("O-1", "P-1")));

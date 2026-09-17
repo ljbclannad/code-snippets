@@ -13,8 +13,10 @@ public class RabbitConfig {
     public static final String QUEUE_PAYMENT_CALLBACK = "q.order.payment.callback";
     public static final String RK_PAYMENT_CALLBACK = "payment.callback.pass";
     public static final String QUEUE_ORDER_ADMIN_PROJECTION = "q.order.admin.projection";
+    public static final String QUEUE_ORDER_ADMIN_PROJECTION_DEAD = "q.order.admin.projection.dead";
     public static final String RK_ORDER_PROJECTION = "order.#";
     public static final String QUEUE_ORDER_ADMIN_PAYMENT_PROJECTION = "q.order.admin.payment.projection";
+    public static final String QUEUE_ORDER_ADMIN_PAYMENT_PROJECTION_DEAD = "q.order.admin.payment.projection.dead";
     public static final String RK_PAYMENT_STATUS_CHANGED = "payment.status.changed";
 
     @Bean
@@ -48,6 +50,11 @@ public class RabbitConfig {
     }
 
     @Bean
+    public Queue orderAdminProjectionDeadQueue() {
+        return QueueBuilder.durable(QUEUE_ORDER_ADMIN_PROJECTION_DEAD).build();
+    }
+
+    @Bean
     public Binding orderAdminProjectionBinding(TopicExchange bizExchange, Queue orderAdminProjectionQueue) {
         return BindingBuilder.bind(orderAdminProjectionQueue).to(bizExchange).with(RK_ORDER_PROJECTION);
     }
@@ -55,6 +62,11 @@ public class RabbitConfig {
     @Bean
     public Queue orderAdminPaymentProjectionQueue() {
         return QueueBuilder.durable(QUEUE_ORDER_ADMIN_PAYMENT_PROJECTION).build();
+    }
+
+    @Bean
+    public Queue orderAdminPaymentProjectionDeadQueue() {
+        return QueueBuilder.durable(QUEUE_ORDER_ADMIN_PAYMENT_PROJECTION_DEAD).build();
     }
 
     @Bean

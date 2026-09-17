@@ -13,6 +13,10 @@ mysql -h127.0.0.1 -P3306 -uroot -proot < distributed/init-databases.sql
 - **表结构**:
   - `t_order_0`, `t_order_1` - 订单表（分片）
   - `t_outbox` - Outbox 消息表
+  - `t_order_admin_read_model` - 后台订单最终一致读模型
+  - `t_order_admin_export_task`, `t_order_admin_export_row` - 财务导出任务与冻结快照
+  - `t_order_admin_rebuild_task`, `t_order_admin_rebuild_audit` - 回填任务与操作记录
+  - `t_order_admin_activity_audit` - 后台检索、导出、回填和事件失败审计
   - `t_order_tcc_log` - 订单TCC事务日志
   - `t_payment_event_consume` - 支付事件消费记录
   - `t_seckill_order_guard` - 秒杀订单防重表
@@ -79,6 +83,8 @@ mysql -h127.0.0.1 -P3306 -uroot -proot < distributed/init-databases.sql
 ```
 
 ## 注意事项
+
+已有环境的后台订单增量迁移顺序和验收前检查见 [订单后台检索联调验收与运维](README-ORDER-ADMIN-SEARCH.md)。迁移并非幂等，须先检查目标表、列和索引，不能重复执行。
 
 1. **undo_log 表**: 每个参与 Seata 事务的数据库都必须包含 `undo_log` 表
 2. **分片表**: `t_order`, `t_payment`, `t_user` 按哈希分片到 `_0` 和 `_1` 两个物理表

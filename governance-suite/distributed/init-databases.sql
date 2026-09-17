@@ -71,7 +71,55 @@ CREATE TABLE IF NOT EXISTS `t_order_admin_read_model` (
   KEY `idx_projected_at` (`projected_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='订单后台读模型';
 
--- 财务订单异步导出任务及创建时物化的冻结快照
+-- 后台订单操作审计
+CREATE TABLE IF NOT EXISTS `t_order_admin_activity_audit` (
+  `audit_id` BIGINT NOT NULL AUTO_INCREMENT,
+  `action` VARCHAR(40) NOT NULL,
+  `actor_user_id` BIGINT NULL,
+  `target_id` VARCHAR(128) NULL,
+  `outcome` VARCHAR(16) NOT NULL,
+  `detail` VARCHAR(500) NULL,
+  `trace_id` VARCHAR(64) NULL,
+  `occurred_at` TIMESTAMP NOT NULL,
+  PRIMARY KEY (`audit_id`),
+  KEY `idx_admin_activity_target` (`target_id`, `occurred_at`),
+  KEY `idx_admin_activity_actor` (`actor_user_id`, `occurred_at`),
+  KEY `idx_admin_activity_action` (`action`, `occurred_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='后台订单操作审计';
+
+CREATE TABLE IF NOT EXISTS `t_order_admin_rebuild_task` (
+  `task_id` VARCHAR(36) NOT NULL,
+  `operator_user_id` BIGINT NOT NULL,
+  `status` VARCHAR(16) NOT NULL,
+  `phase` INT NOT NULL DEFAULT 0,
+  `order_watermark_0` BIGINT NOT NULL,
+  `order_watermark_1` BIGINT NOT NULL,
+  `payment_watermark_0` BIGINT NOT NULL,
+  `payment_watermark_1` BIGINT NOT NULL,
+  `order_cursor_0` BIGINT NOT NULL DEFAULT 0,
+  `order_cursor_1` BIGINT NOT NULL DEFAULT 0,
+  `payment_cursor_0` BIGINT NOT NULL DEFAULT 0,
+  `payment_cursor_1` BIGINT NOT NULL DEFAULT 0,
+  `processed_count` BIGINT NOT NULL DEFAULT 0,
+  `success_count` BIGINT NOT NULL DEFAULT 0,
+  `failure_count` BIGINT NOT NULL DEFAULT 0,
+  `failure_reason` VARCHAR(500) NULL,
+  `created_at` TIMESTAMP NOT NULL,
+  `updated_at` TIMESTAMP NOT NULL,
+  PRIMARY KEY (`task_id`),
+  KEY `idx_rebuild_claim` (`status`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='订单后台读模型回填任务';
+
+CREATE TABLE IF NOT EXISTS `t_order_admin_rebuild_audit` (
+  `id` BIGINT NOT NULL AUTO_INCREMENT,
+  `task_id` VARCHAR(36) NOT NULL,
+  `operator_user_id` BIGINT NULL,
+  `action` VARCHAR(16) NOT NULL,
+  `occurred_at` TIMESTAMP NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `idx_rebuild_audit_task` (`task_id`, `occurred_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='读模型回填操作审计';
+
 CREATE TABLE IF NOT EXISTS `t_order_admin_export_task` (
   `task_id` VARCHAR(36) NOT NULL COMMENT '服务端生成任务 UUID',
   `owner_user_id` BIGINT NOT NULL COMMENT '创建者用户 ID',

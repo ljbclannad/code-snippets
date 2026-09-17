@@ -13,8 +13,10 @@ import com.lx.governance.common.auth.AdminRole;
 import com.lx.governance.order.adminauth.AdminSearchScope;
 import com.lx.governance.order.adminauth.AdminSearchScopeResolver;
 import com.lx.governance.order.repo.FinanceExportRepository;
+import com.lx.governance.order.observability.AdminOrderActivity;
 import com.lx.governance.order.search.OrderOperatorSearchCriteria;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
@@ -25,18 +27,22 @@ public class FinanceExportService {
     private final AdminSearchScopeResolver scopeResolver;
     private final FinanceExportRepository repository;
     private final FinanceExportFileStorage fileStorage;
+    private final AdminOrderActivity activity;
     private final Clock clock;
     private final FinanceCsvWriter csvWriter = new FinanceCsvWriter();
 
+    @Autowired
     public FinanceExportService(AdminSearchScopeResolver scopeResolver, FinanceExportRepository repository,
+            AdminOrderActivity activity,
             @Value("${app.finance-export.directory:${java.io.tmpdir}/order-finance-exports}") String directory) {
-        this(scopeResolver, repository, new FinanceExportFileStorage(Path.of(directory)), Clock.systemUTC());
+        this(scopeResolver, repository, activity, new FinanceExportFileStorage(Path.of(directory)), Clock.systemUTC());
     }
 
     FinanceExportService(AdminSearchScopeResolver scopeResolver, FinanceExportRepository repository,
-            FinanceExportFileStorage fileStorage, Clock clock) {
+            AdminOrderActivity activity, FinanceExportFileStorage fileStorage, Clock clock) {
         this.scopeResolver = scopeResolver;
         this.repository = repository;
+        this.activity = activity;
         this.fileStorage = fileStorage;
         this.clock = clock;
     }
@@ -48,6 +54,7 @@ public class FinanceExportService {
         String id = UUID.randomUUID().toString();
         FinanceExportSnapshot snapshot = FinanceExportSnapshot.from(scope, criteria, repository.readModelWatermark());
         repository.createAndMaterialize(id, scope.userId(), criteria, snapshot, clock.instant());
+        activity.record("EXPORT_CREATED", scope.userId(), id, "SUCCESS", "criteria=" + criteria.fingerprint());
         return taskFor(scope, id);
     }
 
@@ -55,20 +62,25 @@ public class FinanceExportService {
         return taskFor(financeScope(authorization), id);
     }
 
+    @Transactional(transactionManager = "orderAdminReadModelTransactionManager", rollbackFor = Exception.class)
     public void retry(String authorization, String id) {
-        FinanceExportTask task = taskFor(financeScope(authorization), id);
+        AdminSearchScope scope = financeScope(authorization);
+        FinanceExportTask task = taskFor(scope, id);
         if (task.isExpired(clock.instant())) throw new FinanceExportExpiredException();
         if (!repository.retry(id)) throw new FinanceExportConflictException("export task is not retryable");
+        activity.record("EXPORT_RETRIED", scope.userId(), id, "SUCCESS", null);
     }
 
     public Path download(String authorization, String id) {
-        FinanceExportTask task = taskFor(financeScope(authorization), id);
+        AdminSearchScope scope = financeScope(authorization);
+        FinanceExportTask task = taskFor(scope, id);
         if (task.isExpired(clock.instant())) throw new FinanceExportExpiredException();
         if (task.status() != FinanceExportStatus.READY || task.fileKey() == null) {
             throw new FinanceExportConflictException("export task is not ready");
         }
         Path file = fileStorage.read(task.fileKey());
         if (!Files.isRegularFile(file)) throw new FinanceExportConflictException("export file is unavailable");
+        activity.record("EXPORT_DOWNLOADED", scope.userId(), id, "SUCCESS", null);
         return file;
     }
 
@@ -80,6 +92,7 @@ public class FinanceExportService {
     @Scheduled(fixedDelayString = "${app.finance-export.cleanup-delay-ms:60000}")
     public void cleanupExpired() {
         for (FinanceExportTask task : repository.expire(clock.instant())) {
+            activity.recordBackground("EXPORT_EXPIRED", task.id(), "SUCCESS", null);
             try {
                 fileStorage.delete(task.fileKey());
                 fileStorage.deletePart(task.id());
@@ -96,8 +109,10 @@ public class FinanceExportService {
             Instant completedAt = clock.instant();
             String key = fileStorage.write(task.id(), writer.toString());
             repository.markReady(task.id(), key, completedAt, completedAt.plus(Duration.ofHours(24)));
+            activity.recordBackground("EXPORT_COMPLETED", task.id(), "SUCCESS", "rows=" + task.rowCount());
         } catch (Exception exception) {
             repository.markFailed(task.id(), abbreviate(exception.getMessage()));
+            activity.recordBackground("EXPORT_FAILED", task.id(), "FAILURE", exception.getClass().getSimpleName());
         }
     }
 

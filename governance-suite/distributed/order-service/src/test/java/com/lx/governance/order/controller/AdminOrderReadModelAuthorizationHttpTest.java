@@ -5,6 +5,8 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -18,12 +20,14 @@ import com.lx.governance.order.adminauth.AdminSearchScopeResolver;
 import com.lx.governance.order.adminauth.AdminOrderSearchViewPolicy;
 import com.lx.governance.order.adminauth.InventorySnapshotEnricher;
 import com.lx.governance.order.client.InventorySnapshotClient;
+import com.lx.governance.order.observability.AdminOrderActivity;
 import com.lx.governance.order.repo.AdminOrderReadModelQueryRepository;
 import com.lx.governance.order.search.OrderOperatorSearchCursorCodec;
 import com.lx.governance.order.search.OrderOperatorOrder;
 import com.lx.governance.order.search.OrderOperatorSearchCriteria;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.test.web.servlet.MockMvc;
@@ -35,15 +39,18 @@ class AdminOrderReadModelAuthorizationHttpTest {
     private AuthTokenService authTokenService;
     private MockMvc mockMvc;
     private AdminOrderReadModelQueryRepository repository;
+    private AdminOrderActivity activity;
 
     @BeforeEach
     void setUp() {
         authTokenService = new AuthTokenService(TOKEN_SECRET, 7200);
         AdminSearchScopeResolver resolver = new AdminSearchScopeResolver(authTokenService);
         repository = mock(AdminOrderReadModelQueryRepository.class);
+        activity = mock(AdminOrderActivity.class);
         AdminOrderReadModelController controller = new AdminOrderReadModelController(resolver, repository,
                 new OrderOperatorSearchCursorCodec("cursor-secret"), new AdminOrderSearchViewPolicy(),
-                new InventorySnapshotEnricher(mock(InventorySnapshotClient.class)));
+                new InventorySnapshotEnricher(mock(InventorySnapshotClient.class), new SimpleMeterRegistry()),
+                activity);
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setMessageConverters(new MappingJackson2HttpMessageConverter())
                 .setControllerAdvice(new GlobalExceptionHandler(), new AdminAuthorizationExceptionHandler())
@@ -79,6 +86,7 @@ class AdminOrderReadModelAuthorizationHttpTest {
 
         verify(repository).find(org.mockito.ArgumentMatchers.any(OrderOperatorSearchCriteria.class),
                 org.mockito.ArgumentMatchers.isNull());
+        verify(activity).record(eq("SEARCH"), eq(1L), anyString(), eq("SUCCESS"), eq("rows=0"));
     }
 
     @Test
@@ -123,6 +131,7 @@ class AdminOrderReadModelAuthorizationHttpTest {
                 .andExpect(jsonPath("$.message").value("inventory administrators cannot filter or sort by financial fields"));
 
         verifyNoInteractions(repository);
+        verifyNoInteractions(activity);
     }
 
     @Test
