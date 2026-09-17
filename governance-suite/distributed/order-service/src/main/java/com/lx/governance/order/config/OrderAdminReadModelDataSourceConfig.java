@@ -7,6 +7,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.PlatformTransactionManager;
 
 @Configuration
 public class OrderAdminReadModelDataSourceConfig {
@@ -37,5 +39,10 @@ public class OrderAdminReadModelDataSourceConfig {
     @Bean(name = "orderAdminReadModelJdbcTemplate")
     public JdbcTemplate orderAdminReadModelJdbcTemplate() {
         return new JdbcTemplate(orderAdminReadModelDataSource());
+    }
+
+    @Bean(name = "orderAdminReadModelTransactionManager")
+    public PlatformTransactionManager orderAdminReadModelTransactionManager() {
+        return new DataSourceTransactionManager(orderAdminReadModelDataSource());
     }
 }
