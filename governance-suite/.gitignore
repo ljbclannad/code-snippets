@@ -32,3 +32,6 @@ docs/
 # matt
 #.scratch/
 
+# Claude Code worktrees
+.claude/worktrees/
+

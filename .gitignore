@@ -48,4 +48,7 @@ Thumbs.db
 # Spring AI
 spring-ai/demo/target/
 
+# Claude Code 临时 worktree
+.claude/worktrees/
+
 mcp-diagnosis/node_modules
