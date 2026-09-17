@@ -5,10 +5,11 @@ import java.util.List;
 
 import com.lx.governance.common.api.ApiResponse;
 import com.lx.governance.common.auth.AuthHeaders;
-import com.lx.governance.common.auth.AdminRole;
 import com.lx.governance.common.trace.Trace;
+import com.lx.governance.order.adminauth.AdminOrderSearchItem;
+import com.lx.governance.order.adminauth.AdminOrderSearchViewPolicy;
+import com.lx.governance.order.adminauth.AdminSearchScope;
 import com.lx.governance.order.adminauth.AdminSearchScopeResolver;
-import com.lx.governance.order.adminauth.OrderOperatorRequiredException;
 import com.lx.governance.order.repo.AdminOrderReadModelQueryRepository;
 import com.lx.governance.order.search.OrderOperatorOrder;
 import com.lx.governance.order.search.OrderOperatorSearchCriteria;
@@ -27,12 +28,15 @@ public class AdminOrderReadModelController {
     private final AdminSearchScopeResolver searchScopeResolver;
     private final AdminOrderReadModelQueryRepository repository;
     private final OrderOperatorSearchCursorCodec cursorCodec;
+    private final AdminOrderSearchViewPolicy viewPolicy;
 
     public AdminOrderReadModelController(AdminSearchScopeResolver searchScopeResolver,
-            AdminOrderReadModelQueryRepository repository, OrderOperatorSearchCursorCodec cursorCodec) {
+            AdminOrderReadModelQueryRepository repository, OrderOperatorSearchCursorCodec cursorCodec,
+            AdminOrderSearchViewPolicy viewPolicy) {
         this.searchScopeResolver = searchScopeResolver;
         this.repository = repository;
         this.cursorCodec = cursorCodec;
+        this.viewPolicy = viewPolicy;
     }
 
     @GetMapping
@@ -47,19 +51,29 @@ public class AdminOrderReadModelController {
             @RequestParam(required = false) Instant createdTo,
             @RequestParam(required = false) Long minAmountCents,
             @RequestParam(required = false) Long maxAmountCents,
+            @RequestParam(required = false) String sort,
+            @RequestParam(required = false) String direction,
             @RequestParam(required = false) String cursor,
             @RequestParam(defaultValue = "20") int limit) {
-        if (!searchScopeResolver.resolve(authorization).roles().contains(AdminRole.ORDER_OPERATOR.name())) {
-            throw new OrderOperatorRequiredException();
-        }
+        AdminSearchScope scope = searchScopeResolver.resolve(authorization);
         OrderOperatorSearchCriteria criteria = OrderOperatorSearchCriteria.create(orderNo, customerSearchToken, productId,
-                status, paymentStatus, createdFrom, createdTo, minAmountCents, maxAmountCents, limit);
+                status, paymentStatus, createdFrom, createdTo, minAmountCents, maxAmountCents, sort, direction, limit);
+        viewPolicy.validateSearch(scope.roles(), criteria.sort().name(), minAmountCents, maxAmountCents, paymentStatus);
         OrderOperatorSearchCursor decodedCursor = cursor == null || cursor.isBlank() ? null : cursorCodec.decode(cursor, criteria);
         List<OrderOperatorOrder> results = repository.find(criteria, decodedCursor);
         boolean hasMore = results.size() > criteria.limit();
         List<OrderOperatorOrder> items = hasMore ? results.subList(0, criteria.limit()) : results;
-        String nextCursor = hasMore ? cursorCodec.encode(new OrderOperatorSearchCursor(items.get(items.size() - 1).createdAt(),
+        String nextCursor = hasMore ? cursorCodec.encode(new OrderOperatorSearchCursor(sortValue(items.get(items.size() - 1), criteria),
                 items.get(items.size() - 1).orderNo()), criteria) : null;
-        return ApiResponse.ok(new OrderOperatorSearchPage(items, nextCursor), Trace.getOrCreate());
+        List<AdminOrderSearchItem> visibleItems = items.stream().map(item -> viewPolicy.view(scope.roles(), item)).toList();
+        return ApiResponse.ok(new OrderOperatorSearchPage(visibleItems, nextCursor), Trace.getOrCreate());
+    }
+
+    private String sortValue(OrderOperatorOrder item, OrderOperatorSearchCriteria criteria) {
+        return switch (criteria.sort()) {
+            case CREATED_AT -> item.createdAt().toString();
+            case AMOUNT_CENTS -> String.valueOf(item.amountCents());
+            case PAYMENT_UPDATED_AT -> item.paymentUpdatedAt().toString();
+        };
     }
 }

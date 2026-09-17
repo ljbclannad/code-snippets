@@ -128,6 +128,14 @@ curl -X POST http://localhost:8080/api/order/order \
 
 读模型按同一订单的 `order_version` 条件写入：重复事件和较旧事件不会覆盖较新快照；取消事件仅将状态投影为 `CANCELLED`，历史订单记录不会删除。该模型是异步最终一致的，初始化环境需要使用 `distributed/init-databases.sql` 创建表结构。
 
+### 后台订单检索
+
+`GET /admin/orders` 支持 `ORDER_OPERATOR`、`FINANCE_VIEWER` 与 `INVENTORY_VIEWER` 三类已认证后台角色。若令牌同时具有多个角色，按 `FINANCE_VIEWER > ORDER_OPERATOR > INVENTORY_VIEWER` 选择字段视图：财务可获得完整客户标识、金额与支付字段；运营和库存仅获得脱敏客户标识；库存响应不会包含金额、支付状态、支付单号或支付更新时间。
+
+检索仅接受 `CREATED_AT`、`AMOUNT_CENTS`、`PAYMENT_UPDATED_AT` 三种 `sort` 值，`direction` 仅接受 `ASC` 或 `DESC`，默认按 `CREATED_AT DESC`。每种排序都以订单号作为稳定次级键，`nextCursor` 只能继续相同筛选条件、排序与方向的列表，不能用于页码跳转或跨条件复用。库存管理员不能按金额或支付字段筛选或排序。
+
+订单后台读模型为异步最终一致投影；列表 cursor 不提供跨服务的一致快照保证。
+
 ## 核心能力详解
 
 ## 1. 分布式事务（Seata AT 模式）
@@ -565,12 +573,13 @@ bash sh/test/test-create-order.sh
 
 支付服务对 `PREPARED`、`SUCCEEDED` 和 `CANCELLED` 的真实状态变化以本地 `payment_db.t_outbox` 记录 `payment.status.changed` 事件。outbox-consumer 在 broker publisher confirm 后才将订单库或支付库的 Outbox 记录标记为 `SENT`。
 
-`ORDER_OPERATOR` 可调用 `GET /admin/orders` 检索订单后台读模型。请求必须提供 UTC 的
+`ORDER_OPERATOR`、`FINANCE_VIEWER` 与 `INVENTORY_VIEWER` 可调用 `GET /admin/orders` 检索订单后台读模型。请求必须提供 UTC 的
 `createdFrom` 与 `createdTo`，时间窗口不得超过 90 天；可组合使用 `orderNo`、
 `customerSearchToken`、`productId`、`status`、`paymentStatus`、金额范围和 `limit`（1–100）。
-结果固定按 `created_at DESC, order_no DESC` 排序，响应的 `nextCursor` 用于继续读取下一页；
-游标与全部筛选条件绑定，不能跨条件复用。运营响应只返回不可逆的客户检索令牌，不返回原始
-客户标识或支付单号。支付先到创建的占位行和未完成创建时间回填的历史行不会出现在该查询结果中。
+结果可按 `CREATED_AT`、`AMOUNT_CENTS` 或 `PAYMENT_UPDATED_AT` 排序，方向为 `ASC` 或 `DESC`，每种排序均以
+`order_no` 作为稳定次级键；响应的 `nextCursor` 用于继续读取下一页。游标与全部筛选条件、排序及方向绑定，
+不能跨条件复用。运营和库存响应只返回脱敏客户标识；财务可返回完整客户标识、金额与支付字段；库存不返回金额
+或支付字段，并且不能按金额或支付字段筛选或排序。支付先到创建的占位行和未完成创建时间回填的历史行不会出现在该查询结果中。
 
 读模型是异步最终一致的：在同一稳定读模型状态下，游标分页不会重复或遗漏；不承诺投影更新
 期间跨多个请求形成绝对快照。

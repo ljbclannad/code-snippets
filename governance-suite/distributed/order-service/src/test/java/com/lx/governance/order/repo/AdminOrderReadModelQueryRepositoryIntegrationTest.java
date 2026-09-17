@@ -69,7 +69,7 @@ class AdminOrderReadModelQueryRepositoryIntegrationTest {
                 break;
             }
             OrderOperatorOrder last = page.get(page.size() - 1);
-            cursor = new OrderOperatorSearchCursor(last.createdAt(), last.orderNo());
+            cursor = new OrderOperatorSearchCursor(last.createdAt().toString(), last.orderNo());
         }
 
         assertThat(orderNos).containsExactly(orderNo("06"), orderNo("05"), orderNo("04"), orderNo("03"), orderNo("02"),

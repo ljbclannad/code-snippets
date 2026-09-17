@@ -2,7 +2,6 @@ package com.lx.governance.order.search;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
-import java.time.Instant;
 import java.util.Base64;
 
 import javax.crypto.Mac;
@@ -23,7 +22,7 @@ public class OrderOperatorSearchCursorCodec {
 
     public String encode(OrderOperatorSearchCursor cursor, OrderOperatorSearchCriteria criteria) {
         try {
-            String payload = "v2|" + cursor.createdAt() + "|" + cursor.orderNo() + "|" + criteria.fingerprint();
+            String payload = "v3|" + cursor.sortValue() + "|" + cursor.orderNo() + "|" + criteria.fingerprint();
             String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(payload.getBytes(StandardCharsets.UTF_8));
             return encoded + "." + sign(encoded);
         } catch (Exception exception) {
@@ -35,14 +34,11 @@ public class OrderOperatorSearchCursorCodec {
         try {
             String[] parts = value.split("\\.");
             if (parts.length != 2 || !MessageDigest.isEqual(sign(parts[0]).getBytes(StandardCharsets.UTF_8),
-                    parts[1].getBytes(StandardCharsets.UTF_8))) {
-                throw invalidCursor();
-            }
+                    parts[1].getBytes(StandardCharsets.UTF_8))) throw invalidCursor();
             String[] payload = new String(Base64.getUrlDecoder().decode(parts[0]), StandardCharsets.UTF_8).split("\\|", -1);
-            if (payload.length != 4 || !"v2".equals(payload[0]) || !payload[3].equals(criteria.fingerprint())) {
-                throw invalidCursor();
-            }
-            return new OrderOperatorSearchCursor(Instant.parse(payload[1]), payload[2]);
+            if (payload.length != 4 || !"v3".equals(payload[0]) || !payload[3].equals(criteria.fingerprint())
+                    || payload[1].isBlank() || payload[2].isBlank()) throw invalidCursor();
+            return new OrderOperatorSearchCursor(payload[1], payload[2]);
         } catch (Exception exception) {
             throw invalidCursor();
         }

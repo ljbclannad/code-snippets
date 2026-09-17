@@ -2,5 +2,7 @@ package com.lx.governance.order.search;
 
 import java.util.List;
 
-public record OrderOperatorSearchPage(List<OrderOperatorOrder> items, String nextCursor) {
+import com.lx.governance.order.adminauth.AdminOrderSearchItem;
+
+public record OrderOperatorSearchPage(List<AdminOrderSearchItem> items, String nextCursor) {
 }

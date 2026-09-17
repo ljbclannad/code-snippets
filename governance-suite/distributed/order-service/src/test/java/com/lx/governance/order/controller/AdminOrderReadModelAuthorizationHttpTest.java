@@ -15,6 +15,7 @@ import java.time.Instant;
 import com.lx.governance.common.auth.AuthTokenService;
 import com.lx.governance.common.web.GlobalExceptionHandler;
 import com.lx.governance.order.adminauth.AdminSearchScopeResolver;
+import com.lx.governance.order.adminauth.AdminOrderSearchViewPolicy;
 import com.lx.governance.order.repo.AdminOrderReadModelQueryRepository;
 import com.lx.governance.order.search.OrderOperatorSearchCursorCodec;
 import com.lx.governance.order.search.OrderOperatorOrder;
@@ -39,7 +40,7 @@ class AdminOrderReadModelAuthorizationHttpTest {
         AdminSearchScopeResolver resolver = new AdminSearchScopeResolver(authTokenService);
         repository = mock(AdminOrderReadModelQueryRepository.class);
         AdminOrderReadModelController controller = new AdminOrderReadModelController(resolver, repository,
-                new OrderOperatorSearchCursorCodec("cursor-secret"));
+                new OrderOperatorSearchCursorCodec("cursor-secret"), new AdminOrderSearchViewPolicy());
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .setMessageConverters(new MappingJackson2HttpMessageConverter())
                 .setControllerAdvice(new GlobalExceptionHandler(), new AdminAuthorizationExceptionHandler())
@@ -65,28 +66,60 @@ class AdminOrderReadModelAuthorizationHttpTest {
     }
 
     @Test
-    void rejectsNonOperatorAdministratorBeforeQueryingReadModel() throws Exception {
+    void allowsFinanceAdministratorAndReturnsFinancialView() throws Exception {
         String token = authTokenService.issueToken(1L, "finance", List.of("FINANCE_VIEWER"));
+        when(repository.find(org.mockito.ArgumentMatchers.any(OrderOperatorSearchCriteria.class),
+                org.mockito.ArgumentMatchers.isNull())).thenReturn(List.of());
 
         mockMvc.perform(searchRequest().header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
-                .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.code").value("ORDER_OPERATOR_REQUIRED"));
+                .andExpect(status().isOk());
 
-        verifyNoInteractions(repository);
+        verify(repository).find(org.mockito.ArgumentMatchers.any(OrderOperatorSearchCriteria.class),
+                org.mockito.ArgumentMatchers.isNull());
     }
 
     @Test
     void returnsOperatorPageWithoutRawCustomerIdentifier() throws Exception {
         String token = authTokenService.issueToken(1L, "operator", List.of("ORDER_OPERATOR"));
         when(repository.find(org.mockito.ArgumentMatchers.any(OrderOperatorSearchCriteria.class),
-                org.mockito.ArgumentMatchers.isNull())).thenReturn(List.of(new OrderOperatorOrder("O-1", "token-1", "P-1",
-                        2, 100L, "CREATED", "PREPARED", Instant.parse("2026-09-15T10:00:00Z"))));
+                org.mockito.ArgumentMatchers.isNull())).thenReturn(List.of(new OrderOperatorOrder("O-1", "customer-1", "token-1",
+                        "P-1", 2, 100L, "CREATED", "PREPARED", "PAY-1", Instant.parse("2026-09-15T11:00:00Z"),
+                        Instant.parse("2026-09-15T10:00:00Z"))));
 
         mockMvc.perform(searchRequest().header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.items[0].customerSearchToken").value("token-1"))
-                .andExpect(jsonPath("$.data.items[0].customerId").doesNotExist())
+                .andExpect(jsonPath("$.data.items[0].customerId").value("c***1"))
+                .andExpect(jsonPath("$.data.items[0].customerSearchToken").doesNotExist())
                 .andExpect(jsonPath("$.data.nextCursor").doesNotExist());
+    }
+
+    @Test
+    void removesFinancialFieldsForInventoryAdministrator() throws Exception {
+        String token = authTokenService.issueToken(1L, "inventory", List.of("INVENTORY_VIEWER"));
+        when(repository.find(org.mockito.ArgumentMatchers.any(OrderOperatorSearchCriteria.class),
+                org.mockito.ArgumentMatchers.isNull())).thenReturn(List.of(new OrderOperatorOrder("O-1", "customer-1", "token-1",
+                        "P-1", 2, 100L, "CREATED", "PREPARED", "PAY-1", Instant.parse("2026-09-15T11:00:00Z"),
+                        Instant.parse("2026-09-15T10:00:00Z"))));
+
+        mockMvc.perform(searchRequest().header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].customerId").value("c***1"))
+                .andExpect(jsonPath("$.data.items[0].amountCents").doesNotExist())
+                .andExpect(jsonPath("$.data.items[0].paymentStatus").doesNotExist())
+                .andExpect(jsonPath("$.data.items[0].payNo").doesNotExist())
+                .andExpect(jsonPath("$.data.items[0].paymentUpdatedAt").doesNotExist());
+    }
+
+    @Test
+    void rejectsFinancialSortForInventoryAdministratorBeforeQueryingReadModel() throws Exception {
+        String token = authTokenService.issueToken(1L, "inventory", List.of("INVENTORY_VIEWER"));
+
+        mockMvc.perform(searchRequest().header(HttpHeaders.AUTHORIZATION, "Bearer " + token)
+                        .param("sort", "AMOUNT_CENTS"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("inventory administrators cannot filter or sort by financial fields"));
+
+        verifyNoInteractions(repository);
     }
 
     @Test

@@ -13,19 +13,18 @@ class OrderOperatorSearchCursorCodecTest {
     @Test
     void restoresCursorForTheSameNormalizedCriteria() {
         OrderOperatorSearchCriteria criteria = criteria("P-1");
-        String encoded = codec.encode(new OrderOperatorSearchCursor(Instant.parse("2026-09-15T10:00:00Z"), "O-2"), criteria);
+        String encoded = codec.encode(new OrderOperatorSearchCursor("2026-09-15T10:00:00Z", "O-2"), criteria);
 
-        assertThat(codec.decode(encoded, criteria)).isEqualTo(new OrderOperatorSearchCursor(
-                Instant.parse("2026-09-15T10:00:00Z"), "O-2"));
+        assertThat(codec.decode(encoded, criteria)).isEqualTo(new OrderOperatorSearchCursor("2026-09-15T10:00:00Z", "O-2"));
     }
 
     @Test
-    void preservesSubMillisecondCursorPrecision() {
+    void preservesSortValue() {
         OrderOperatorSearchCriteria criteria = criteria("P-1");
-        Instant createdAt = Instant.parse("2026-09-15T10:00:00.123456Z");
-        String encoded = codec.encode(new OrderOperatorSearchCursor(createdAt, "O-2"), criteria);
+        String amount = "123456";
+        String encoded = codec.encode(new OrderOperatorSearchCursor(amount, "O-2"), criteria);
 
-        assertThat(codec.decode(encoded, criteria).createdAt()).isEqualTo(createdAt);
+        assertThat(codec.decode(encoded, criteria).sortValue()).isEqualTo(amount);
     }
 
     @Test
@@ -37,7 +36,7 @@ class OrderOperatorSearchCursorCodecTest {
 
     @Test
     void rejectsCursorWhenSearchCriteriaChanges() {
-        String encoded = codec.encode(new OrderOperatorSearchCursor(Instant.parse("2026-09-15T10:00:00Z"), "O-2"), criteria("P-1"));
+        String encoded = codec.encode(new OrderOperatorSearchCursor("2026-09-15T10:00:00Z", "O-2"), criteria("P-1"));
 
         assertThatThrownBy(() -> codec.decode(encoded, criteria("P-2")))
                 .isInstanceOf(IllegalArgumentException.class)

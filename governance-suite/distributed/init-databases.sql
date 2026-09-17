@@ -66,6 +66,8 @@ CREATE TABLE IF NOT EXISTS `t_order_admin_read_model` (
   KEY `idx_payment_status_updated_at` (`payment_status`, `payment_updated_at`),
   KEY `idx_pay_no` (`pay_no`),
   KEY `idx_created_at_order_no` (`created_at`, `order_no`),
+  KEY `idx_amount_cents_order_no` (`amount_cents`, `order_no`),
+  KEY `idx_payment_updated_at_order_no` (`payment_updated_at`, `order_no`),
   KEY `idx_projected_at` (`projected_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='订单后台读模型';
 
