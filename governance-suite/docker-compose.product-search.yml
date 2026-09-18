@@ -1,0 +1,6 @@
+# 与主 compose 叠加，仅在需要商品搜索时使用；插件版本由基础镜像保证一致。
+services:
+  elasticsearch:
+    image: governance-product-elasticsearch:8.11.0
+    build:
+      context: ./docker/elasticsearch-product

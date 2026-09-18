@@ -1,0 +1,20 @@
+{
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 0,
+    "refresh_interval": "1s"
+  },
+  "mappings": {
+    "dynamic": "strict",
+    "properties": {
+      "productId": {"type": "keyword"},
+      "title": {"type": "text", "analyzer": "smartcn", "search_analyzer": "smartcn"},
+      "categoryId": {"type": "keyword"},
+      "brandId": {"type": "keyword"},
+      "priceCents": {"type": "long"},
+      "status": {"type": "keyword"},
+      "version": {"type": "long"},
+      "updatedAt": {"type": "date"}
+    }
+  }
+}

@@ -62,6 +62,18 @@ spring:
             - Path=/api/payment/internal/rebuild/**,/payment-service/internal/rebuild/**
           filters:
             - SetStatus=403
+        - id: search
+          uri: ${SEARCH_SERVICE_URI:lb://search-service}
+          predicates:
+            - Path=/api/search/**
+          filters:
+            - StripPrefix=2
+        - id: product
+          uri: ${PRODUCT_SERVICE_URI:lb://product-service}
+          predicates:
+            - Path=/api/product/**
+          filters:
+            - StripPrefix=2
         - id: inventory
           uri: ${INVENTORY_SERVICE_URI:lb://inventory-service}
           predicates:

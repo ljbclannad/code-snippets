@@ -19,6 +19,8 @@
     <module>distributed/outbox-consumer</module>
     <module>distributed/appointment-service</module>
     <module>distributed/nacos-simulator</module>
+    <module>distributed/product-service</module>
+    <module>distributed/search-service</module>
 
     <!-- AI Services -->
     <module>ai/ai-chat-service</module>

@@ -12,6 +12,8 @@ distributed/
 ├── payment-service/      # 支付服务 (8082) - Seata 参与者
 ├── inventory-service/    # 库存服务 (8083) - Seata 参与者
 ├── outbox-consumer/      # Outbox 消费者 (8090)
+├── product-service/      # 商品目录与维护 (8085)
+├── search-service/       # 商品中文搜索 (8086)
 └── appointment-service/  # 预约服务 (8089)
 ```
 
@@ -34,9 +36,13 @@ distributed/
 | payment-service | 8082 | 支付服务（Seata参与者） |
 | inventory-service | 8083 | 库存服务（Seata参与者） |
 | outbox-consumer | 8090 | 异步消息消费 |
+| product-service | 8085 | 商品事实、维护权限、变更 Outbox |
+| search-service | 8086 | ES 标题分词、条件过滤、排序分页 |
 | appointment-service | 8089 | 预约服务 |
 
 ## 基础设施端点
+
+商品搜索初版的启动、API、中文插件与恢复说明见 [商品搜索](README-PRODUCT-SEARCH.md)。该能力按需启动，不自动加入已有服务组脚本。
 
 | 组件 | 地址 |
 |-----|------|

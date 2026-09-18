@@ -1,0 +1,39 @@
+server:
+  port: 8086
+spring:
+  application:
+    name: search-service
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:localhost:8848}
+        register-enabled: ${NACOS_REGISTER_ENABLED:true}
+  rabbitmq:
+    host: ${RABBIT_HOST:localhost}
+    port: ${RABBIT_PORT:5672}
+    username: ${RABBIT_USER:guest}
+    password: ${RABBIT_PASS:guest}
+    listener:
+      simple:
+        prefetch: 20
+        default-requeue-rejected: false
+        retry:
+          enabled: true
+          max-attempts: 3
+          initial-interval: 1s
+          multiplier: 2
+          max-interval: 4s
+product-search:
+  elasticsearch:
+    url: ${PRODUCT_SEARCH_ES_URL:http://localhost:9200}
+    index: ${PRODUCT_SEARCH_INDEX:product-catalog-v1}
+    username: ${PRODUCT_SEARCH_ES_USERNAME:}
+    password: ${PRODUCT_SEARCH_ES_PASSWORD:}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: never

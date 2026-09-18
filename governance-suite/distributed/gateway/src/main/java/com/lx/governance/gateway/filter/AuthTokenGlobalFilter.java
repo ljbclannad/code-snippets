@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.core.Ordered;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.stereotype.Component;
@@ -44,7 +45,8 @@ public class AuthTokenGlobalFilter implements GlobalFilter, Ordered {
                     headers.remove(AuthHeaders.USER_ROLES);
                 })
                 .build();
-        if (skip(path)) {
+        if (skip(path) || (HttpMethod.GET.equals(exchange.getRequest().getMethod())
+                && path.equals("/api/search/products"))) {
             return chain.filter(exchange.mutate().request(sanitized).build());
         }
 

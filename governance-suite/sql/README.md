@@ -2,6 +2,8 @@
 
 数据库初始化脚本已按项目结构重组：
 
+商品搜索为按需功能，需另外执行 `sql/migrations/20260918_01_product_catalog.sql` 创建 `product_db.t_product` 和 `t_product_outbox`。商品服务与商品 Outbox 发布器必须连接同一个商品库；主初始化脚本不会自动创建该库。启动步骤见 [商品搜索说明](../distributed/README-PRODUCT-SEARCH.md)。
+
 ## 文件组织
 
 ```

@@ -4,6 +4,7 @@ import com.lx.governance.common.auth.AuthHeaders;
 import com.lx.governance.common.auth.AuthTokenService;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpHeaders;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
 
@@ -100,6 +101,38 @@ class AuthTokenGlobalFilterTest {
         filter.filter(exchange, next -> next.getResponse().setComplete()).block();
 
         assertThat(exchange.getResponse().getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
+    }
+
+    @Test
+    void buyerProductSearchIsPublicAndRemovesForgedIdentity() {
+        MockServerWebExchange exchange = MockServerWebExchange.from(
+                MockServerHttpRequest.get("/api/search/products?q=运动鞋")
+                        .header(AuthHeaders.USER_ID, "9999")
+                        .header(AuthHeaders.USERNAME, "forged")
+                        .header(AuthHeaders.USER_ROLES, "PRODUCT_ADMIN")
+                        .build());
+        AtomicReference<HttpHeaders> forwarded = new AtomicReference<>();
+        filter.filter(exchange, next -> {
+            forwarded.set(next.getRequest().getHeaders());
+            return next.getResponse().setComplete();
+        }).block();
+        assertThat(exchange.getResponse().getStatusCode()).isNull();
+        assertThat(forwarded.get()).isNotNull();
+        assertThat(forwarded.get()).doesNotContainKeys(AuthHeaders.USER_ID, AuthHeaders.USERNAME, AuthHeaders.USER_ROLES);
+    }
+
+    @Test
+    void productSearchWhitelistDoesNotExposeWritesSimilarPathsOrMaintenance() {
+        for (String path : List.of("/api/search/products-extra", "/api/search/products/1",
+                "/api/search/products/", "/api/search/admin/rebuild", "/api/product/admin/products",
+                "/search-service/products")) {
+            MockServerWebExchange exchange = MockServerWebExchange.from(MockServerHttpRequest.get(path).build());
+            filter.filter(exchange, next -> next.getResponse().setComplete()).block();
+            assertThat(exchange.getResponse().getStatusCode()).as(path).isEqualTo(HttpStatus.UNAUTHORIZED);
+        }
+        MockServerWebExchange write = MockServerWebExchange.from(MockServerHttpRequest.post("/api/search/products").build());
+        filter.filter(write, next -> next.getResponse().setComplete()).block();
+        assertThat(write.getResponse().getStatusCode()).isEqualTo(HttpStatus.UNAUTHORIZED);
     }
 
 }

@@ -133,6 +133,8 @@ governance-suite/
 │   ├── payment-service/         # 支付服务 (8082)
 │   ├── inventory-service/       # 库存服务 (8083)
 │   ├── outbox-consumer/         # Outbox消费者 (8090)
+│   ├── product-service/         # 商品目录与维护 (8085)
+│   ├── search-service/          # 商品中文搜索 (8086)
 │   └── appointment-service/     # 预约服务 (8089)
 └── ai/                          # 🤖 AI 服务体系
     ├── README.md                # AI 服务详细文档
@@ -170,7 +172,11 @@ governance-suite/
 | payment-service | 8082 |
 | inventory-service | 8083 |
 | outbox-consumer | 8090 |
+| product-service | 8085 |
+| search-service | 8086 |
 | appointment-service | 8089 |
+
+商品中文搜索按需启用，使用独立商品事实与 ES 投影，详见 [商品搜索初版](distributed/README-PRODUCT-SEARCH.md)。
 
 ### AI 服务
 

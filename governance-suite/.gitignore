@@ -1,6 +1,9 @@
 # Build output
 **/target/
 
+# 商品搜索必需的索引定义，覆盖上级目录的 *.json 忽略规则。
+!distributed/search-service/src/main/resources/product-index.json
+
 # Local environment
 .env
 .env.local
@@ -34,4 +37,3 @@ docs/
 
 # Claude Code worktrees
 .claude/worktrees/
-

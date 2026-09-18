@@ -1,0 +1,35 @@
+CREATE TABLE IF NOT EXISTS t_product (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    product_id VARCHAR(64) NOT NULL,
+    title VARCHAR(200) NOT NULL,
+    category_id VARCHAR(64) NOT NULL,
+    brand_id VARCHAR(64) NOT NULL,
+    price_cents BIGINT NOT NULL,
+    status VARCHAR(16) NOT NULL,
+    version BIGINT NOT NULL DEFAULT 1,
+    deleted TINYINT NOT NULL DEFAULT 0,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    UNIQUE KEY uk_product_id(product_id),
+    KEY idx_product_category(category_id),
+    KEY idx_product_brand(brand_id),
+    CONSTRAINT chk_product_price CHECK (price_cents BETWEEN 0 AND 999999999999),
+    CONSTRAINT chk_product_status CHECK (status IN ('ON_SALE','OFF_SALE')),
+    CONSTRAINT chk_product_version CHECK (version > 0)
+);
+CREATE TABLE IF NOT EXISTS t_product_outbox (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    event_id VARCHAR(64) NOT NULL,
+    aggregate_id VARCHAR(64) NOT NULL,
+    event_type VARCHAR(64) NOT NULL,
+    payload LONGTEXT NOT NULL,
+    status VARCHAR(16) NOT NULL DEFAULT 'NEW',
+    retry_count INT NOT NULL DEFAULT 0,
+    next_retry_at DATETIME(6) NULL,
+    error_reason VARCHAR(500) NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    sent_at DATETIME(6) NULL,
+    UNIQUE KEY uk_product_event(event_id),
+    KEY idx_product_outbox_poll(status,next_retry_at,id),
+    KEY idx_product_outbox_aggregate(aggregate_id)
+);

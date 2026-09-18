@@ -13,6 +13,8 @@
 - `inventory-service` - 库存服务（Seata RM）
 - `outbox-consumer` - Outbox 消费者
 - `appointment-service` - 预约服务
+- `product-service` - 商品事实、维护授权与商品 Outbox
+- `search-service` - 商品搜索索引与买家检索
 
 ## 硬性规则
 
@@ -158,6 +160,16 @@
 - 修改 Lua 脚本时，必须确保原子性
 - 修改缓存策略时，必须考虑缓存一致性
 - 添加新的预约类型时，必须更新 Redis 键命名规范
+
+## 商品搜索边界
+
+- `product-service` 是商品目录的事实源，商品与 Outbox 同库事务写入；不参与 Seata，不直接写 ES。
+- `outbox-consumer` 的商品发布器按需启用；保持原有订单、支付发布行为。
+- `search-service` 只维护商品投影并提供买家查询，不写商品事实；标题分析器为 smartcn，ID 字段精确匹配。
+- 买家搜索始终只返回上架商品；商品维护必须在商品服务验签并检查独立用户 ID 白名单。
+- 商品、类目、品牌 ID 的输入与投影契约必须一致；变更时覆盖生产者和消费者测试。
+- 同步按商品版本处理重复和乱序；下架保留索引文档与版本，通过条件过滤隐藏。
+- 真实验证仅使用显式配置的隔离实例。API、启动与重放说明维护在 `README-PRODUCT-SEARCH.md`。
 
 ## 分布式事务开发规范
 
