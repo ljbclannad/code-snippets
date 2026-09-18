@@ -23,6 +23,8 @@ import com.lx.governance.aichat.document.ChatHistoryDocument;
 import com.lx.governance.aichat.dto.ChatGenerationResult;
 import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.ChatResponse;
+import com.lx.governance.aichat.evaluation.ChatEvaluationCollector;
+import org.springframework.beans.factory.annotation.Autowired;
 import com.lx.governance.aichat.dto.DiagnosisResult;
 import com.lx.governance.aichat.dto.DoctorAssistantTaskRequest;
 import com.lx.governance.aichat.dto.DoctorAssistantTaskResponse;
@@ -45,6 +47,21 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @RequiredArgsConstructor
 public class AiChatService {
+
+    @Autowired(required = false)
+    private ChatEvaluationCollector evaluationCollector;
+
+    private void captureSafely(Runnable action) {
+        if (evaluationCollector == null) {
+            return;
+        }
+        try {
+            action.run();
+        } catch (RuntimeException ex) {
+            log.warn("评测采集失败，继续返回业务结果", ex);
+        }
+    }
+
 
     private static final String INTENT_CASUAL_CHAT = "casual_chat";
     private static final String INTENT_FACT_QUERY = "fact_query";
@@ -96,6 +113,17 @@ public class AiChatService {
     private boolean patientConservativeReadonlyMode;
 
     public CompletableFuture<ChatResponse> handleChatRequest(ChatRequest request) {
+        captureSafely(() -> evaluationCollector.begin(request));
+        try {
+            return handleChatRequestInternal(request).whenComplete((response, error) ->
+                    captureSafely(() -> evaluationCollector.complete(request, response, error)));
+        } catch (RuntimeException ex) {
+            captureSafely(() -> evaluationCollector.complete(request, null, ex));
+            throw ex;
+        }
+    }
+
+    private CompletableFuture<ChatResponse> handleChatRequestInternal(ChatRequest request) {
         // 入口第一步先打总请求指标，便于观察整体吞吐和错误率。
         metrics.recordChatRequest();
 
@@ -206,6 +234,7 @@ public class AiChatService {
 
             // 这里分别把“最终路由判定”打到指标和会话上下文里：
             // 前者用于观测流量分布，后者用于后续复盘和调试当前会话。
+            captureSafely(() -> evaluationCollector.context(request, sessionContext, triggerDecision));
             metrics.recordTaskTriggerDecision(triggerDecision);
             sessionContextService.recordTaskTriggerDecision(
                     sessionId,
@@ -430,6 +459,7 @@ public class AiChatService {
             // 是否需要人工复核，以及是否生成医生工作台载荷。
             DoctorAssistantTaskResponse agentResponse = doctorAssistantAgentGateway
                     .analyzePatientTask(agentTaskRequest);
+            captureSafely(() -> evaluationCollector.agent(request, agentResponse));
             long durationMs = System.currentTimeMillis() - agentStart;
             metrics.recordStageLatency(STAGE_AGENT_INVOKE, durationMs);
             String taskType = triggerDecision.getTaskType() != null ? triggerDecision.getTaskType().name() : "UNKNOWN";

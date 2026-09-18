@@ -1,0 +1,17 @@
+{
+  "id": "chat-capture-smoke",
+  "version": "v1",
+  "description": "合成单轮问题，仅验证调用采集与回复结构，不代表回答质量已经合格",
+  "cases": [
+    {
+      "id": "greeting",
+      "scenario": "普通对话完整采集",
+      "input": {"message": "你好，请简单介绍一下你能帮助我做什么"},
+      "rules": [
+        {"id": "success", "description": "调用成功", "path": "/response/success", "operator": "EQUALS", "expected": true, "severity": "QUALITY"},
+        {"id": "answer", "description": "返回患者回复字段", "path": "/response/message", "operator": "EXISTS", "severity": "QUALITY"},
+        {"id": "trace", "description": "保留脱敏后的会话关联", "path": "/capture/conversationIdHash", "operator": "EXISTS", "severity": "QUALITY"}
+      ]
+    }
+  ]
+}

@@ -1,6 +1,10 @@
 package com.lx.governance.aichat.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.Valid;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.lx.governance.aichat.evaluation.EvaluationBinding;
+import com.lx.governance.aichat.evaluation.EvaluationCaptureContext;
 import lombok.Data;
 
 /**
@@ -34,4 +38,14 @@ public class ChatRequest {
      * 用于上下文乱序保护；为空时回退到服务端接收时间。
      */
     private Long messageTimestamp;
+
+    /** 测试批次绑定；服务未启用采集时忽略。 */
+    @Valid
+    private EvaluationBinding evaluation;
+
+    /** 仅在本次服务调用中使用，不接受客户端输入，也不写入幂等缓存。 */
+    @JsonIgnore
+    @lombok.ToString.Exclude
+    @lombok.EqualsAndHashCode.Exclude
+    private EvaluationCaptureContext evaluationCaptureContext;
 }

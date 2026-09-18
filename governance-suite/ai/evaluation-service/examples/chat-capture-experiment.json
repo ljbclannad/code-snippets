@@ -1,0 +1,8 @@
+{
+  "name": "测试环境真实调用采集",
+  "model": "unknown",
+  "promptVersion": "unknown",
+  "knowledgeVersion": "unknown",
+  "source": "RECORDED_REAL",
+  "configuration": {"entrypoint": "ai-chat", "note": "运行前按实际测试环境填写版本；采集不证明每次请求都调用了模型"}
+}

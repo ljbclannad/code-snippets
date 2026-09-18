@@ -1,0 +1,8 @@
+server:
+  address: 127.0.0.1
+  port: ${EVALUATION_PORT:8104}
+spring:
+  application:
+    name: evaluation-service
+evaluation:
+  storage-directory: ${EVALUATION_DATA_DIR:./data/evaluation}

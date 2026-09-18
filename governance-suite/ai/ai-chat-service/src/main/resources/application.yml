@@ -189,6 +189,17 @@ profile-completion:
   rules-config: classpath:profile-completion-rules.yml
 
 ai-chat:
+  # 仅显式绑定测试批次的请求参与采集；不影响正常患者请求。
+  evaluation-capture:
+    enabled: ${AI_EVALUATION_CAPTURE_ENABLED:false}
+    base-url: ${AI_EVALUATION_BASE_URL:http://127.0.0.1:8104}
+    agent-base-url: ${AI_EVALUATION_AGENT_BASE_URL:http://127.0.0.1:8088}
+    hash-key: ${AI_EVALUATION_HASH_KEY:}
+    queue-capacity: 128
+    timeout-ms: 1500
+    max-attempts: 2
+    max-payload-bytes: 262144
+    max-text-length: 16000
   kb:
     enabled: true
     base-url: ${KNOWLEDGE_BASE_SERVICE_BASE_URL:http://localhost:8103}

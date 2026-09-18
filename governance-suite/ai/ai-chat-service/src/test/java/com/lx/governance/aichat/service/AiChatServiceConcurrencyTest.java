@@ -41,6 +41,7 @@ import com.lx.governance.aichat.degradation.DegradationManager;
 import com.lx.governance.aichat.degradation.DegradationStrategyExecutor;
 import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.ChatResponse;
+import com.lx.governance.aichat.dto.DoctorAssistantTaskResponse;
 import com.lx.governance.aichat.dto.ChatGenerationResult;
 import com.lx.governance.aichat.dto.LayeredMemories;
 import com.lx.governance.aichat.dto.RetrievalQuery;
@@ -207,6 +208,21 @@ class AiChatServiceConcurrencyTest {
     }
 
     @Test
+    void shouldCaptureCachedResponseWithoutAffectingReplyWhenCollectorFails() throws Exception {
+        var collector = org.mockito.Mockito.mock(com.lx.governance.aichat.evaluation.ChatEvaluationCollector.class);
+        ReflectionTestUtils.setField(aiChatService, "evaluationCollector", collector);
+        ChatRequest request = buildRequest("capture-cached");
+        ChatResponse cached = ChatResponse.success("缓存回复", "capture-cached");
+        when(degradationStrategyExecutor.getCachedResponse(any(), any())).thenReturn(cached);
+        org.mockito.Mockito.doThrow(new IllegalStateException("采集不可用"))
+                .when(collector).complete(request, cached, null);
+
+        assertEquals(cached, aiChatService.handleChatRequest(request).get(1, TimeUnit.SECONDS));
+        org.mockito.Mockito.verify(collector).begin(request);
+        org.mockito.Mockito.verify(collector).complete(request, cached, null);
+    }
+
+    @Test
     void shouldRejectConcurrentRequestForSameConversation() throws Exception {
         CountDownLatch firstEntered = new CountDownLatch(1);
         CountDownLatch releaseFirst = new CountDownLatch(1);
@@ -368,6 +384,8 @@ class AiChatServiceConcurrencyTest {
 
     @Test
     void shouldUpdateContextAndTriggerAsyncProcessingWhenAgentReturnsSuccess() throws Exception {
+        var collector = org.mockito.Mockito.mock(com.lx.governance.aichat.evaluation.ChatEvaluationCollector.class);
+        ReflectionTestUtils.setField(aiChatService, "evaluationCollector", collector);
         SessionContext context = SessionContext.builder()
                 .conversationId("conv-5")
                 .customerId("customer-1")
@@ -398,6 +416,9 @@ class AiChatServiceConcurrencyTest {
         assertEquals("建议继续观察并补充近一周血糖记录。", response.getMessage());
         assertEquals(1, response.getPatientVisibleEvidence().size());
         assertEquals("血糖复盘建议", response.getPatientVisibleEvidence().get(0).getTitle());
+        verify(collector).context(eq(request), eq(context), any(TaskTriggerDecision.class));
+        verify(collector).agent(eq(request), any(DoctorAssistantTaskResponse.class));
+        verify(collector).complete(request, response, null);
         verify(sessionContextService).updateContext(
                 eq("conv-5"),
                 eq("请帮我分析一下最近一周的体重变化"),

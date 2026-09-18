@@ -49,19 +49,38 @@ public class ChatRequestIdempotencyService {
         }
 
         String inFlightKey = buildCacheKey(conversationId, requestId);
-        return inFlightResponses.computeIfAbsent(inFlightKey, ignored -> {
-            try {
-                return supplier.get().whenComplete((response, ex) -> {
-                    inFlightResponses.remove(inFlightKey);
-                    if (ex == null && response != null && Boolean.TRUE.equals(response.getSuccess())) {
-                        cacheCompletedResponse(conversationId, requestId, response);
-                    }
-                });
-            } catch (RuntimeException ex) {
-                inFlightResponses.remove(inFlightKey);
-                throw ex;
+        // 先登记占位结果，再启动任务，避免立即完成的回调递归修改 ConcurrentHashMap。
+        CompletableFuture<ChatResponse> result = new CompletableFuture<>();
+        CompletableFuture<ChatResponse> existing = inFlightResponses.putIfAbsent(inFlightKey, result);
+        if (existing != null) {
+            return existing;
+        }
+        try {
+            // 首次读缓存与登记之间，上一轮请求可能已经完成并移除在途记录。
+            Optional<ChatResponse> completed = getCompletedResponse(conversationId, requestId);
+            if (completed.isPresent()) {
+                inFlightResponses.remove(inFlightKey, result);
+                result.complete(completed.get());
+                return result;
             }
-        });
+            supplier.get().whenComplete((response, ex) -> {
+                // 成功缓存先于在途记录释放，确保后续请求能够回放结果。
+                if (ex == null && response != null && Boolean.TRUE.equals(response.getSuccess())) {
+                    cacheCompletedResponse(conversationId, requestId, response);
+                }
+                inFlightResponses.remove(inFlightKey, result);
+                if (ex == null) {
+                    result.complete(response);
+                } else {
+                    result.completeExceptionally(ex);
+                }
+            });
+        } catch (RuntimeException ex) {
+            inFlightResponses.remove(inFlightKey, result);
+            result.completeExceptionally(ex);
+            throw ex;
+        }
+        return result;
     }
 
     public Optional<ChatResponse> getCompletedResponse(ChatRequest request) {

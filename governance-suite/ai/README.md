@@ -16,8 +16,19 @@ ai/
 ├── user-profile-service/    # 用户画像服务 (8101)
 ├── vector-memory-service/   # 向量记忆服务 (8102)
 ├── doctor-assistant-agent/  # 医生助理Agent (8088)
+├── evaluation-service/      # 独立评测、报告与版本对比 (8104)
 └── knowledge-base-service/  # 知识库服务 (8103)
 ```
+
+## 可重复评测系统
+
+`evaluation-service` 提供版本化样本集、录制结果导入、确定性规则评分、JSON/Markdown 报告及基线/候选对比。
+它默认仅监听本机，不调用模型或执行医疗工具，也不改变患者对话主链路。
+现有聊天响应与 Agent 回放可通过导入协议参与评测；`ai-chat-service` 已支持显式测试批次的异步采集，
+并提供从聊天入口执行固定问题、等待采集和导出报告的脚本。模型语义评分和自动优化暂未接入。
+
+启动、合成示例和验收边界见 [评测系统说明](evaluation-service/README.md)。
+聊天入口接入、脱敏范围与失败处理见 [真实调用采集说明](真实调用采集说明.md)。
 
 ## 当前整合重点
 
@@ -143,6 +154,11 @@ curl http://localhost:8088/actuator/health
 3. `doctor-assistant-agent` 返回患者安全回复、结构化分析结果和工作台载荷
 4. Agent 成功后，`patientSafeReply` 会继续进入患者对话主链路，参与上下文更新、历史落库和记忆提取
 5. 高风险场景进入人工复核闭环
+
+路由器优先检查高风险医疗关键词，再处理画像补全和闲聊信号。例如，“你好，我胸痛，喘不上气”仍判定为风险升级；待补全画像或已有闲聊意图不会覆盖该判定。实际 Agent 调用仍受入口身份与运行策略约束。
+
+同步聊天携带 `requestId` 时，同一实例内相同会话、相同请求 ID 的在途请求共享执行结果；成功结果写入 Redis 后供后续重试回放。立即完成、异步失败或启动异常均释放在途记录，失败请求可以重试。此机制不提供跨实例执行互斥，流式入口的保护仍需单独完善。
+
 
 **降级策略（5级）：**
 
@@ -371,3 +387,7 @@ bash sh/test/test-03-ai-chat.sh
 ## 贡献指南
 
 请参考 [ai/AGENTS.md](AGENTS.md) 了解开发规范。
+
+## 固定业务回归
+
+通过 `python3 ai/evaluation-service/run_regression.py`（从 `governance-suite` 目录）运行固定离线回归，覆盖路由、请求幂等、依赖失败和现有审批能力。报告同时显示尚未补齐的场景，详见 [固定业务回归说明](evaluation-service/regression/README.md)。

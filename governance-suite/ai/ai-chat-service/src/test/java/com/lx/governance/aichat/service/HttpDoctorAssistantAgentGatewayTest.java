@@ -9,6 +9,9 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.Executors;
+import java.util.List;
+import com.lx.governance.aichat.dto.StreamEvent;
+import org.springframework.test.util.ReflectionTestUtils;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -33,6 +36,31 @@ class HttpDoctorAssistantAgentGatewayTest {
         if (server != null) {
             server.stop(0);
         }
+    }
+
+    @Test
+    void shouldKeepRunAssociationInStreamResultWithoutInternalPayload() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        HttpDoctorAssistantAgentGateway gateway = new HttpDoctorAssistantAgentGateway(
+                RestClient.builder().baseUrl("http://localhost:65535").build(), mapper,
+                true, "http://localhost:65535", 5000);
+        var result = mapper.readTree("""
+                {"status":"SUCCESS","patientSafeReply":"安全回复",
+                 "traceContext":{"runId":"run-123","correlationId":"corr-123"},
+                 "structuredResult":{"uncertainties":["内部分析"]}}
+                """);
+        List<StreamEvent> events = ReflectionTestUtils.invokeMethod(gateway, "taskResultEvents",
+                DoctorAssistantTaskRequest.builder().conversationId("conv-123").build(), result);
+
+        assertEquals("run-123", events.get(0).getEvaluationTaskResponse().getTraceContext().getRunId());
+        assertEquals("corr-123", events.get(0).getEvaluationTaskResponse().getTraceContext().getCorrelationId());
+        String serialized = mapper.writeValueAsString(events.get(0));
+        assertTrue(!serialized.contains("evaluationTaskResponse"));
+        assertTrue(!serialized.contains("structuredResult"));
+        assertTrue(!serialized.contains("run-123"));
+        assertTrue(!serialized.contains("corr-123"));
+        assertTrue(!events.get(0).toString().contains("内部分析"));
+        assertEquals("安全回复", events.get(1).getContent());
     }
 
     @Test

@@ -25,6 +25,7 @@
     <!-- AI Services -->
     <module>ai/ai-chat-service</module>
     <module>ai/agent-platform-common</module>
+    <module>ai/evaluation-service</module>
     <module>ai/user-profile-service</module>
     <module>ai/vector-memory-service</module>
     <module>ai/doctor-assistant-agent</module>

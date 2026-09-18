@@ -2,10 +2,13 @@ package com.lx.governance.aichat.dto;
 
 import java.util.Map;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
+import lombok.ToString;
 
 /**
  * 流式响应事件
@@ -40,6 +43,14 @@ public class StreamEvent {
      * 额外状态详情
      */
     private Map<String, Object> details;
+
+    /**
+     * 仅供内部评测采集使用，不返回患者端。
+     */
+    @JsonIgnore
+    @ToString.Exclude
+    private DoctorAssistantTaskResponse evaluationTaskResponse;
+
 
     /**
      * 会话ID（当 type=START 或 DONE 时）

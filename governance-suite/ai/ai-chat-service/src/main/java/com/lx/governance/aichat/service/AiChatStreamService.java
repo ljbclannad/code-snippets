@@ -1,6 +1,9 @@
 package com.lx.governance.aichat.service;
 
 import com.lx.governance.aichat.client.DeepSeekClient;
+import com.lx.governance.aichat.evaluation.ChatEvaluationCollector;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.BeanUtils;
 import com.lx.governance.aichat.client.UserProfileClientFixed;
 import com.lx.governance.aichat.dto.*;
 import com.lx.governance.aichat.metrics.AiChatMetrics;
@@ -26,6 +29,21 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class AiChatStreamService {
 
+    @Autowired(required = false)
+    private ChatEvaluationCollector evaluationCollector;
+
+    private void captureSafely(Runnable action) {
+        if (evaluationCollector == null) {
+            return;
+        }
+        try {
+            action.run();
+        } catch (RuntimeException ex) {
+            log.warn("流式评测采集失败，继续返回业务事件", ex);
+        }
+    }
+
+
     private final DeepSeekClient deepSeekClient;
     private final UserProfileClientFixed userProfileClient;
     private final SessionContextService sessionContextService;
@@ -44,6 +62,23 @@ public class AiChatStreamService {
      * 处理流式聊天请求
      */
     public Flux<StreamEvent> handleChatStreamRequest(ChatRequest request) {
+        return Flux.defer(() -> {
+            // 每次订阅独立保存采集状态，避免重复订阅覆盖同一请求的轨迹。
+            ChatRequest subscriptionRequest = new ChatRequest();
+            BeanUtils.copyProperties(request, subscriptionRequest, "evaluationCaptureContext");
+            captureSafely(() -> evaluationCollector.begin(subscriptionRequest));
+            try {
+                return handleChatStreamRequestInternal(subscriptionRequest);
+            } catch (RuntimeException ex) {
+                StreamResponseAccumulator failed = new StreamResponseAccumulator();
+                failed.markFailed("stream_initialization_error");
+                captureSafely(() -> evaluationCollector.completeStream(subscriptionRequest, failed, "ON_ERROR"));
+                return Flux.error(ex);
+            }
+        });
+    }
+
+    private Flux<StreamEvent> handleChatStreamRequestInternal(ChatRequest request) {
         metrics.recordChatRequest();
 
         String sessionId = ensureConversationId(request);
@@ -65,6 +100,7 @@ public class AiChatStreamService {
                 .doOnNext(event -> {
                     // 累积每个事件
                     accumulator.accumulate(event);
+                    captureSafely(() -> evaluationCollector.event(request, event));
                     if (event.getType() == StreamEvent.EventType.DONE) {
                         handleStreamCompleted(request, sessionId, accumulator);
                     }
@@ -75,6 +111,10 @@ public class AiChatStreamService {
                     } else if (signal == SignalType.ON_ERROR) {
                         accumulator.markFailed("stream_pipeline_error");
                     }
+                    if (signal == SignalType.ON_COMPLETE && !accumulator.isCompleted() && !accumulator.hasError()) {
+                        accumulator.markFailed("stream_incomplete");
+                    }
+                    captureSafely(() -> evaluationCollector.completeStream(request, accumulator, signal.name()));
                     long duration = System.currentTimeMillis() - startTime;
                     log.info("流式聊天请求处理完成 - customerId: {}, correlationId: {}, state: {}, reason: {}, 耗时: {}ms",
                             request.getCustomerId(),
@@ -216,6 +256,7 @@ public class AiChatStreamService {
                     triggerDecision,
                     request.getRequestId(),
                     request.getMessageTimestamp());
+            captureSafely(() -> evaluationCollector.context(request, sessionContext, triggerDecision));
             metrics.recordTaskTriggerDecision(triggerDecision);
 
             return Mono.fromCallable(() ->

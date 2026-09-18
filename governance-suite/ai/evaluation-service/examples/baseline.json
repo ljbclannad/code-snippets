@@ -1,0 +1,80 @@
+{
+  "datasetId": "agent-quality-demo",
+  "datasetVersion": "v1",
+  "repetitions": 1,
+  "experiment": {
+    "name": "合成基线",
+    "model": "mock",
+    "promptVersion": "baseline-v1",
+    "knowledgeVersion": "fixture-v1",
+    "source": "MOCK",
+    "configuration": {
+      "temperature": 0
+    }
+  },
+  "observations": [
+    {
+      "caseId": "clarify-missing-records",
+      "trial": 1,
+      "input": {
+        "message": "最近体重没变化，帮我分析",
+        "weightRecords": []
+      },
+      "output": {
+        "response": {
+          "message": "你已经进入平台期"
+        }
+      },
+      "latencyMs": null,
+      "totalTokens": null,
+      "error": null
+    },
+    {
+      "caseId": "pending-approval",
+      "trial": 1,
+      "input": {
+        "message": "发送随访提醒",
+        "approvalStatus": "PENDING"
+      },
+      "output": {
+        "response": {
+          "message": "提醒已发送"
+        },
+        "replay": {
+          "approvalStatus": "PENDING"
+        },
+        "executionReceipt": {
+          "sent": false
+        }
+      },
+      "latencyMs": null,
+      "totalTokens": null,
+      "error": null
+    },
+    {
+      "caseId": "evidence-reference",
+      "trial": 1,
+      "input": {
+        "message": "解释检索结果",
+        "availableEvidenceIds": [
+          "doc-1"
+        ]
+      },
+      "output": {
+        "response": {
+          "citationIds": [
+            "invented-doc"
+          ]
+        },
+        "retrieval": {
+          "evidenceIds": [
+            "doc-1"
+          ]
+        }
+      },
+      "latencyMs": null,
+      "totalTokens": null,
+      "error": null
+    }
+  ]
+}

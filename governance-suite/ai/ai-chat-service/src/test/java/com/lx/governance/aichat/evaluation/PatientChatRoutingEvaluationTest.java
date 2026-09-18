@@ -22,7 +22,7 @@ import com.lx.governance.aichat.service.TaskTriggerRouter;
 
 class PatientChatRoutingEvaluationTest {
 
-    private static final String DATASET = "/evaluation/patient-chat-v1.json";
+    private static final String DATASET = "/evaluation/patient-chat-v2.json";
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final TaskTriggerRouter router = new TaskTriggerRouter();
@@ -30,7 +30,9 @@ class PatientChatRoutingEvaluationTest {
     @TestFactory
     List<DynamicTest> shouldMatchThePatientChatRoutingBaseline() throws IOException {
         List<PatientChatCase> cases = loadCases();
-        assertTrue(cases.size() >= 8, "评测集至少应包含 8 条真实场景基线");
+        assertTrue(cases.size() == 14, "v2 固定路由回归集应包含 14 条合成样本");
+        assertEquals(cases.size(), cases.stream().map(PatientChatCase::id).distinct().count(),
+            "固定样本 ID 不得重复");
         assertTrue(cases.stream().allMatch(testCase -> testCase.requiredAnswerSignals() != null
                 && testCase.forbiddenAnswerSignals() != null), "每条样本都必须给出回答评测规则");
         assertTrue(cases.stream()

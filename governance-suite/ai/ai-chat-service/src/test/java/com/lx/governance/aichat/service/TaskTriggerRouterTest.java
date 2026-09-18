@@ -37,6 +37,61 @@ class TaskTriggerRouterTest {
     }
 
     @Test
+    void shouldEscalateHighRiskMessageContainingGreeting() {
+        TaskTriggerDecision decision = router.route(TaskTriggerContext.builder()
+            .message("你好，我胸痛，喘不上气")
+            .sessionContext(baseContext("simple", 1))
+            .build());
+
+        assertHighRiskEscalation(decision);
+    }
+
+    @Test
+    void shouldEscalateHighRiskMessageDuringProfileFollowUp() {
+        SessionContext context = baseContext("simple", 2);
+        context.setPendingQuestions(List.of("最近睡眠怎么样？"));
+
+        TaskTriggerDecision decision = router.route(TaskTriggerContext.builder()
+            .message("胸痛，呼吸困难")
+            .sessionContext(context)
+            .build());
+
+        assertHighRiskEscalation(decision);
+    }
+
+    @Test
+    void shouldEscalateHighRiskMessageDespiteProfileFollowUpIntent() {
+        TaskTriggerDecision decision = router.route(TaskTriggerContext.builder()
+            .message("胸痛，呼吸困难")
+            .sessionContext(baseContext("simple", 2, "profile_follow_up_answer"))
+            .build());
+
+        assertHighRiskEscalation(decision);
+    }
+
+    @Test
+    void shouldEscalateHighRiskMessageDespiteCasualChatIntent() {
+        TaskTriggerDecision decision = router.route(TaskTriggerContext.builder()
+            .message("胸痛，呼吸困难")
+            .sessionContext(baseContext("simple", 1, "casual_chat"))
+            .build());
+
+        assertHighRiskEscalation(decision);
+    }
+
+    @Test
+    void shouldKeepCasualChatIntentWithoutHighRiskOnDirectPath() {
+        TaskTriggerDecision decision = router.route(TaskTriggerContext.builder()
+            .message("聊点轻松的")
+            .sessionContext(baseContext("simple", 1, "casual_chat"))
+            .build());
+
+        assertEquals(TaskTriggerRoute.DIRECT_CHAT, decision.getRoute());
+        assertEquals(TaskType.NONE, decision.getTaskType());
+        assertEquals(List.of(TaskTriggerReason.CASUAL_CHAT_SIGNAL), decision.getReasons());
+    }
+
+    @Test
     void shouldRouteTrendAnalysisToFollowUpAgent() {
         TaskTriggerDecision decision = router.route(TaskTriggerContext.builder()
             .message("帮我分析一下最近两周的减重效果和变化趋势")
@@ -163,6 +218,12 @@ class TaskTriggerRouterTest {
         assertEquals("doctor-risk-review-workflow", decision.getWorkflowCode());
         assertEquals(AgentSelectionMode.PARALLEL, decision.getSelectionMode());
         assertEquals("TASK", decision.getLayerDecisions().get("direct_chat_vs_task"));
+    }
+
+    private void assertHighRiskEscalation(TaskTriggerDecision decision) {
+        assertEquals(TaskTriggerRoute.DOCTOR_ASSISTANT_AGENT, decision.getRoute());
+        assertEquals(TaskType.RISK_STRATIFICATION_AND_ESCALATION, decision.getTaskType());
+        assertEquals(List.of(TaskTriggerReason.HIGH_RISK_MEDICAL_SIGNAL), decision.getReasons());
     }
 
     private SessionContext baseContext(String complexity, int messageCount) {

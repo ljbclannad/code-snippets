@@ -103,7 +103,16 @@ public class TaskTriggerRouter implements PlatformTaskRouter {
         SessionContext sessionContext = sessionContextFrom(context);
         String intent = normalize(sessionIntent(sessionContext));
 
-        // 画像补全追问阶段优先级最高。
+        // 高风险医疗信号优先于画像追问和闲聊，避免会话状态或前置意图覆盖风险升级。
+        if (containsAny(message, HIGH_RISK_MEDICAL_KEYWORDS)) {
+            return agent(
+                TaskType.RISK_STRATIFICATION_AND_ESCALATION,
+                reasons(TaskTriggerReason.HIGH_RISK_MEDICAL_SIGNAL),
+                "命中高风险医疗关键词，强制升级 Agent"
+            );
+        }
+
+        // 未命中高风险医疗信号时，优先保持画像补全追问流程。
         // 这类消息通常是在回答系统追问，不应该再被升级到医生助手链路。
         if (hasPendingQuestions(sessionContext)) {
             return direct(TaskTriggerReason.PROFILE_COMPLETION_FOLLOW_UP, "当前会话仍处于画像补全追问阶段");
@@ -123,18 +132,9 @@ public class TaskTriggerRouter implements PlatformTaskRouter {
 
         boolean medicalKnowledgeIntent = hasIntent(intent, INTENT_MEDICAL_KNOWLEDGE_QA);
         boolean medicalKnowledgeSignal = medicalKnowledgeIntent || containsAny(message, MEDICAL_KNOWLEDGE_KEYWORDS);
-        boolean highRiskMedicalSignal = containsAny(message, HIGH_RISK_MEDICAL_KEYWORDS);
         boolean medicalSensitiveFactSignal = containsAny(message, MEDICAL_SENSITIVE_FACT_KEYWORDS)
             || (containsAny(message, MEDICATION_KEYWORDS)
                 && containsAny(message, MEDICATION_CHANGE_KEYWORDS));
-
-        if (highRiskMedicalSignal) {
-            return agent(
-                TaskType.RISK_STRATIFICATION_AND_ESCALATION,
-                reasons(TaskTriggerReason.HIGH_RISK_MEDICAL_SIGNAL),
-                "命中高风险医疗关键词，强制升级 Agent"
-            );
-        }
 
         // “是什么/解释一下”这类偏事实解释的问题，默认保持 direct chat。
         // 只有在同时带有明显分析诉求时，才继续往后看是否需要升级。

@@ -93,6 +93,53 @@ class AiChatStreamServiceTest {
     }
 
     @Test
+    void shouldCaptureIncompleteStreamAndCancellationSeparately() {
+        var collector = org.mockito.Mockito.mock(com.lx.governance.aichat.evaluation.ChatEvaluationCollector.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(aiChatStreamService, "evaluationCollector", collector);
+        when(visitorIdentityService.isVisitor(any())).thenReturn(true);
+        when(sessionContextService.getOrCreateContext(any(), any(), any(), any(), any(), any()))
+                .thenReturn(SessionContext.builder().conversationId("capture-terminal").build());
+        when(deepSeekClient.chatStream(any(), any(), any(), org.mockito.ArgumentMatchers.<LayeredMemories>any()))
+                .thenReturn(Flux.just(StreamEvent.content("部分回复")))
+                .thenReturn(Flux.concat(Flux.just(StreamEvent.content("部分回复")), Flux.never()));
+        ChatRequest request = new ChatRequest();
+        request.setConversationId("capture-terminal");
+        request.setCustomerId("test-customer");
+        request.setGroupId("test-group");
+        request.setMessage("测试问题");
+
+        aiChatStreamService.handleChatStreamRequest(request).collectList().block();
+        aiChatStreamService.handleChatStreamRequest(request).take(1).collectList().block();
+
+        verify(collector).completeStream(any(), org.mockito.ArgumentMatchers.argThat(accumulator ->
+                "stream_incomplete".equals(accumulator.getTerminalReason())), eq("ON_COMPLETE"));
+        verify(collector).completeStream(any(), org.mockito.ArgumentMatchers.argThat(accumulator ->
+                "client_cancelled".equals(accumulator.getTerminalReason())), eq("CANCEL"));
+    }
+
+    @Test
+    void shouldCapturePipelineFailureWithoutChangingErrorEvent() {
+        var collector = org.mockito.Mockito.mock(com.lx.governance.aichat.evaluation.ChatEvaluationCollector.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(aiChatStreamService, "evaluationCollector", collector);
+        org.mockito.Mockito.doThrow(new IllegalStateException("配额服务不可用"))
+                .when(quotaService).checkQuota(any(), org.mockito.ArgumentMatchers.anyInt());
+        org.mockito.Mockito.doThrow(new IllegalStateException("采集不可用"))
+                .when(collector).completeStream(any(), any(), any());
+        ChatRequest request = new ChatRequest();
+        request.setConversationId("capture-error");
+        request.setCustomerId("test-customer");
+        request.setGroupId("test-group");
+        request.setMessage("测试问题");
+
+        List<StreamEvent> events = aiChatStreamService.handleChatStreamRequest(request).collectList().block();
+
+        assertEquals(StreamEvent.EventType.ERROR, events.get(0).getType());
+        verify(collector).begin(any(ChatRequest.class));
+        verify(collector).completeStream(any(), org.mockito.ArgumentMatchers.argThat(accumulator ->
+                accumulator.hasError() && "stream_pipeline_error".equals(accumulator.getTerminalReason())), eq("ON_ERROR"));
+    }
+
+    @Test
     void shouldUseRewrittenQueryWhenLoadingMemories() {
         SessionContext sessionContext = SessionContext.builder()
                 .conversationId("conv-1")
