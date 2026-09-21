@@ -17,20 +17,23 @@ public class RateLimitConfigChangeListener {
     }
 
     /**
-     * 触发链路：
-     * 1. Nacos 中的可刷新配置发生变更。
-     * 2. Nacos Listener 发布 RefreshEvent。
-     * 3. RefreshEventListener 收到事件后调用 ContextRefresher.refresh()。
-     * 4. ContextRefresher.refresh() 调用 RefreshScope.refreshAll()。
-     * 5. RefreshScope.refreshAll() 发布 RefreshScopeRefreshedEvent。
-     * 6. 从这一步开始，事件才进入业务层/应用监听器层；当前方法监听到
-     *    RefreshScopeRefreshedEvent 后执行，读取最新的限流配置并通知监控。
+     * 触发链路（当前项目使用 Spring Cloud Alibaba 2022.0.0.0）：
+     * 1. Nacos 中已加载且允许刷新的配置发生变更，Nacos Listener 收到新内容。
+     * 2. NacosContextRefresher 中的 Listener 发布 RefreshEvent。
+     * 3. RefreshEventListener 在应用就绪后调用 ContextRefresher.refresh()。
+     * 4. refresh() 先执行 refreshEnvironment()：重新加载配置源、更新 Environment，
+     *    比较更新前后的属性并发布携带变更 key 的 EnvironmentChangeEvent。
+     * 5. refresh() 再调用 RefreshScope.refreshAll()：销毁 RefreshScope 缓存的目标 Bean，
+     *    然后发布 RefreshScopeRefreshedEvent；此时目标 Bean 尚未统一重新创建。
+     * 6. 当前方法收到 RefreshScopeRefreshedEvent 后，通过 RateLimitProperties 的
+     *    作用域代理读取配置；首次访问会重新创建目标 Bean 并绑定最新属性，再通知监控。
      *
      * 说明：
-     * - RateLimitProperties 标注了 @RefreshScope，因此刷新后会重新绑定最新配置。
-     * - 当前方法不是在每次请求时触发，而是在配置刷新完成后触发。
-     * - 在 RefreshScopeRefreshedEvent 之前的 Nacos Listener、RefreshEvent、
-     *   ContextRefresher.refresh()、RefreshScope.refreshAll() 都属于框架内部刷新链路。
+     * - RateLimitProperties 标注了 @RefreshScope，因此通过代理再次访问时能读取新配置。
+     * - refreshAll() 清除整个 RefreshScope 缓存，并非只处理变更 key 对应的 Bean。
+     * - 当前方法由配置刷新事件触发，不会在每次请求时执行。
+     * - 较新版本的 Spring Cloud Alibaba 会先发布 NacosConfigRefreshEvent，再由
+     *   NacosConfigRefreshEventListener 将其转换为 RefreshEvent；当前版本直接发布后者。
      */
     @EventListener
     public void onRefresh(RefreshScopeRefreshedEvent event) {
