@@ -14,6 +14,7 @@ import java.util.concurrent.CompletableFuture;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
 
 import com.lx.governance.aichat.client.DeepSeekClient;
@@ -60,12 +61,21 @@ class AiChatStreamServiceTest {
     private AgentDispatchPolicy agentDispatchPolicy;
     @Mock
     private VisitorIdentityService visitorIdentityService;
+    @Mock
+    private HighRiskFollowUpChat highRiskFollowUp;
 
     private AiChatStreamService aiChatStreamService;
 
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
+        var runtime = new AgentConversationRouteRuntime(agentDispatchPolicy, true, 600000L);
+        var completion = new com.lx.governance.aichat.config.ProfileCompletionProperties();
+        completion.setEnabled(false);
+        var degradation = Mockito.mock(com.lx.governance.aichat.degradation.DegradationManager.class);
+        var strategy = Mockito.mock(com.lx.governance.aichat.degradation.DegradationStrategyExecutor.class);
+        when(degradation.isFeatureEnabled("memory")).thenReturn(true);
+        when(strategy.getMemoryRetrievalCount()).thenReturn(5);
         aiChatStreamService = new AiChatStreamService(
                 deepSeekClient,
                 userProfileClient,
@@ -74,12 +84,11 @@ class AiChatStreamServiceTest {
                 new AiChatMetrics(new SimpleMeterRegistry()),
                 quotaService,
                 layeredMemoryOrchestrator,
-                taskTriggerRouter,
-                medicalKnowledgeQaService,
+                new ChatTurnPolicy(taskTriggerRouter, medicalKnowledgeQaService, runtime, completion, null, null, null, degradation, strategy),
                 doctorAssistantTaskRequestFactory,
                 doctorAssistantAgentGateway,
-                new AgentConversationRouteRuntime(agentDispatchPolicy, true, 10 * 60 * 1000L),
-                visitorIdentityService);
+                runtime,
+                visitorIdentityService, highRiskFollowUp);
         when(taskTriggerRouter.route(org.mockito.ArgumentMatchers.any(com.lx.governance.aichat.dto.TaskTriggerContext.class)))
                 .thenReturn(TaskTriggerDecision.builder()
                 .route(TaskTriggerRoute.DIRECT_CHAT)
@@ -90,6 +99,20 @@ class AiChatStreamServiceTest {
         when(visitorIdentityService.ensureCustomerId(any())).thenAnswer(invocation ->
                 invocation.<ChatRequest>getArgument(0).getCustomerId());
         when(visitorIdentityService.isVisitor(any())).thenReturn(false);
+    }
+
+    @Test
+    void highRiskStreamContainsOnlyPatientReply() {
+        ChatRequest request = new ChatRequest();
+        request.setMessage("胸痛");
+        when(highRiskFollowUp.handles("胸痛")).thenReturn(true);
+        when(highRiskFollowUp.conversationId(any())).thenReturn("c1");
+        when(highRiskFollowUp.reply(any())).thenReturn("请及时就医。");
+        var events = aiChatStreamService.handleChatStreamRequest(request).collectList().block();
+        assertEquals(List.of(StreamEvent.EventType.START, StreamEvent.EventType.CONTENT, StreamEvent.EventType.DONE),
+                events.stream().map(StreamEvent::getType).toList());
+        assertEquals("请及时就医。", events.get(1).getContent());
+        Mockito.verifyNoInteractions(deepSeekClient, userProfileClient, doctorAssistantAgentGateway);
     }
 
     @Test

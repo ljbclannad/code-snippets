@@ -6,6 +6,7 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
+import com.lx.governance.aichat.exception.ConversationException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -34,7 +35,7 @@ public class ConversationExecutionGuard {
         boolean acquired = acquire(semaphore);
         if (!acquired) {
             return CompletableFuture.failedFuture(
-                    new ConversationBusyException("当前会话正在处理中，请稍后再试"));
+                    ConversationException.busy(conversationId));
         }
 
         try {

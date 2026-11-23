@@ -189,6 +189,9 @@ profile-completion:
   rules-config: classpath:profile-completion-rules.yml
 
 ai-chat:
+  follow-up-reminder:
+    enabled: ${HIGH_RISK_FOLLOW_UP_ENABLED:false}
+    service-token: ${FOLLOW_UP_SERVICE_TOKEN:}
   # 仅显式绑定测试批次的请求参与采集；不影响正常患者请求。
   evaluation-capture:
     enabled: ${AI_EVALUATION_CAPTURE_ENABLED:false}
@@ -222,7 +225,6 @@ ai-chat:
     auto-fallback-to-direct-chat: true
     pending-review-short-circuit-window-ms: 600000
     doctor-pilot-mode: true
-    patient-conservative-readonly-mode: true
     enabled-task-types:
       - PATIENT_FOLLOW_UP_ANALYSIS
       - RISK_STRATIFICATION_AND_ESCALATION

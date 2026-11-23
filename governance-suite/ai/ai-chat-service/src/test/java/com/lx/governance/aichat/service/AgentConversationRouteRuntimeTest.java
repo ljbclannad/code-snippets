@@ -25,6 +25,7 @@ class AgentConversationRouteRuntimeTest {
     void shouldShortCircuitWhenPendingApprovalIsStillFresh() {
         AgentConversationRouteRuntime runtime = runtime(true);
         SessionContext sessionContext = SessionContext.builder()
+                .lastAgentPendingTaskId(17L)
                 .lastAgentReviewStatus("PENDING_APPROVAL")
                 .lastAgentOutcomeAt(System.currentTimeMillis() - 60_000)
                 .build();

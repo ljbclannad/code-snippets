@@ -13,6 +13,7 @@ import com.lx.governance.agentplatform.runtime.PlatformAgentResponse;
 import com.lx.governance.agentplatform.runtime.PlatformPendingReviewSnapshot;
 import com.lx.governance.agentplatform.runtime.PlatformRouteDecision;
 import com.lx.governance.agentplatform.runtime.PlatformRouteRuntime;
+import com.lx.governance.agentplatform.runtime.PlatformRouteTarget;
 
 /**
  * 负责 ai-chat-service 入口层与平台公共路由运行时之间的 DTO 适配。
@@ -53,6 +54,10 @@ public class AgentConversationRouteRuntime {
     }
 
     public PlatformRouteDecision evaluateAgentResponse(DoctorAssistantTaskResponse agentResponse) {
+        if (agentResponse != null && "DOCTOR_NOT_ASSIGNED".equals(agentResponse.getFallbackReason())
+                && agentResponse.getPatientSafeReply() != null) {
+            return new PlatformRouteDecision(PlatformRouteTarget.AGENT, false, "doctor_not_assigned");
+        }
         return platformRouteRuntime.evaluateAgentResponse(agentResponseOf(agentResponse));
     }
 
@@ -61,7 +66,7 @@ public class AgentConversationRouteRuntime {
     }
 
     private PlatformPendingReviewSnapshot pendingReviewSnapshotOf(SessionContext sessionContext) {
-        if (sessionContext == null) {
+        if (sessionContext == null || sessionContext.getLastAgentPendingTaskId() == null) {
             return null;
         }
         return PlatformPendingReviewSnapshot.builder()

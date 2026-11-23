@@ -15,7 +15,6 @@ import com.lx.governance.agentplatform.runtime.PlatformRouteDecision;
 import com.lx.governance.agentplatform.runtime.PlatformRouteTarget;
 import com.lx.governance.aichat.client.DeepSeekClient;
 import com.lx.governance.aichat.client.UserProfileClientFixed;
-import com.lx.governance.aichat.config.ProfileCompletionProperties;
 import com.lx.governance.aichat.degradation.DegradationLevel;
 import com.lx.governance.aichat.degradation.DegradationManager;
 import com.lx.governance.aichat.degradation.DegradationStrategyExecutor;
@@ -25,16 +24,15 @@ import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.ChatResponse;
 import com.lx.governance.aichat.evaluation.ChatEvaluationCollector;
 import org.springframework.beans.factory.annotation.Autowired;
-import com.lx.governance.aichat.dto.DiagnosisResult;
 import com.lx.governance.aichat.dto.DoctorAssistantTaskRequest;
 import com.lx.governance.aichat.dto.DoctorAssistantTaskResponse;
 import com.lx.governance.aichat.dto.DoctorAssistantTaskStatus;
 import com.lx.governance.aichat.dto.LayeredMemories;
 import com.lx.governance.aichat.dto.SessionContext;
-import com.lx.governance.aichat.dto.TaskTriggerContext;
 import com.lx.governance.aichat.dto.TaskTriggerDecision;
 import com.lx.governance.aichat.dto.UserProfileDTO;
 import com.lx.governance.aichat.exception.AiServiceException;
+import com.lx.governance.aichat.exception.ErrorCode;
 import com.lx.governance.aichat.exception.ConversationException;
 import com.lx.governance.aichat.metrics.AiChatMetrics;
 import com.lx.governance.aichat.quota.QuotaService;
@@ -63,8 +61,6 @@ public class AiChatService {
     }
 
 
-    private static final String INTENT_CASUAL_CHAT = "casual_chat";
-    private static final String INTENT_FACT_QUERY = "fact_query";
     private static final String STAGE_SESSION_CONTEXT = "session_context";
     private static final String STAGE_TASK_TRIGGER_ROUTER = "task_trigger_router";
     private static final String STAGE_PROFILE_FETCH = "profile_fetch";
@@ -83,10 +79,6 @@ public class AiChatService {
     private final ChatHistorySearchService searchService;
     private final SessionContextService sessionContextService;
     private final AiChatMetrics metrics;
-    private final ProfileDiagnosisService profileDiagnosisService;
-    private final FollowUpStateManager followUpStateManager;
-    private final FollowUpResponseBuilder followUpResponseBuilder;
-    private final ProfileCompletionProperties profileCompletionProperties;
     private final ChatAsyncProcessingService chatAsyncProcessingService;
     private final ConversationExecutionGuard conversationExecutionGuard;
     private final ChatRequestIdempotencyService chatRequestIdempotencyService;
@@ -94,12 +86,12 @@ public class AiChatService {
     private final DegradationManager degradationManager;
     private final DegradationStrategyExecutor degradationStrategyExecutor;
     private final LayeredMemoryOrchestrator layeredMemoryOrchestrator;
-    private final TaskTriggerRouter taskTriggerRouter;
-    private final MedicalKnowledgeQaService medicalKnowledgeQaService;
+    private final ChatTurnPolicy policy;
     private final DoctorAssistantTaskRequestFactory doctorAssistantTaskRequestFactory;
     private final DoctorAssistantAgentGateway doctorAssistantAgentGateway;
     private final AgentConversationRouteRuntime agentConversationRouteRuntime;
     private final VisitorIdentityService visitorIdentityService;
+    private final HighRiskFollowUpChat highRiskFollowUp;
     @Resource(name = "chatExecutor")
     private Executor chatExecutor;
 
@@ -109,8 +101,6 @@ public class AiChatService {
     @Value("${ai-chat.chat-history.recommend-count:3}")
     private int recommendCount;
 
-    @Value("${ai-chat.agent.patient-conservative-readonly-mode:true}")
-    private boolean patientConservativeReadonlyMode;
 
     public CompletableFuture<ChatResponse> handleChatRequest(ChatRequest request) {
         captureSafely(() -> evaluationCollector.begin(request));
@@ -127,6 +117,15 @@ public class AiChatService {
         // 入口第一步先打总请求指标，便于观察整体吞吐和错误率。
         metrics.recordChatRequest();
 
+        if (highRiskFollowUp.handles(request.getMessage())) {
+            String sessionId = highRiskFollowUp.conversationId(request);
+            try {
+                return metrics.recordChatResponseAsync(() -> CompletableFuture.supplyAsync(
+                        () -> ChatResponse.success(highRiskFollowUp.reply(request), sessionId), chatExecutor));
+            } catch (RejectedExecutionException ex) {
+                return CompletableFuture.completedFuture(ChatResponse.success(highRiskFollowUp.unavailable(request), sessionId));
+            }
+        }
         String sessionId = ensureConversationId(request);
         String customerId = visitorIdentityService.ensureCustomerId(request);
         boolean visitorMode = visitorIdentityService.isVisitor(customerId);
@@ -135,18 +134,9 @@ public class AiChatService {
                     sessionId, customerId);
         }
 
-        // 如果系统已经进入熔断级降级，直接返回兜底响应，不再进入画像/记忆/模型主链路。
-        if (degradationManager.getCurrentLevel() == DegradationLevel.CIRCUIT_BREAK) {
-            log.warn("服务熔断中 - customerId: {}", request.getCustomerId());
-            return CompletableFuture.completedFuture(
-                    degradationStrategyExecutor.getCircuitBreakResponse(sessionId));
-        }
-
-        // 在重度降级场景下优先尝试缓存命中，目标是用最低成本快速回复高频重复问题。
-        ChatResponse cachedResponse = degradationStrategyExecutor.getCachedResponse(
-                request.getCustomerId(), request.getMessage());
-        if (cachedResponse != null) {
-            return CompletableFuture.completedFuture(cachedResponse);
+        ChatResponse early = policy.earlyResponse(request);
+        if (early != null) {
+            return CompletableFuture.completedFuture(early);
         }
 
         // 主链路统一包在响应耗时指标和会话并发保护里，
@@ -194,15 +184,6 @@ public class AiChatService {
                             request.getRequestId(),
                             request.getMessageTimestamp()));
             metrics.recordStageLatency(STAGE_SESSION_CONTEXT, System.currentTimeMillis() - sessionContextStart);
-            if (sessionContext.getUserId() == null || sessionContext.getUserId().isBlank()) {
-                sessionContext.setUserId(request.getUserId() != null && !request.getUserId().isBlank()
-                        ? request.getUserId()
-                        : request.getCustomerId());
-            }
-            if (request.getTenantId() != null && !request.getTenantId().isBlank()) {
-                sessionContext.setTenantId(request.getTenantId());
-            }
-
             log.info("会话上下文已准备 - sessionId: {}, intent: {}, phase: {}, correlationId: {}",
                     sessionId,
                     sessionContext.getUserIntent(),
@@ -212,15 +193,7 @@ public class AiChatService {
             // TaskTriggerRouter 只负责“判定这次是否要升级到医生助手 Agent”，
             // 不直接发起远程调用；它的输出会作为后续 direct chat / agent 分流依据。
             long taskTriggerStart = System.currentTimeMillis();
-            TaskTriggerDecision triggerDecision = taskTriggerRouter.route(TaskTriggerContext.builder()
-                    .customerId(request.getCustomerId())
-                    .userId(request.getUserId())
-                    .groupId(request.getGroupId())
-                    .tenantId(request.getTenantId())
-                    .conversationId(sessionId)
-                    .message(request.getMessage())
-                    .sessionContext(sessionContext)
-                    .build());
+            TaskTriggerDecision triggerDecision = policy.trigger(request, sessionContext);
             metrics.recordStageLatency(STAGE_TASK_TRIGGER_ROUTER, System.currentTimeMillis() - taskTriggerStart);
 
             log.info(
@@ -264,7 +237,7 @@ public class AiChatService {
             long startTime,
             TaskTriggerDecision triggerDecision) {
         boolean visitorMode = isVisitorRequest(request);
-        boolean skipProfileLoad = shouldSkipProfileLoad(visitorMode, sessionContext);
+        boolean skipProfileLoad = !policy.loadProfile(visitorMode, sessionContext);
 
         // 先判断本轮是否值得拉取用户画像。
         // casual_chat / fact_query / visitor 模式会直接跳过，避免把低价值请求打到画像服务。
@@ -285,7 +258,7 @@ public class AiChatService {
                             metrics.recordProfileFetch(() -> profile);
                         }
                         metrics.recordStageLatency(STAGE_PROFILE_FETCH, System.currentTimeMillis() - profileFetchStart);
-                    });
+                    }).exceptionally(ex -> new UserProfileDTO());
         }
 
         return profileFuture.thenComposeAsync(profile -> {
@@ -293,12 +266,13 @@ public class AiChatService {
             // 当前轮不会继续执行长期记忆检索或 Agent 分流。
             if (!skipProfileLoad) {
                 long profileDiagnosisStart = System.currentTimeMillis();
-                CompletableFuture<ChatResponse> followUpResponse = handleProfileCompletionIfNeeded(
-                        request, sessionContext, profile);
-                metrics.recordStageLatency(STAGE_PROFILE_DIAGNOSIS,
-                        System.currentTimeMillis() - profileDiagnosisStart);
-                if (followUpResponse != null) {
-                    return followUpResponse;
+                String question = policy.profileQuestion(request, sessionContext, profile, triggerDecision);
+                metrics.recordStageLatency(STAGE_PROFILE_DIAGNOSIS, System.currentTimeMillis() - profileDiagnosisStart);
+                if (question != null) {
+                    sessionContextService.updateContext(sessionId, request.getMessage(), question,
+                            request.getRequestId(), request.getMessageTimestamp());
+                    saveFollowUpHistory(request, question, sessionId);
+                    return CompletableFuture.completedFuture(ChatResponse.success(question, sessionId));
                 }
             }
 
@@ -314,89 +288,45 @@ public class AiChatService {
                                 memories.getShortTermMemories().size(),
                                 memories.getLongTermMemories().size(),
                                 correlationId);
-                        if (medicalKnowledgeQaService.shouldUseKnowledgeQa(triggerDecision)) {
-                            MedicalKnowledgeQaService.QaResult qaResult =
-                                    medicalKnowledgeQaService.answer(request.getMessage(), triggerDecision);
-                            if (qaResult.escalateToAgent() && !visitorMode) {
-                                return invokeAgentOrFallback(
-                                        request,
-                                        sessionContext,
-                                        sessionId,
-                                        correlationId,
-                                        startTime,
-                                        toRiskEscalationDecision(triggerDecision, qaResult.escalationReason()),
-                                        profile,
-                                        memories);
-                            }
-                            if (!qaResult.escalateToAgent()) {
-                                return CompletableFuture.completedFuture(buildKnowledgeQaResponse(
-                                        request,
-                                        sessionId,
-                                        correlationId,
-                                        startTime,
-                                        qaResult));
-                            }
-                        }
-                        if (visitorMode && triggerDecision != null && triggerDecision.shouldUpgradeToAgent()) {
-                            log.info("visitor 模式跳过 Agent 升级，回退普通对话 - conversationId: {}, correlationId: {}",
-                                    sessionId, correlationId);
-                        }
-                        if (!visitorMode && triggerDecision != null && triggerDecision.shouldUpgradeToAgent()) {
-                            // 命中 Agent 路由后，还要再经过灰度/熔断/策略放行判断，
-                            // 避免医生助手链路在高风险时段被无限放大。
-                            PlatformRouteDecision routeDecision = agentConversationRouteRuntime.evaluateInvocation(
-                                    request, sessionContext,
-                                    triggerDecision);
-                            if (!routeDecision.invokeAgent()) {
-                                log.info(
-                                        "Agent 灰度/熔断策略未放行，回退普通对话 - conversationId: {}, taskType: {}, reason: {}, correlationId: {}",
-                                        sessionId,
-                                        triggerDecision.getTaskType(),
-                                        routeDecision.reason(),
-                                        correlationId);
-                                return fallbackToDirectChat(
-                                        routeDecision.reason(),
-                                        request,
-                                        sessionContext,
-                                        sessionId,
-                                        correlationId,
-                                        startTime,
-                                        profile,
-                                        memories);
-                            }
-                            // 真正的医生助手调用发生在这里：
-                            // ai-chat-service 会把当前请求、会话上下文、画像快照和分层记忆打包后发给 doctor-assistant-agent。
-                            return invokeAgentOrFallback(
-                                    request,
-                                    sessionContext,
-                                    sessionId,
-                                    correlationId,
-                                    startTime,
-                                    triggerDecision,
-                                    profile,
-                                    memories);
-                        }
-                        // 没有升级到 Agent 时，直接走普通对话模型回复链路。
-                        return CompletableFuture.completedFuture(processDirectChat(
-                                request,
-                                sessionContext,
-                                sessionId,
-                                correlationId,
-                                startTime,
-                                profile,
-                                memories));
+                        var plan = policy.decide(request, sessionContext, triggerDecision, visitorMode);
+                        return switch (plan.route()) {
+                            case KNOWLEDGE -> CompletableFuture.completedFuture(buildKnowledgeQaResponse(
+                                    request, sessionId, correlationId, startTime, plan.answer()));
+                            case PENDING -> pendingReview(request, sessionId, correlationId, startTime);
+                            case ERROR -> CompletableFuture.completedFuture(ChatResponse.error(ChatTurnPolicy.FAILURE_REPLY));
+                            case FALLBACK -> fallbackToDirectChat(plan.reason(), request, sessionContext,
+                                    sessionId, correlationId, startTime, profile, memories);
+                            case AGENT -> invokeAgentOrFallback(request, sessionContext, sessionId, correlationId,
+                                    startTime, plan.trigger(), profile, memories);
+                            case DIRECT -> CompletableFuture.completedFuture(processDirectChat(request, sessionContext,
+                                    sessionId, correlationId, startTime, profile, memories));
+                        };
                     }, chatExecutor);
         }, chatExecutor);
     }
 
-    private boolean shouldSkipProfileLoad(boolean visitorMode, SessionContext sessionContext) {
-        if (visitorMode) {
-            return true;
-        }
-        String intent = sessionContext != null && sessionContext.getUserIntent() != null
-                ? sessionContext.getUserIntent().trim().toLowerCase()
-                : "";
-        return INTENT_CASUAL_CHAT.equals(intent) || INTENT_FACT_QUERY.equals(intent);
+    private CompletableFuture<ChatResponse> pendingReview(ChatRequest request, String sessionId,
+            String correlationId, long startTime) {
+        String patientReply = ChatTurnPolicy.PENDING_REPLY;
+        log.info("检测到会话中已有待处理人工复核，短路跳过重复 Agent 调用 - conversationId: {}, correlationId: {}",
+                sessionId, correlationId);
+        sessionContextService.updateContext(
+                sessionId,
+                request.getMessage(),
+                patientReply,
+                request.getRequestId(),
+                request.getMessageTimestamp());
+        ChatGenerationResult agentConversationResult = new ChatGenerationResult();
+        agentConversationResult.setAnswer(patientReply);
+        agentConversationResult.setConversationId(sessionId);
+        agentConversationResult.setMessageId("pending-review-short-circuit");
+        chatAsyncProcessingService.handleChatCompleted(request, agentConversationResult, correlationId);
+        metrics.recordAgentFallback("pending_review_short_circuit");
+        metrics.recordRouteResult(
+                ROUTE_RESULT_PENDING_REVIEW_SHORT_CIRCUIT,
+                false,
+                System.currentTimeMillis() - startTime);
+        return CompletableFuture.completedFuture(ChatResponse.success(patientReply, sessionId, null));
     }
 
     private CompletableFuture<ChatResponse> invokeAgentOrFallback(
@@ -408,31 +338,6 @@ public class AiChatService {
             TaskTriggerDecision triggerDecision,
             UserProfileDTO profile,
             LayeredMemories memories) {
-        PlatformRouteDecision initialDecision = agentConversationRouteRuntime.evaluateInvocation(request,
-                sessionContext, triggerDecision);
-        if (initialDecision.target() == PlatformRouteTarget.PENDING_REVIEW_SHORT_CIRCUIT) {
-            String patientReply = "这条情况已经同步给医生进一步评估，当前先按之前的安全建议观察；如果出现明显不适或症状加重，请及时线下就医。";
-            log.info("检测到会话中已有待处理人工复核，短路跳过重复 Agent 调用 - conversationId: {}, correlationId: {}",
-                    sessionId, correlationId);
-            sessionContextService.updateContext(
-                    sessionId,
-                    request.getMessage(),
-                    patientReply,
-                    request.getRequestId(),
-                    request.getMessageTimestamp());
-            ChatGenerationResult agentConversationResult = new ChatGenerationResult();
-            agentConversationResult.setAnswer(patientReply);
-            agentConversationResult.setConversationId(sessionId);
-            agentConversationResult.setMessageId("pending-review-short-circuit");
-            chatAsyncProcessingService.handleChatCompleted(request, agentConversationResult, correlationId);
-            metrics.recordAgentFallback("pending_review_short_circuit");
-            metrics.recordRouteResult(
-                    ROUTE_RESULT_PENDING_REVIEW_SHORT_CIRCUIT,
-                    false,
-                    System.currentTimeMillis() - startTime);
-            return CompletableFuture.completedFuture(ChatResponse.success(patientReply, sessionId, null));
-        }
-
         // 这里做的是“患者对话 -> 医生助手任务请求”的协议适配，
         // 把 ai-chat-service 已经拿到的上下文快照完整传给 doctor-assistant-agent。
         DoctorAssistantTaskRequest agentTaskRequest = doctorAssistantTaskRequestFactory.buildPatientDialogRequest(
@@ -465,10 +370,13 @@ public class AiChatService {
             String taskType = triggerDecision.getTaskType() != null ? triggerDecision.getTaskType().name() : "UNKNOWN";
             PlatformRouteDecision responseDecision = agentConversationRouteRuntime.evaluateAgentResponse(agentResponse);
 
+            if (responseDecision.target() == PlatformRouteTarget.TERMINAL_ERROR) {
+                return CompletableFuture.completedFuture(ChatResponse.error(ChatTurnPolicy.FAILURE_REPLY));
+            }
             // SKIPPED 表示远端认为当前任务不适合继续走医生助手链路，
             // 这里统一回退普通对话，避免患者端收到空结果。
             if (responseDecision.target() == PlatformRouteTarget.DIRECT_CHAT_FALLBACK
-                    && DoctorAssistantTaskStatus.SKIPPED == agentResponse.getStatus()) {
+                    && agentResponse != null && DoctorAssistantTaskStatus.SKIPPED == agentResponse.getStatus()) {
                 metrics.recordAgentInvocation(taskType, "skipped", durationMs);
                 return fallbackToDirectChat(
                         responseDecision.reason(),
@@ -529,7 +437,7 @@ public class AiChatService {
             log.error("Agent 调用失败，准备回退普通对话 - conversationId: {}, taskType: {}, correlationId: {}",
                     sessionId, taskType, correlationId, e);
             return fallbackToDirectChat(
-                    agentConversationRouteRuntime.fallbackDecision("agent_exception").reason(),
+                    "agent_exception",
                     request,
                     sessionContext,
                     sessionId,
@@ -551,7 +459,7 @@ public class AiChatService {
             LayeredMemories memories) {
         PlatformRouteDecision fallbackDecision = agentConversationRouteRuntime.fallbackDecision(reason);
         if (fallbackDecision.target() == PlatformRouteTarget.TERMINAL_ERROR) {
-            return CompletableFuture.completedFuture(ChatResponse.error("Agent 调用失败且未开启普通对话回退"));
+            return CompletableFuture.completedFuture(ChatResponse.error(ChatTurnPolicy.FAILURE_REPLY));
         }
 
         // Agent 调用失败后的回退仍然复用已经准备好的会话上下文、画像和记忆，
@@ -638,10 +546,6 @@ public class AiChatService {
         if (agentResponse.getNeedsHumanReview() != null && agentResponse.getNeedsHumanReview()) {
             metrics.recordHumanReviewRequest(taskType);
         }
-        if (patientConservativeReadonlyMode && agentResponse.getNeedsHumanReview() != null
-                && agentResponse.getNeedsHumanReview()) {
-            patientReply = patientReply + "\n\n已同步给医生进一步评估，请先按当前安全建议观察，如有明显不适请及时线下就医。";
-        }
         log.info(
                 "准备回传患者安全回复 - sessionId: {}, taskType: {}, status: {}, needsHumanReview: {}, correlationId: {}",
                 sessionId,
@@ -670,74 +574,6 @@ public class AiChatService {
         return ChatResponse.success(patientReply, sessionId, agentResponse.getPatientVisibleEvidence());
     }
 
-    private CompletableFuture<ChatResponse> handleProfileCompletionIfNeeded(
-            ChatRequest request,
-            SessionContext sessionContext,
-            UserProfileDTO profile) {
-        if (isVisitorRequest(request)) {
-            return null;
-        }
-        if (!profileCompletionProperties.isEnabled()) {
-            return null;
-        }
-
-        // 画像诊断会基于当前画像 + 会话上下文 + 本轮消息判断是否需要继续追问，
-        // 这是主链路里最早的“短路分支”之一。
-        DiagnosisResult diagnosis = profileDiagnosisService.diagnoseProfile(
-                profile,
-                sessionContext,
-                request.getMessage());
-
-        if (diagnosis.isNeedsCompletion() &&
-                !followUpStateManager.shouldStopFollowUp(sessionContext.getConversationId())) {
-
-            // 命中画像补全时，系统会生成追问问题并写入会话状态，
-            // 后续 TaskTriggerRouter 会优先识别这些追问态，避免误升级到 Agent。
-            List<String> questions = profileDiagnosisService.generateFollowUpQuestions(
-                    diagnosis,
-                    profileCompletionProperties.getFollowUp().getMaxQuestionsPerRound());
-
-            List<String> fieldPaths = diagnosis.getMissingFields().stream()
-                    .map(DiagnosisResult.MissingField::getFieldPath)
-                    .collect(Collectors.toList());
-
-            followUpStateManager.recordFollowUp(
-                    sessionContext.getConversationId(),
-                    questions,
-                    fieldPaths);
-
-            sessionContext.setPendingQuestions(questions);
-            sessionContextService.updateContext(
-                    sessionContext.getConversationId(),
-                    request.getMessage(),
-                    "",
-                    request.getRequestId(),
-                    request.getMessageTimestamp());
-
-            String followUpMessage = followUpResponseBuilder.buildFollowUpMessage(
-                    questions,
-                    diagnosis);
-
-            // 追问消息也要进入统一聊天历史和后处理链路，
-            // 这样后续上下文和记忆抽取能感知本轮系统追问。
-            saveFollowUpHistory(request, followUpMessage, sessionContext.getConversationId());
-
-            log.info("画像诊断触发追问 - conversationId: {}, 缺失字段数: {}, 追问问题数: {}",
-                    sessionContext.getConversationId(),
-                    diagnosis.getMissingFields().size(),
-                    questions.size());
-
-            return CompletableFuture.completedFuture(
-                    ChatResponse.success(followUpMessage, sessionContext.getConversationId()));
-        }
-
-        if (!diagnosis.isNeedsCompletion()) {
-            followUpStateManager.markCompleted(sessionContext.getConversationId());
-        }
-
-        return null;
-    }
-
     private CompletableFuture<LayeredMemories> loadLayeredMemoriesAsync(
             ChatRequest request,
             SessionContext sessionContext,
@@ -745,18 +581,8 @@ public class AiChatService {
             String correlationId) {
         // 长期记忆检索支持被降级策略整体关闭；
         // 关闭时仍然保留 short-term memories，但不会触发 vector-memory-service 召回。
-        boolean memoryEnabled = degradationManager.isFeatureEnabled("memory");
-        if (isVisitorRequest(request)) {
-            memoryEnabled = false;
-            log.debug("visitor 模式跳过长期记忆检索 - customerId: {}, correlationId: {}",
-                    request.getCustomerId(), correlationId);
-        }
-        if (!memoryEnabled) {
-            log.info("降级模式：跳过长期记忆检索 - level: {}, correlationId: {}",
-                    degradationManager.getCurrentLevel(), correlationId);
-        }
-
-        int retrievalCount = memoryEnabled ? degradationStrategyExecutor.getMemoryRetrievalCount() : 0;
+        int retrievalCount = policy.memoryCount(isVisitorRequest(request));
+        boolean memoryEnabled = retrievalCount > 0;
         // LayeredMemoryOrchestrator 内部会决定：
         // 1. short-term memories 如何从 SessionContext 提取
         // 2. long-term memories 是否值得检索
@@ -886,15 +712,6 @@ public class AiChatService {
         return response;
     }
 
-    private TaskTriggerDecision toRiskEscalationDecision(TaskTriggerDecision original, String reason) {
-        return TaskTriggerDecision.builder()
-                .route(com.lx.governance.aichat.dto.TaskTriggerRoute.DOCTOR_ASSISTANT_AGENT)
-                .taskType(com.lx.governance.aichat.dto.TaskType.RISK_STRATIFICATION_AND_ESCALATION)
-                .reasons(java.util.List.of(com.lx.governance.aichat.dto.TaskTriggerReason.MEDICAL_SENSITIVE_FACT_QUERY))
-                .summary(reason != null ? reason : (original != null ? original.getSummary() : "knowledge_qa_escalation"))
-                .build();
-    }
-
     /**
      * 添加降级提示到响应
      */
@@ -990,8 +807,10 @@ public class AiChatService {
 
         if (actual instanceof ConversationException) {
             ConversationException ex = (ConversationException) actual;
-            return ChatResponse.error(ex.getErrorCode().getMessage() +
-                    (ex.getDetail() != null ? ": " + ex.getDetail() : ""));
+            if (ex.getErrorCode() == ErrorCode.CONVERSATION_BUSY) {
+                return ChatResponse.error(ex.getErrorCode().getMessage() + ": 当前会话正在处理中，请稍后再试");
+            }
+            return ChatResponse.error(ex.getErrorCode().getMessage());
         }
 
         if (actual instanceof RejectedExecutionException) {
@@ -1001,11 +820,10 @@ public class AiChatService {
 
         if (actual instanceof AiServiceException) {
             AiServiceException ex = (AiServiceException) actual;
-            return ChatResponse.error(ex.getErrorCode().getMessage() +
-                    (ex.getDetail() != null ? ": " + ex.getDetail() : ""));
+            return ChatResponse.error(ex.getErrorCode().getMessage());
         }
 
-        return ChatResponse.error("聊天请求处理失败: " + actual.getMessage());
+        return ChatResponse.error("本轮对话未能完成，请稍后再试。");
     }
 
     private String truncate(String text, int maxLength) {

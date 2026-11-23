@@ -31,6 +31,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -98,6 +99,8 @@ class AiChatServiceConcurrencyTest {
     private AgentDispatchPolicy agentDispatchPolicy;
     @Mock
     private VisitorIdentityService visitorIdentityService;
+    @Mock
+    private HighRiskFollowUpChat highRiskFollowUp;
 
     private AutoCloseable closeable;
     private ExecutorService executorService;
@@ -124,10 +127,6 @@ class AiChatServiceConcurrencyTest {
                 searchService,
                 sessionContextService,
                 metrics,
-                profileDiagnosisService,
-                followUpStateManager,
-                followUpResponseBuilder,
-                profileCompletionProperties,
                 chatAsyncProcessingService,
                 conversationExecutionGuard,
                 chatRequestIdempotencyService,
@@ -135,12 +134,12 @@ class AiChatServiceConcurrencyTest {
                 degradationManager,
                 degradationStrategyExecutor,
                 layeredMemoryOrchestrator,
-                taskTriggerRouter,
-                medicalKnowledgeQaService,
+                new ChatTurnPolicy(taskTriggerRouter, medicalKnowledgeQaService, routeRuntime, profileCompletionProperties, profileDiagnosisService,
+                        followUpStateManager, followUpResponseBuilder, degradationManager, degradationStrategyExecutor),
                 doctorAssistantTaskRequestFactory,
                 doctorAssistantAgentGateway,
                 routeRuntime,
-                visitorIdentityService);
+                visitorIdentityService, highRiskFollowUp);
 
         ReflectionTestUtils.setField(aiChatService, "autoRecommendEnabled", false);
         ReflectionTestUtils.setField(aiChatService, "recommendCount", 3);
@@ -205,6 +204,17 @@ class AiChatServiceConcurrencyTest {
     void tearDown() throws Exception {
         executorService.shutdownNow();
         closeable.close();
+    }
+
+    @Test
+    void highRiskReplyPrecedesCacheAndProfileQuestions() throws Exception {
+        var request = buildRequest("c1");
+        request.setMessage("胸痛");
+        when(highRiskFollowUp.handles("胸痛")).thenReturn(true);
+        when(highRiskFollowUp.conversationId(request)).thenReturn("c1");
+        when(highRiskFollowUp.reply(request)).thenReturn("请及时就医。");
+        assertEquals("请及时就医。", aiChatService.handleChatRequest(request).get(2, TimeUnit.SECONDS).getMessage());
+        Mockito.verifyNoInteractions(deepSeekClient, userProfileClient, degradationStrategyExecutor);
     }
 
     @Test

@@ -159,6 +159,7 @@ function getPayload() {
         customerId: elements.customerId.value.trim(),
         groupId: elements.groupId.value.trim(),
         conversationId: elements.conversationId.value.trim() || undefined,
+        requestId: Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join(""),
         message: elements.messageInput.value.trim()
     };
 }
@@ -216,7 +217,7 @@ async function sendRegularMessage(payload) {
         applyConversationId(data.conversationId);
         addMessage("assistant", "AI", data.message || "");
         renderRecommendations(data.recommendations || []);
-        updateAgentStatus("未触发", "普通响应完成");
+        updateAgentStatus("已完成", "普通响应完成");
         updateLiveConnection("complete");
         await maybeLoadConversations();
         appendTrace("响应", `普通响应完成 · conversationId=${data.conversationId || "-"}`);

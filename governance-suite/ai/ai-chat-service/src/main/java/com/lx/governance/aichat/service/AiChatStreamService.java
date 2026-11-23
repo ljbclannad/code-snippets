@@ -9,7 +9,6 @@ import com.lx.governance.aichat.dto.*;
 import com.lx.governance.aichat.metrics.AiChatMetrics;
 import com.lx.governance.aichat.quota.QuotaService;
 import com.lx.governance.aichat.stream.StreamResponseAccumulator;
-import com.lx.governance.agentplatform.runtime.PlatformRouteDecision;
 import com.lx.governance.agentplatform.runtime.PlatformRouteTarget;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -17,8 +16,10 @@ import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.SignalType;
+import reactor.core.scheduler.Schedulers;
 
 import java.util.List;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.UUID;
 
 /**
@@ -51,12 +52,12 @@ public class AiChatStreamService {
     private final AiChatMetrics metrics;
     private final QuotaService quotaService;
     private final LayeredMemoryOrchestrator layeredMemoryOrchestrator;
-    private final TaskTriggerRouter taskTriggerRouter;
-    private final MedicalKnowledgeQaService medicalKnowledgeQaService;
+    private final ChatTurnPolicy policy;
     private final DoctorAssistantTaskRequestFactory doctorAssistantTaskRequestFactory;
     private final DoctorAssistantAgentGateway doctorAssistantAgentGateway;
     private final AgentConversationRouteRuntime agentConversationRouteRuntime;
     private final VisitorIdentityService visitorIdentityService;
+    private final HighRiskFollowUpChat highRiskFollowUp;
 
     /**
      * 处理流式聊天请求
@@ -81,10 +82,30 @@ public class AiChatStreamService {
     private Flux<StreamEvent> handleChatStreamRequestInternal(ChatRequest request) {
         metrics.recordChatRequest();
 
+        if (highRiskFollowUp.handles(request.getMessage())) {
+            String sessionId = highRiskFollowUp.conversationId(request);
+            StreamResponseAccumulator accumulator = new StreamResponseAccumulator();
+            return Flux.concat(Flux.just(StreamEvent.start(sessionId)),
+                    Mono.fromCallable(() -> StreamEvent.content(highRiskFollowUp.reply(request)))
+                            .subscribeOn(Schedulers.boundedElastic())
+                            .onErrorResume(RejectedExecutionException.class,
+                                    ex -> Mono.just(StreamEvent.content(highRiskFollowUp.unavailable(request)))),
+                    Flux.just(StreamEvent.done(sessionId, null)))
+                    .doOnNext(event -> {
+                        accumulator.accumulate(event);
+                        captureSafely(() -> evaluationCollector.event(request, event));
+                    })
+                    .doFinally(signal -> captureSafely(() ->
+                            evaluationCollector.completeStream(request, accumulator, signal.name())));
+        }
         String sessionId = ensureConversationId(request);
         String customerId = visitorIdentityService.ensureCustomerId(request);
         if (request.getCustomerId() == null || request.getCustomerId().isBlank()) {
             request.setCustomerId(customerId);
+        }
+        ChatResponse early = policy.earlyResponse(request);
+        if (early != null) {
+            return patientReply(sessionId, early.getMessage(), early.getPatientVisibleEvidence());
         }
         String correlationId = UUID.randomUUID().toString();
         long startTime = System.currentTimeMillis();
@@ -134,7 +155,7 @@ public class AiChatStreamService {
                     log.error("流式聊天请求处理失败 - customerId: {}, correlationId: {}",
                             request.getCustomerId(), correlationId, ex);
                     return Flux.just(StreamEvent.error(
-                            "处理失败: " + ex.getMessage(),
+                            ChatTurnPolicy.FAILURE_REPLY,
                             1000
                     ));
                 });
@@ -242,15 +263,7 @@ public class AiChatStreamService {
             return sessionContext;
         })
         .flatMapMany(sessionContext -> {
-            TaskTriggerDecision triggerDecision = taskTriggerRouter.route(TaskTriggerContext.builder()
-                    .customerId(request.getCustomerId())
-                    .userId(request.getUserId())
-                    .groupId(request.getGroupId())
-                    .tenantId(request.getTenantId())
-                    .conversationId(sessionId)
-                    .message(request.getMessage())
-                    .sessionContext(sessionContext)
-                    .build());
+            TaskTriggerDecision triggerDecision = policy.trigger(request, sessionContext);
             sessionContextService.recordTaskTriggerDecision(
                     sessionId,
                     triggerDecision,
@@ -259,72 +272,33 @@ public class AiChatStreamService {
             captureSafely(() -> evaluationCollector.context(request, sessionContext, triggerDecision));
             metrics.recordTaskTriggerDecision(triggerDecision);
 
-            return Mono.fromCallable(() ->
-                    fetchUserProfile(request.getCustomerId())
-            )
-            .flatMapMany(profile -> {
-                return Mono.fromCallable(() ->
-                        loadLayeredMemories(request, sessionContext, profile, correlationId)
-                )
-                .flatMapMany(memories -> {
-                    if (medicalKnowledgeQaService.shouldUseKnowledgeQa(triggerDecision)) {
-                        MedicalKnowledgeQaService.QaResult qaResult =
-                                medicalKnowledgeQaService.answer(request.getMessage(), triggerDecision);
-                        if (qaResult.escalateToAgent() && !visitorIdentityService.isVisitor(request.getCustomerId())) {
-                            return invokeAgentStream(
-                                    request,
-                                    sessionContext,
-                                    sessionId,
-                                    correlationId,
-                                    toRiskEscalationDecision(qaResult.escalationReason()),
-                                    profile,
-                                    memories);
-                        }
-                        if (!qaResult.escalateToAgent()) {
-                            return Flux.just(
-                                    StreamEvent.start(sessionId),
-                                    StreamEvent.status("kb_qa", "已命中医疗知识检索问答路径", java.util.Map.of(
-                                            "uncertain", qaResult.uncertain(),
-                                            "evidenceCount", qaResult.patientVisibleEvidence().size())),
-                                    StreamEvent.status("evidence", "已附带患者可见证据卡片", java.util.Map.of(
-                                            "count", qaResult.patientVisibleEvidence().size(),
-                                            "items", qaResult.patientVisibleEvidence())),
-                                    StreamEvent.content(qaResult.answer()),
-                                    StreamEvent.done(sessionId, null));
-                        }
-                    }
-                    if (!visitorIdentityService.isVisitor(request.getCustomerId())
-                            && triggerDecision != null
-                            && triggerDecision.shouldUpgradeToAgent()) {
-                        PlatformRouteDecision routeDecision = agentConversationRouteRuntime.evaluateInvocation(
-                                request, sessionContext, triggerDecision);
-                        if (routeDecision.target() == PlatformRouteTarget.PENDING_REVIEW_SHORT_CIRCUIT) {
-                            String patientReply = "这条情况已经同步给医生进一步评估，当前先按之前的安全建议观察；如果出现明显不适或症状加重，请及时线下就医。";
-                            return Flux.just(
-                                    StreamEvent.start(sessionId),
-                                    StreamEvent.status("agent", "检测到已有待处理人工复核，本轮跳过重复 Agent 调用", null),
-                                    StreamEvent.content(patientReply),
-                                    StreamEvent.done(sessionId, null));
-                        }
-                        if (routeDecision.invokeAgent()) {
-                            return invokeAgentStream(request, sessionContext, sessionId, correlationId,
-                                    triggerDecision, profile, memories)
-                                    .onErrorResume(ex -> {
-                                        log.error("Agent 流式调用失败，回退普通对话 - conversationId: {}, correlationId: {}",
-                                                sessionId, correlationId, ex);
-                                        return directChatStream(request, profile, sessionContext, memories);
-                                    });
-                        }
-                        return Flux.concat(
-                                Flux.just(StreamEvent.start(sessionId)),
-                                Flux.just(StreamEvent.status("agent",
-                                        "Agent 灰度或熔断策略未放行，回退普通对话", null)),
-                                directChatStreamWithoutStart(request, profile, sessionContext, memories));
-                    }
-                    return deepSeekClient.chatStream(request, profile, sessionContext, memories);
-                });
-            });
-        });
+            boolean visitor = visitorIdentityService.isVisitor(request.getCustomerId());
+            boolean loadProfile = policy.loadProfile(visitor, sessionContext);
+            UserProfileDTO profile = loadProfile ? fetchUserProfile(request.getCustomerId()) : new UserProfileDTO();
+            String question = loadProfile ? policy.profileQuestion(request, sessionContext, profile, triggerDecision) : null;
+            if (question != null) {
+                return patientReply(sessionId, question, null);
+            }
+            var memories = loadLayeredMemories(request, sessionContext, profile, correlationId);
+            var plan = policy.decide(request, sessionContext, triggerDecision, visitor);
+            return switch (plan.route()) {
+                case KNOWLEDGE -> patientReply(sessionId, plan.answer().answer(), plan.answer().patientVisibleEvidence());
+                case PENDING -> patientReply(sessionId, ChatTurnPolicy.PENDING_REPLY, null);
+                case ERROR -> Flux.just(StreamEvent.error(ChatTurnPolicy.FAILURE_REPLY, 3002));
+                case DIRECT, FALLBACK -> directChatStream(request, profile, sessionContext, memories);
+                case AGENT -> invokeAgentStream(request, sessionContext, sessionId, correlationId,
+                        plan.trigger(), profile, memories);
+            };
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    private Flux<StreamEvent> patientReply(String sessionId, String reply, List<PatientVisibleEvidence> evidence) {
+        var start = Flux.just(StreamEvent.start(sessionId));
+        if (evidence != null && !evidence.isEmpty()) {
+            start = start.concatWithValues(StreamEvent.status("evidence", "已附带患者可见证据卡片",
+                    java.util.Map.of("count", evidence.size(), "items", evidence)));
+        }
+        return start.concatWithValues(StreamEvent.content(reply), StreamEvent.done(sessionId, null));
     }
 
     private Flux<StreamEvent> invokeAgentStream(
@@ -346,9 +320,24 @@ public class AiChatStreamService {
                 Flux.just(StreamEvent.start(sessionId)),
                 Flux.just(StreamEvent.status(
                         "agent",
-                        "已升级到医生助手 Agent，开始执行多阶段分析",
+                        "正在请医生助手分析你的问题",
                         null)),
-                doctorAssistantAgentGateway.analyzePatientTaskStream(agentTaskRequest));
+                Flux.defer(() -> doctorAssistantAgentGateway.analyzePatientTaskStream(agentTaskRequest))
+                        .doOnNext(event -> {
+                            var result = event.getEvaluationTaskResponse();
+                            if (result != null) {
+                                if (agentConversationRouteRuntime.evaluateAgentResponse(result).target() != PlatformRouteTarget.AGENT) {
+                                    throw new IllegalStateException("医生助手未返回可用结果");
+                                }
+                                sessionContextService.recordAgentOutcome(sessionId, result, request.getRequestId(),
+                                        request.getMessageTimestamp());
+                            }
+                        }).onErrorResume(ex -> {
+                            if (agentConversationRouteRuntime.fallbackDecision("agent_exception").target() == PlatformRouteTarget.TERMINAL_ERROR) {
+                                return Flux.just(StreamEvent.error(ChatTurnPolicy.FAILURE_REPLY, 3002));
+                            }
+                            return directChatStreamWithoutStart(request, profile, sessionContext, memories);
+                        }));
     }
 
     private Flux<StreamEvent> directChatStream(
@@ -380,38 +369,25 @@ public class AiChatStreamService {
         }
     }
 
-    private TaskTriggerDecision toRiskEscalationDecision(String reason) {
-        return TaskTriggerDecision.builder()
-                .route(TaskTriggerRoute.DOCTOR_ASSISTANT_AGENT)
-                .taskType(TaskType.RISK_STRATIFICATION_AND_ESCALATION)
-                .reasons(List.of(com.lx.governance.aichat.dto.TaskTriggerReason.MEDICAL_SENSITIVE_FACT_QUERY))
-                .summary(reason != null ? reason : "knowledge_qa_escalation")
-                .build();
-    }
-
-    private com.lx.governance.aichat.dto.LayeredMemories loadLayeredMemories(
+    private LayeredMemories loadLayeredMemories(
             ChatRequest request,
             SessionContext sessionContext,
             UserProfileDTO userProfile,
             String correlationId) {
         try {
-            if (visitorIdentityService.isVisitor(request.getCustomerId())) {
-                log.debug("visitor 模式跳过流式长期记忆检索 - customerId: {}, correlationId: {}",
-                        request.getCustomerId(), correlationId);
-                return com.lx.governance.aichat.dto.LayeredMemories.builder().build();
-            }
+            int count = policy.memoryCount(visitorIdentityService.isVisitor(request.getCustomerId()));
             return layeredMemoryOrchestrator.loadMemories(
                     request.getGroupId(),
                     request.getCustomerId(),
                     request.getMessage(),
                     sessionContext,
                     userProfile,
-                    true,
-                    5
+                    count > 0,
+                    count
             ).join();
         } catch (Exception e) {
             log.error("记忆检索失败 - correlationId: {}", correlationId, e);
-            return com.lx.governance.aichat.dto.LayeredMemories.builder().build();
+            return LayeredMemories.builder().build();
         }
     }
 

@@ -104,7 +104,7 @@ public class TaskTriggerRouter implements PlatformTaskRouter {
         String intent = normalize(sessionIntent(sessionContext));
 
         // 高风险医疗信号优先于画像追问和闲聊，避免会话状态或前置意图覆盖风险升级。
-        if (containsAny(message, HIGH_RISK_MEDICAL_KEYWORDS)) {
+        if (hasHighRiskMedicalSignal(message)) {
             return agent(
                 TaskType.RISK_STRATIFICATION_AND_ESCALATION,
                 reasons(TaskTriggerReason.HIGH_RISK_MEDICAL_SIGNAL),
@@ -297,6 +297,10 @@ public class TaskTriggerRouter implements PlatformTaskRouter {
 
     private boolean hasIntent(String normalizedIntent, String expectedIntent) {
         return expectedIntent.equals(normalizedIntent);
+    }
+
+    static boolean hasHighRiskMedicalSignal(String message) {
+        return message != null && HIGH_RISK_MEDICAL_KEYWORDS.stream().anyMatch(message::contains);
     }
 
     private boolean containsAny(String normalizedText, List<String> keywords) {
