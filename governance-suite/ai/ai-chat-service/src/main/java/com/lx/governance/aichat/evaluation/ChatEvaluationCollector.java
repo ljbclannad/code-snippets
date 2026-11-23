@@ -99,11 +99,12 @@ public class ChatEvaluationCollector {
 
     /** 流式网关已解析的 result 状态事件，不改变交付给客户端的事件。 */
     public void event(ChatRequest request, StreamEvent event) {
-        if (event == null || event.getType() != StreamEvent.EventType.STATUS || event.getDetails() == null) { return; }
+        if (event == null || event.getType() != StreamEvent.EventType.STATUS) { return; }
         if (event.getEvaluationTaskResponse() != null) {
             agent(request, event.getEvaluationTaskResponse());
             return;
         }
+        if (event.getDetails() == null) { return; }
         snapshot(request, capture -> {
             JsonNode details = mapper.valueToTree(event.getDetails());
             if (details.path("runId").isTextual()) { capture.runId = details.path("runId").asText(); }

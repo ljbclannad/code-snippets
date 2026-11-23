@@ -2,6 +2,7 @@ package com.lx.governance.aichat.service;
 
 import java.io.BufferedReader;
 import java.io.InputStream;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -10,16 +11,15 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lx.governance.aichat.dto.DoctorAssistantTaskRequest;
@@ -45,14 +45,17 @@ public class HttpDoctorAssistantAgentGateway implements DoctorAssistantAgentGate
     private final String baseUrl;
     private final Duration timeout;
     private final HttpClient httpClient;
+    private final String serviceToken;
 
     public HttpDoctorAssistantAgentGateway(
             @Qualifier("doctorAssistantAgentRestClient") RestClient restClient,
             ObjectMapper objectMapper,
             @Value("${ai-chat.agent.enabled:false}") boolean enabled,
             @Value("${ai-chat.agent.base-url:http://localhost:8088}") String baseUrl,
-            @Value("${ai-chat.agent.timeout-ms:15000}") int timeoutMs) {
+            @Value("${ai-chat.agent.timeout-ms:15000}") int timeoutMs,
+            @Value("${ai-chat.follow-up-reminder.service-token:}") String serviceToken) {
         this.restClient = restClient;
+        this.serviceToken = serviceToken;
         this.objectMapper = objectMapper;
         this.enabled = enabled;
         this.baseUrl = baseUrl;
@@ -77,6 +80,7 @@ public class HttpDoctorAssistantAgentGateway implements DoctorAssistantAgentGate
         try {
             DoctorAssistantTaskResponse response = restClient.post()
                     .uri("/api/patient-tasks/analyze")
+                    .header("X-Follow-Up-Token", serviceToken)
                     .body(request)
                     .retrieve()
                     .body(DoctorAssistantTaskResponse.class);
@@ -120,6 +124,7 @@ public class HttpDoctorAssistantAgentGateway implements DoctorAssistantAgentGate
                         .uri(URI.create(baseUrl + "/api/patient-tasks/analyze/stream"))
                         .timeout(timeout)
                         .header("Content-Type", "application/json")
+                        .header("X-Follow-Up-Token", serviceToken)
                         .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(request)))
                         .build();
             } catch (Exception e) {
@@ -129,21 +134,38 @@ public class HttpDoctorAssistantAgentGateway implements DoctorAssistantAgentGate
             }
 
             try {
-                HttpResponse<InputStream> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
-                if (response.statusCode() >= 400) {
-                    sink.error(new AiServiceException(ErrorCode.AI_API_ERROR,
-                            "doctor-assistant-agent 流式调用失败: HTTP " + response.statusCode()));
-                    return;
-                }
-
-                try (BufferedReader reader = new BufferedReader(
-                        new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
+                var pending = httpClient.sendAsync(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
+                var active = new AtomicReference<InputStream>();
+                sink.onCancel(() -> {
+                    pending.cancel(true);
+                    InputStream body = active.get();
+                    if (body != null) {
+                        try {
+                            body.close();
+                        } catch (IOException ex) {
+                            log.debug("取消流式读取时连接已关闭", ex);
+                        }
+                    }
+                });
+                HttpResponse<InputStream> response = pending.join();
+                try (InputStream body = response.body();
+                        BufferedReader reader = new BufferedReader(new InputStreamReader(body, StandardCharsets.UTF_8))) {
+                    active.set(body);
+                    if (sink.isCancelled()) {
+                        return;
+                    }
+                    if (response.statusCode() != 200) {
+                        throw new IOException("医生助手流式服务响应异常");
+                    }
                     String line;
                     String eventName = null;
                     StringBuilder dataBuffer = new StringBuilder();
                     while (!sink.isCancelled() && (line = reader.readLine()) != null) {
                         if (line.isBlank()) {
-                            emitRemoteEvent(request, eventName, dataBuffer, sink);
+                            if (emitRemoteEvent(request, eventName, dataBuffer, sink)) {
+                                sink.complete();
+                                return;
+                            }
                             eventName = null;
                             dataBuffer.setLength(0);
                             continue;
@@ -159,11 +181,12 @@ public class HttpDoctorAssistantAgentGateway implements DoctorAssistantAgentGate
                             dataBuffer.append(line.substring("data:".length()).trim());
                         }
                     }
-                    emitRemoteEvent(request, eventName, dataBuffer, sink);
-                }
-
-                if (!sink.isCancelled()) {
-                    sink.complete();
+                    if (!sink.isCancelled()) {
+                        if (!emitRemoteEvent(request, eventName, dataBuffer, sink)) {
+                            throw new IOException("医生助手未返回最终结果");
+                        }
+                        sink.complete();
+                    }
                 }
             } catch (Exception e) {
                 if (!sink.isCancelled()) {
@@ -171,16 +194,16 @@ public class HttpDoctorAssistantAgentGateway implements DoctorAssistantAgentGate
                             "doctor-assistant-agent 流式调用失败: " + e.getMessage()));
                 }
             }
-        }).subscribeOn(Schedulers.boundedElastic());
+        }).subscribeOn(Schedulers.boundedElastic()).timeout(timeout);
     }
 
-    private void emitRemoteEvent(
+    private boolean emitRemoteEvent(
             DoctorAssistantTaskRequest request,
             String eventName,
             StringBuilder dataBuffer,
             reactor.core.publisher.FluxSink<StreamEvent> sink) {
         if (sink == null || sink.isCancelled() || dataBuffer == null || dataBuffer.length() == 0) {
-            return;
+            return false;
         }
         try {
             JsonNode root = objectMapper.readTree(dataBuffer.toString());
@@ -189,101 +212,33 @@ public class HttpDoctorAssistantAgentGateway implements DoctorAssistantAgentGate
                 remoteType = eventName != null ? eventName.toUpperCase() : "UNKNOWN";
             }
             JsonNode dataNode = root.get("data");
-            for (StreamEvent event : mapRemoteEvent(request, remoteType, dataNode, root)) {
+            for (StreamEvent event : mapRemoteEvent(request, remoteType, dataNode)) {
                 if (event != null && !sink.isCancelled()) {
                     sink.next(event);
                 }
             }
+            return "TASK_RESULT".equals(remoteType);
         } catch (Exception e) {
-            log.warn("解析 doctor-assistant-agent SSE 事件失败 - eventName: {}, payload: {}",
-                    eventName, dataBuffer, e);
+            throw new IllegalStateException("医生助手事件格式无效", e);
         }
     }
 
     private List<StreamEvent> mapRemoteEvent(
             DoctorAssistantTaskRequest request,
             String remoteType,
-            JsonNode dataNode,
-            JsonNode root) {
-        List<StreamEvent> events = new ArrayList<>();
-        Map<String, Object> details = toMap(dataNode);
-        if (!details.isEmpty()) {
-            details.put("rawType", remoteType);
-        }
-        switch (remoteType) {
-            case "SUBAGENT_STARTED" -> events.add(StreamEvent.status(
-                    "agent",
-                    subAgentStartedStatus(dataNode),
-                    details));
-            case "SUBAGENT_FINISHED" -> events.add(StreamEvent.status(
-                    "agent",
-                    subAgentFinishedStatus(dataNode),
-                    details));
-            case "THINKING_DELTA" -> events.add(StreamEvent.status(
-                    "thinking",
-                    textValue(dataNode, "Agent 正在推理中"),
-                    details));
-            case "THOUGHT" -> events.add(StreamEvent.status(
-                    "thought",
-                    textValue(dataNode, "Agent 已产出本轮思考"),
-                    details));
-            case "ACTION" -> events.add(StreamEvent.status(
-                    "tool",
-                    actionStatus(dataNode),
-                    details));
-            case "OBSERVATION" -> events.add(StreamEvent.status(
-                    "observation",
-                    textValue(dataNode, "工具返回了新的观察结果"),
-                    details));
-            case "CONTEXT_UPDATED" -> events.add(StreamEvent.status(
-                    "context",
-                    contextStatus(dataNode),
-                    details));
-            case "PENDING_APPROVAL" -> events.add(StreamEvent.status(
-                    "approval",
-                    "需要人工审批后才能继续执行",
-                    details));
-            case "FINAL_ANSWER" -> events.add(StreamEvent.status(
-                    "final_answer",
-                    "Agent 已生成结构化结论，正在整理患者回复",
-                    details));
-            case "DONE" -> events.add(StreamEvent.status(
-                    "done",
-                    "Agent 执行完成，正在回传结果",
-                    details));
-            case "ERROR" -> events.add(StreamEvent.status(
-                    "error",
-                    errorStatus(dataNode),
-                    details));
-            case "TASK_RESULT" -> events.addAll(taskResultEvents(request, dataNode));
-            default -> events.add(StreamEvent.status(
-                    "agent",
-                    "收到下游事件: " + remoteType,
-                    details));
-        }
-        if (!events.isEmpty() && root.path("sessionId").isTextual()) {
-            for (StreamEvent event : events) {
-                if (event.getDetails() == null) {
-                    event.setDetails(new LinkedHashMap<>());
-                }
-                event.getDetails().putIfAbsent("agentSessionId", root.path("sessionId").asText());
-            }
-        }
-        return events;
+            JsonNode dataNode) {
+        return switch (remoteType) {
+            case "SUBAGENT_STARTED" -> List.of(StreamEvent.status("agent", "正在分析你的问题", null));
+            case "FINAL_ANSWER" -> List.of(StreamEvent.status("agent", "正在整理回复", null));
+            case "TASK_RESULT" -> taskResultEvents(request, dataNode);
+            default -> List.of();
+        };
     }
 
     private List<StreamEvent> taskResultEvents(DoctorAssistantTaskRequest request, JsonNode dataNode) {
         List<StreamEvent> events = new ArrayList<>();
         DoctorAssistantTaskResponse response = objectMapper.convertValue(dataNode, DoctorAssistantTaskResponse.class);
-        Map<String, Object> details = new LinkedHashMap<>();
-        details.put("rawType", "TASK_RESULT");
-        details.put("taskStatus", response.getStatus() != null ? response.getStatus().name() : "UNKNOWN");
-        details.put("executionPath", response.getExecutionPath());
-        details.put("needsHumanReview", response.getNeedsHumanReview());
-        details.put("agentSessionId", response.getAgentSessionId());
-        details.put("fallbackReason", response.getFallbackReason());
-        details.put("patientVisibleEvidence", response.getPatientVisibleEvidence());
-        StreamEvent resultEvent = StreamEvent.status("result", "Agent 结果已回传患者对话链路", details);
+        StreamEvent resultEvent = StreamEvent.status("result", "分析已结束", null);
         resultEvent.setEvaluationTaskResponse(response);
         events.add(resultEvent);
         if (response.getPatientVisibleEvidence() != null && !response.getPatientVisibleEvidence().isEmpty()) {
@@ -294,82 +249,13 @@ public class HttpDoctorAssistantAgentGateway implements DoctorAssistantAgentGate
         if (response.getPatientSafeReply() != null && !response.getPatientSafeReply().isBlank()) {
             events.add(StreamEvent.content(response.getPatientSafeReply()));
             events.add(StreamEvent.done(
-                    response.getConversationId() != null ? response.getConversationId() : request.getConversationId(),
+                    request.getConversationId(),
                     null));
-        } else if (response.getErrorMessage() != null && !response.getErrorMessage().isBlank()) {
-            events.add(StreamEvent.error(response.getErrorMessage(), 3002));
+
         } else {
-            events.add(StreamEvent.error("doctor-assistant-agent 未返回患者可见回复", 3002));
+            events.add(StreamEvent.error("本轮分析未能完成，请稍后再试。", 3002));
         }
         return events;
     }
 
-    private Map<String, Object> toMap(JsonNode dataNode) {
-        if (dataNode == null || dataNode.isNull()) {
-            return new LinkedHashMap<>();
-        }
-        if (dataNode.isObject()) {
-            return objectMapper.convertValue(dataNode, new TypeReference<LinkedHashMap<String, Object>>() {
-            });
-        }
-        Map<String, Object> details = new LinkedHashMap<>();
-        if (dataNode.isArray()) {
-            details.put("items", objectMapper.convertValue(dataNode, new TypeReference<List<Object>>() {
-            }));
-            return details;
-        }
-        details.put("value", dataNode.isTextual() ? dataNode.asText() : dataNode.toString());
-        return details;
-    }
-
-    private String subAgentStartedStatus(JsonNode dataNode) {
-        String name = dataNode != null ? dataNode.path("name").asText(null) : null;
-        String responsibility = dataNode != null ? dataNode.path("responsibility").asText(null) : null;
-        if (name != null && responsibility != null && !responsibility.isBlank()) {
-            return "当前由 " + name + " 处理: " + responsibility;
-        }
-        if (name != null) {
-            return "当前由 " + name + " 开始处理";
-        }
-        return "已切换到新的子 Agent";
-    }
-
-    private String subAgentFinishedStatus(JsonNode dataNode) {
-        String name = dataNode != null ? dataNode.path("name").asText(null) : null;
-        return name != null ? name + " 已完成当前阶段" : "子 Agent 已完成当前阶段";
-    }
-
-    private String actionStatus(JsonNode dataNode) {
-        String toolName = dataNode != null ? dataNode.path("toolName").asText(null) : null;
-        if (toolName != null && !toolName.isBlank()) {
-            return "正在调用工具: " + toolName;
-        }
-        return "Agent 正在调用工具";
-    }
-
-    private String contextStatus(JsonNode dataNode) {
-        String reason = dataNode != null ? dataNode.path("reason").asText(null) : null;
-        return reason != null && !reason.isBlank() ? "上下文已更新: " + reason : "上下文已更新";
-    }
-
-    private String errorStatus(JsonNode dataNode) {
-        if (dataNode == null || dataNode.isNull()) {
-            return "Agent 执行出现错误";
-        }
-        if (dataNode.isTextual()) {
-            return dataNode.asText();
-        }
-        String message = dataNode.path("message").asText(null);
-        return message != null && !message.isBlank() ? message : "Agent 执行出现错误";
-    }
-
-    private String textValue(JsonNode dataNode, String fallback) {
-        if (dataNode == null || dataNode.isNull()) {
-            return fallback;
-        }
-        if (dataNode.isTextual()) {
-            return dataNode.asText();
-        }
-        return dataNode.toString();
-    }
 }

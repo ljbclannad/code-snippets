@@ -259,14 +259,14 @@ public class DeepSeekClient {
                 log.error("DeepSeek API streaming failed after {}ms for customer: {}",
                         duration, request.getCustomerId(), e);
                 return Flux.just(StreamEvent.error(
-                        "AI 服务调用失败: " + e.getMessage(),
+                        "AI 服务暂时不可用，请稍后再试。",
                         3001
                 ));
             }
         }).onErrorResume(e -> {
             log.error("DeepSeek API streaming error", e);
             return Flux.just(StreamEvent.error(
-                    "AI 服务调用异常: " + e.getMessage(),
+                    "AI 服务暂时不可用，请稍后再试。",
                     3001
             ));
         });
@@ -335,14 +335,14 @@ public class DeepSeekClient {
                 log.error("DeepSeek API streaming failed after {}ms for customer: {}",
                         duration, request.getCustomerId(), e);
                 return Flux.just(StreamEvent.error(
-                        "AI 服务调用失败: " + e.getMessage(),
+                        "AI 服务暂时不可用，请稍后再试。",
                         3001
                 ));
             }
         }).onErrorResume(e -> {
             log.error("DeepSeek API streaming error", e);
             return Flux.just(StreamEvent.error(
-                    "AI 服务调用异常: " + e.getMessage(),
+                    "AI 服务暂时不可用，请稍后再试。",
                     3001
             ));
         });

@@ -39,11 +39,23 @@ class HttpDoctorAssistantAgentGatewayTest {
     }
 
     @Test
+    void patientStreamNeverSerializesInternalStagesOrErrors() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        var gateway = new HttpDoctorAssistantAgentGateway(RestClient.create(), mapper, true, "http://localhost", 5000, "test-token");
+        var root = mapper.readTree("{\"sessionId\":\"internal-secret\",\"data\":{\"message\":\"internal-secret\"}}");
+        var request = DoctorAssistantTaskRequest.builder().conversationId("c1").build();
+        for (String stage : List.of("THINKING_DELTA", "THOUGHT", "ACTION", "OBSERVATION", "ERROR", "FUTURE_STAGE")) {
+            List<StreamEvent> events = ReflectionTestUtils.invokeMethod(gateway, "mapRemoteEvent", request, stage, root.get("data"));
+            assertTrue(!mapper.writeValueAsString(events).contains("internal-secret"), stage);
+        }
+    }
+
+    @Test
     void shouldKeepRunAssociationInStreamResultWithoutInternalPayload() throws Exception {
         ObjectMapper mapper = new ObjectMapper();
         HttpDoctorAssistantAgentGateway gateway = new HttpDoctorAssistantAgentGateway(
                 RestClient.builder().baseUrl("http://localhost:65535").build(), mapper,
-                true, "http://localhost:65535", 5000);
+                true, "http://localhost:65535", 5000, "test-token");
         var result = mapper.readTree("""
                 {"status":"SUCCESS","patientSafeReply":"安全回复",
                  "traceContext":{"runId":"run-123","correlationId":"corr-123"},
@@ -94,7 +106,7 @@ class HttpDoctorAssistantAgentGatewayTest {
                 new ObjectMapper(),
                 true,
                 "http://localhost:" + server.getAddress().getPort(),
-                5000);
+                5000, "test-token");
 
         DoctorAssistantTaskResponse response = gateway.analyzePatientTask(DoctorAssistantTaskRequest.builder()
                 .taskType(TaskType.PATIENT_FOLLOW_UP_ANALYSIS)
@@ -110,13 +122,50 @@ class HttpDoctorAssistantAgentGatewayTest {
     }
 
     @Test
+    void realRemoteStreamStopsAtFirstFinalResultAndRejectsTruncatedInput() throws Exception {
+        var wire = new java.util.concurrent.atomic.AtomicReference<>("""
+                data: {"type":"THOUGHT","data":"internal-secret"}
+
+                data: {"type":"TASK_RESULT","data":{"status":"SUCCESS","patientSafeReply":"安全回复"}}
+
+                data: {"type":"TASK_RESULT","data":{"status":"SUCCESS","patientSafeReply":"重复回复"}}
+
+                """);
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/api/patient-tasks/analyze/stream", exchange -> {
+            try (exchange) {
+                if (!"test-token".equals(exchange.getRequestHeaders().getFirst("X-Follow-Up-Token"))) {
+                    exchange.sendResponseHeaders(403, -1);
+                    return;
+                }
+                byte[] body = wire.get().getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().add("Content-Type", "text/event-stream");
+                exchange.sendResponseHeaders(200, body.length);
+                exchange.getResponseBody().write(body);
+            }
+        });
+        server.start();
+        var mapper = new ObjectMapper();
+        var gateway = new HttpDoctorAssistantAgentGateway(RestClient.create(), mapper, true,
+                "http://127.0.0.1:" + server.getAddress().getPort(), 5000, "test-token");
+        var request = DoctorAssistantTaskRequest.builder().conversationId("c1").build();
+        var events = gateway.analyzePatientTaskStream(request).collectList().block();
+        assertEquals(List.of(StreamEvent.EventType.STATUS, StreamEvent.EventType.CONTENT, StreamEvent.EventType.DONE),
+                events.stream().map(StreamEvent::getType).toList());
+        assertEquals("安全回复", events.get(1).getContent());
+        assertTrue(!mapper.writeValueAsString(events).contains("internal-secret"));
+        wire.set("data: {\"type\":\"DONE\"}\n\n");
+        assertThrows(AiServiceException.class, () -> gateway.analyzePatientTaskStream(request).collectList().block());
+    }
+
+    @Test
     void shouldThrowWhenGatewayDisabled() {
         HttpDoctorAssistantAgentGateway gateway = new HttpDoctorAssistantAgentGateway(
                 RestClient.builder().baseUrl("http://localhost:65535").build(),
                 new ObjectMapper(),
                 false,
                 "http://localhost:65535",
-                5000);
+                5000, "test-token");
 
         AiServiceException exception = assertThrows(AiServiceException.class,
                 () -> gateway.analyzePatientTask(DoctorAssistantTaskRequest.builder().build()));
