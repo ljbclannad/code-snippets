@@ -22,7 +22,7 @@ import lombok.extern.slf4j.Slf4j;
 @RequiredArgsConstructor
 public class ChatRequestIdempotencyService {
 
-    private static final String RESPONSE_KEY_PREFIX = "ai:chat:idempotency:response:";
+    private static final String RESPONSE_KEY_PREFIX = "ai:chat:idempotency:v2:";
 
     private final RedisTemplate<String, String> redisTemplate;
     private final ObjectMapper objectMapper;
@@ -143,6 +143,6 @@ public class ChatRequestIdempotencyService {
     }
 
     private String buildCacheKey(String conversationId, String requestId) {
-        return RESPONSE_KEY_PREFIX + conversationId + ":" + requestId;
+        return RESPONSE_KEY_PREFIX + conversationId.length() + ":" + conversationId + ":" + requestId;
     }
 }

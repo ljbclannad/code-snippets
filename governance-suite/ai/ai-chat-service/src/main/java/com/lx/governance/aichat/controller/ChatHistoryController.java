@@ -3,6 +3,8 @@ package com.lx.governance.aichat.controller;
 import java.util.List;
 
 import org.springframework.http.ResponseEntity;
+import jakarta.servlet.http.HttpServletRequest;
+import com.lx.governance.aichat.service.ChatConversationAccess;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -26,14 +28,16 @@ public class ChatHistoryController {
     public ResponseEntity<List<ConversationSummaryDTO>> listConversations(
             @RequestParam String customerId,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam(defaultValue = "20") int size, HttpServletRequest caller) {
+        customerId = ChatConversationAccess.requirePatient(caller, customerId);
         return ResponseEntity.ok(chatHistoryService.listConversations(customerId, page, size));
     }
 
     @GetMapping("/{conversationId}/messages")
     public ResponseEntity<ConversationHistoryResponseDTO> getConversationHistory(
             @RequestParam String customerId,
-            @PathVariable String conversationId) {
+            @PathVariable String conversationId, HttpServletRequest caller) {
+        customerId = ChatConversationAccess.requirePatient(caller, customerId);
         return ResponseEntity.ok(chatHistoryService.getConversationHistory(customerId, conversationId));
     }
 }

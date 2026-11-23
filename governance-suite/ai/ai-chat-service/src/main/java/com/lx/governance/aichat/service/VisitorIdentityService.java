@@ -22,24 +22,12 @@ public class VisitorIdentityService {
             return request.getCustomerId();
         }
 
-        String seed = request.getConversationId();
-        if (seed == null || seed.isBlank()) {
-            seed = UUID.randomUUID().toString();
-        }
-        String visitorId = VISITOR_PREFIX + sanitizeSeed(seed);
+        String visitorId = VISITOR_PREFIX + UUID.randomUUID();
         request.setCustomerId(visitorId);
         return visitorId;
     }
 
     public boolean isVisitor(String customerId) {
         return customerId != null && customerId.startsWith(VISITOR_PREFIX);
-    }
-
-    private String sanitizeSeed(String seed) {
-        String normalized = seed.replaceAll("[^a-zA-Z0-9_-]", "");
-        if (normalized.isBlank()) {
-            return UUID.randomUUID().toString().replace("-", "");
-        }
-        return normalized;
     }
 }

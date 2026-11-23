@@ -34,8 +34,8 @@ public class ChatHistorySearchService {
         log.info("搜索对话历史 - customerId: {}, keyword: {}", customerId, keyword);
 
         PageRequest pageRequest = PageRequest.of(page, size);
-        return searchRepository.findByCustomerIdAndUserMessageContainingOrAiResponseContaining(
-                customerId, keyword, keyword, pageRequest);
+        return searchRepository.findByCustomerIdAndUserMessageContainingOrCustomerIdAndAiResponseContaining(
+                customerId, keyword, customerId, keyword, pageRequest);
     }
 
     /**
@@ -59,6 +59,7 @@ public class ChatHistorySearchService {
 
             return searchHits.stream()
                     .map(SearchHit::getContent)
+                    .filter(item -> customerId.equals(item.getCustomerId()))
                     .collect(Collectors.toList());
 
         } catch (Exception e) {

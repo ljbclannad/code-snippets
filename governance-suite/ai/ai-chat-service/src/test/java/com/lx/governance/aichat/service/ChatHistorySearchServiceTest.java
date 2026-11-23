@@ -93,8 +93,8 @@ class ChatHistorySearchServiceTest {
         List<ChatHistoryDocument> documents = List.of(testDocument);
         Page<ChatHistoryDocument> pageResult = new PageImpl<>(documents);
 
-        when(searchRepository.findByCustomerIdAndUserMessageContainingOrAiResponseContaining(
-                eq(customerId), eq(keyword), eq(keyword), any(PageRequest.class)))
+        when(searchRepository.findByCustomerIdAndUserMessageContainingOrCustomerIdAndAiResponseContaining(
+                eq(customerId), eq(keyword), eq(customerId), eq(keyword), any(PageRequest.class)))
                 .thenReturn(pageResult);
 
         // When
@@ -107,8 +107,8 @@ class ChatHistorySearchServiceTest {
         assertThat(result.getContent().get(0).getCustomerId()).isEqualTo(customerId);
 
         verify(searchRepository, times(1))
-                .findByCustomerIdAndUserMessageContainingOrAiResponseContaining(
-                        eq(customerId), eq(keyword), eq(keyword), any(PageRequest.class));
+                .findByCustomerIdAndUserMessageContainingOrCustomerIdAndAiResponseContaining(
+                        eq(customerId), eq(keyword), eq(customerId), eq(keyword), any(PageRequest.class));
     }
 
     @Test

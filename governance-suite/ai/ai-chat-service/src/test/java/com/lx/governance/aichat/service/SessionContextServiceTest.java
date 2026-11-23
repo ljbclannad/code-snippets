@@ -74,7 +74,8 @@ class SessionContextServiceTest {
         assertEquals(customerId, result.getCustomerId());
         assertEquals("血糖管理", result.getCurrentTopic());
 
-        verify(valueOperations, times(1)).get(anyString());
+        verify(valueOperations).get("ai:session:owned-context:" + conversationId);
+        verify(valueOperations).get("ai:session:context:" + conversationId);
         verify(intentAnalyzer, times(1)).analyzeIntentWithTimeout(anyString(), anyList(), anyLong());
         verify(valueOperations, times(1)).set(anyString(), anyString(), anyLong(), any(TimeUnit.class));
     }

@@ -124,7 +124,7 @@ class AiChatFlowIntegrationTest {
         assertNotNull(context);
 
         // 验证TTL
-        String key = "ai:session:context:" + conversationId;
+        String key = "ai:session:owned-context:" + conversationId;
         Long ttl = redisTemplate.getExpire(key);
         assertNotNull(ttl);
         assertTrue(ttl > 0 && ttl <= 1800); // 30分钟 = 1800秒
@@ -135,7 +135,7 @@ class AiChatFlowIntegrationTest {
 
     private void cleanupTestData(String conversationId, String customerId) {
         if (redisTemplate != null) {
-            redisTemplate.delete("ai:session:context:" + conversationId);
+            redisTemplate.delete("ai:session:owned-context:" + conversationId);
             redisTemplate.delete("ai:profile:" + customerId);
         }
     }

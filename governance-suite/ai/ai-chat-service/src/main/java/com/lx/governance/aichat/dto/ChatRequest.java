@@ -18,6 +18,10 @@ public class ChatRequest {
 
     private String customerId;
 
+    /** 仅由入口根据登录患者与请求主体的一致性写入。 */
+    @JsonIgnore
+    private boolean verifiedPatient;
+
     private String userId;
 
     private String tenantId;

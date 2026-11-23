@@ -10,6 +10,8 @@ import java.util.concurrent.TimeUnit;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.http.HttpStatus;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lx.governance.aichat.dto.DoctorAssistantTaskResponse;
@@ -31,7 +33,7 @@ public class SessionContextService {
     private static final String DEFAULT_PHASE = "consulting";
     private static final String DEFAULT_INTENT = "general_health_consultation";
     private static final String DEFAULT_COMPLEXITY = "simple";
-    private static final String CONTEXT_KEY_PREFIX = "ai:session:context:";
+    private static final String CONTEXT_KEY_PREFIX = "ai:session:owned-context:";
     private static final long CONTEXT_TTL_MINUTES = 30;
     private static final int SIMPLE_WINDOW_SIZE = 3;
     private static final int COMPLEX_WINDOW_SIZE = 5;
@@ -70,6 +72,16 @@ public class SessionContextService {
         try {
             SessionContext context = getFromRedis(key);
 
+            if (context == null) {
+                SessionContext legacy = getFromRedis("ai:session:context:" + conversationId);
+                if (legacy != null && customerId != null && customerId.equals(legacy.getCustomerId())) {
+                    context = legacy;
+                    saveToRedis(key, context);
+                }
+            }
+            if (context != null && (customerId == null || !customerId.equals(context.getCustomerId()))) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "会话归属不匹配");
+            }
             if (context == null) {
                 // 首次创建：调用DeepSeek分析意图
                 context = intentAnalyzer.analyzeIntentWithTimeout(
@@ -123,6 +135,8 @@ public class SessionContextService {
 
             return context;
 
+        } catch (ResponseStatusException ex) {
+            throw ex;
         } catch (Exception e) {
             log.error("获取会话上下文失败: conversationId={}", conversationId, e);
             return createDefaultContext(conversationId, customerId, groupId);
@@ -177,6 +191,9 @@ public class SessionContextService {
             String groupId,
             String currentMessage,
             Throwable t) {
+        if (t instanceof ResponseStatusException ex) {
+            throw ex;
+        }
         log.warn("会话上下文服务降级: conversationId={}", conversationId);
         return createDefaultContext(conversationId, customerId, groupId);
     }
@@ -188,6 +205,9 @@ public class SessionContextService {
             String requestId,
             Long messageTimestamp,
             Throwable t) {
+        if (t instanceof ResponseStatusException ex) {
+            throw ex;
+        }
         log.warn("会话上下文服务降级: conversationId={}, requestId={}", conversationId, requestId);
         return createDefaultContext(conversationId, customerId, groupId);
     }

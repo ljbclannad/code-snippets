@@ -32,6 +32,7 @@ public class ChatHistoryService {
 
         List<AiChatHistory> historyRows = chatHistoryMapper.selectList(new LambdaQueryWrapper<AiChatHistory>()
                 .eq(AiChatHistory::getCustomerId, customerId)
+                .apply("BINARY customer_id = BINARY {0}", customerId)
                 .eq(AiChatHistory::getIsDeleted, 0)
                 .isNotNull(AiChatHistory::getConversationId)
                 .orderByDesc(AiChatHistory::getCreateTime)
@@ -75,7 +76,9 @@ public class ChatHistoryService {
 
         List<AiChatHistory> historyRows = chatHistoryMapper.selectList(new LambdaQueryWrapper<AiChatHistory>()
                 .eq(AiChatHistory::getCustomerId, customerId)
+                .apply("BINARY customer_id = BINARY {0}", customerId)
                 .eq(AiChatHistory::getConversationId, conversationId)
+                .apply("BINARY conversation_id = BINARY {0}", conversationId)
                 .eq(AiChatHistory::getIsDeleted, 0)
                 .orderByAsc(AiChatHistory::getCreateTime)
                 .orderByAsc(AiChatHistory::getId));

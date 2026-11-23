@@ -6,6 +6,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
+import jakarta.servlet.http.HttpServletRequest;
+import com.lx.governance.aichat.service.ChatConversationAccess;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -38,7 +40,8 @@ public class ChatSearchController {
             @RequestParam String customerId,
             @RequestParam String keyword,
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "10") int size) {
+            @RequestParam(defaultValue = "10") int size, HttpServletRequest caller) {
+        customerId = ChatConversationAccess.requirePatient(caller, customerId);
 
         if (!searchEnabled) {
             return ResponseEntity.ok()
@@ -85,7 +88,8 @@ public class ChatSearchController {
     public ResponseEntity<?> recommendSimilarConversations(
             @RequestParam String customerId,
             @RequestParam String message,
-            @RequestParam(defaultValue = "3") int size) {
+            @RequestParam(defaultValue = "3") int size, HttpServletRequest caller) {
+        customerId = ChatConversationAccess.requirePatient(caller, customerId);
 
         if (!searchEnabled) {
             return ResponseEntity.ok()

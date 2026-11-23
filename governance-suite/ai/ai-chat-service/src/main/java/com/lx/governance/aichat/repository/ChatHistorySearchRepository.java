@@ -17,8 +17,8 @@ public interface ChatHistorySearchRepository extends ElasticsearchRepository<Cha
     /**
      * 根据客户ID和关键词搜索（用户消息或AI回复中包含关键词）
      */
-    Page<ChatHistoryDocument> findByCustomerIdAndUserMessageContainingOrAiResponseContaining(
-            String customerId, String keyword1, String keyword2, Pageable pageable);
+    Page<ChatHistoryDocument> findByCustomerIdAndUserMessageContainingOrCustomerIdAndAiResponseContaining(
+            String customerId, String keyword1, String responseCustomerId, String keyword2, Pageable pageable);
 
     /**
      * 根据客户ID查询最近的对话
