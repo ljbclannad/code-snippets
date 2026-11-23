@@ -37,3 +37,6 @@ docs/
 
 # Claude Code worktrees
 .claude/worktrees/
+
+# 患者聊天路由测试使用的固定合成样本
+!/ai/ai-chat-service/src/test/resources/evaluation/patient-chat-v2.json
