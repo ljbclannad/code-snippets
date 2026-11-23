@@ -5,6 +5,8 @@ import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.ExampleObject;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import com.health.agent.config.FollowUpReminderProperties;
+import com.health.agent.dto.patient.DoctorAssistantTaskStatus;
 import com.health.agent.exception.AgentException;
 import com.health.agent.metrics.AgentMetrics;
 import com.health.agent.model.AgentStreamEventType;
@@ -14,6 +16,7 @@ import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -41,16 +44,20 @@ public class PatientTaskController {
     private final ExecutorService streamExecutor;
     private final AgentAccessGuard accessGuard;
     private final AgentMetrics agentMetrics;
+    private final FollowUpReminderProperties assignments;
+    private final PatientTaskServiceAuth auth;
 
     public PatientTaskController(
             PatientTaskAgentService patientTaskAgentService,
             @Qualifier("patientTaskStreamExecutor") ExecutorService streamExecutor,
             AgentAccessGuard accessGuard,
-            AgentMetrics agentMetrics) {
+            AgentMetrics agentMetrics, FollowUpReminderProperties assignments, PatientTaskServiceAuth auth) {
         this.patientTaskAgentService = patientTaskAgentService;
         this.streamExecutor = streamExecutor;
         this.accessGuard = accessGuard;
         this.agentMetrics = agentMetrics;
+        this.assignments = assignments;
+        this.auth = auth;
     }
 
     @Operation(
@@ -67,7 +74,6 @@ public class PatientTaskController {
                           "taskType": "PATIENT_FOLLOW_UP_ANALYSIS",
                           "goal": "患者反馈最近一周晚餐控制后体重仍无明显下降，请判断是否进入平台期并给出下一步随访建议",
                           "customerId": "C10001",
-                          "doctorId": "D20001",
                           "source": "PATIENT_DIALOG_AI_CHAT",
                           "patientMessage": "医生，我这周晚上基本没吃主食，但体重还是没怎么掉，是不是进入平台期了？",
                           "conversationId": "conv_20260616_001",
@@ -113,7 +119,12 @@ public class PatientTaskController {
         )
     )
     @PostMapping("/analyze")
-    public ResponseEntity<DoctorAssistantTaskResponse> analyze(@Valid @RequestBody DoctorAssistantTaskRequest request) {
+    public ResponseEntity<DoctorAssistantTaskResponse> analyze(@Valid @RequestBody DoctorAssistantTaskRequest request,
+            @RequestHeader(value = "X-Follow-Up-Token", defaultValue = "") String token) {
+        auth.require(token);
+        if (!bindDoctor(request)) {
+            return ResponseEntity.ok(unassigned(request));
+        }
         // Controller 只负责请求接入、参数校验后的日志留痕，以及把分析流程委托给领域服务。
         log.info("收到患者来源任务分析请求 - taskType: {}, conversationId: {}, correlationId: {}",
                 request.getTaskType(), request.getConversationId(), request.getCorrelationId());
@@ -139,11 +150,17 @@ public class PatientTaskController {
     }
 
     @PostMapping(value = "/analyze/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter analyzeStream(@Valid @RequestBody DoctorAssistantTaskRequest request) {
+    public SseEmitter analyzeStream(@Valid @RequestBody DoctorAssistantTaskRequest request,
+            @RequestHeader(value = "X-Follow-Up-Token", defaultValue = "") String token) {
+        auth.require(token);
         log.info("收到患者来源任务流式分析请求 - taskType: {}, conversationId: {}, correlationId: {}",
                 request.getTaskType(), request.getConversationId(), request.getCorrelationId());
 
         SseEmitter emitter = new SseEmitter(120000L);
+        if (!bindDoctor(request)) {
+            emitFallbackAndComplete(emitter, unassigned(request));
+            return emitter;
+        }
         AgentAccessGuard.AccessPermit permit;
         try {
             permit = accessGuard.acquirePatientTask(request.getCustomerId());
@@ -187,6 +204,26 @@ public class PatientTaskController {
             throw new AgentException("PATIENT_TASK_STREAM_EXECUTOR_REJECTED: 患者任务流式线程池已饱和", e);
         }
         return emitter;
+    }
+
+    private boolean bindDoctor(DoctorAssistantTaskRequest request) {
+        String doctor = assignments.assignedDoctor(request.getCustomerId());
+        if (doctor == null || doctor.isBlank()) {
+            return false;
+        }
+        request.setDoctorId(doctor);
+        if (request.getPlatformContext() != null) {
+            request.setPlatformContext(request.getPlatformContext().toBuilder().doctorId(doctor).build());
+        }
+        return true;
+    }
+
+    private DoctorAssistantTaskResponse unassigned(DoctorAssistantTaskRequest request) {
+        return DoctorAssistantTaskResponse.builder().status(DoctorAssistantTaskStatus.SKIPPED)
+                .taskType(request.getTaskType()).conversationId(request.getConversationId())
+                .correlationId(request.getCorrelationId()).fallbackReason("DOCTOR_NOT_ASSIGNED")
+                .patientSafeReply("当前尚未分配责任医生，本轮未创建复核任务，请直接联系医生。")
+                .needsHumanReview(false).build();
     }
 
     private boolean allowDirectChatFallback(DoctorAssistantTaskRequest request) {

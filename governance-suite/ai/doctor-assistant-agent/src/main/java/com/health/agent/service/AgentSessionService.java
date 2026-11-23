@@ -37,8 +37,13 @@ public class AgentSessionService {
      * 创建会话
      */
     public AgentSession createSession(String customerId, String doctorId, String goal) {
+        return createSession(customerId, doctorId, goal, null);
+    }
+
+    public AgentSession createSession(String customerId, String doctorId, String goal, String conversationId) {
         AgentContext context = AgentContext.initialize(customerId, doctorId, goal);
         AgentSession session = AgentSession.builder()
+            .conversationId(conversationId)
             .customerId(customerId)
             .doctorId(doctorId)
             .goal(goal)

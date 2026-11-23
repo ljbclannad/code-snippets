@@ -218,7 +218,9 @@ public class ReActAgentEngine {
 
         agentMetrics.recordExecutionStart();
 
-        AgentSession session = sessionService.createSession(customerId, doctorId, goal);
+        AgentSession session = command != null && command.getConversationId() != null
+                ? sessionService.createSession(customerId, doctorId, goal, command.getConversationId())
+                : sessionService.createSession(customerId, doctorId, goal);
         String sessionId = String.valueOf(session.getId());
 
         List<Step> history = new ArrayList<>();

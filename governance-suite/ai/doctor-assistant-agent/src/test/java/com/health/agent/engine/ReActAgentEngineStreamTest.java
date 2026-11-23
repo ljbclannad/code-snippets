@@ -330,7 +330,7 @@ class ReActAgentEngineStreamTest {
     @Test
     void shouldConsumeParallelSelectionPlanAcrossLoopSteps() {
         AgentSession session = AgentSession.builder().id("1").build();
-        when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
+        when(sessionService.createSession(anyString(), anyString(), anyString(), anyString())).thenReturn(session);
         AtomicReference<AgentContext> finalContextRef = new AtomicReference<>();
         doAnswer(invocation -> {
             finalContextRef.set(invocation.getArgument(2));
@@ -457,7 +457,7 @@ class ReActAgentEngineStreamTest {
     @Test
     void shouldPreloadContextFromAgentExecutionCommand() {
         AgentSession session = AgentSession.builder().id("1").build();
-        when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
+        when(sessionService.createSession(anyString(), anyString(), anyString(), anyString())).thenReturn(session);
         when(toolRegistry.listToolDescriptors()).thenReturn(descriptorsOf(List.of(
                 Tool.builder()
                         .name("detect_weight_plateau")
@@ -567,7 +567,7 @@ class ReActAgentEngineStreamTest {
     @Test
     void shouldBuildPatientTaskSpecificFirstTurnPromptFromCommand() {
         AgentSession session = AgentSession.builder().id("1").build();
-        when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
+        when(sessionService.createSession(anyString(), anyString(), anyString(), anyString())).thenReturn(session);
         when(toolRegistry.listToolDescriptors()).thenReturn(descriptorsOf(List.of(
                 Tool.builder()
                         .name("detect_weight_plateau")

@@ -31,6 +31,9 @@ public class AgentSession {
      */
     private String customerId;
 
+    /** 患者侧会话关联，用于在后续轮次读取复核进度。 */
+    private String conversationId;
+
     /**
      * 医生ID
      */

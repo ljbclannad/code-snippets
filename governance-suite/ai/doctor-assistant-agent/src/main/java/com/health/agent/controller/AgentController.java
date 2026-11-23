@@ -8,6 +8,8 @@ import com.health.agent.model.AgentResult;
 import com.health.agent.model.AgentSession;
 import com.health.agent.model.PendingTask;
 import com.health.agent.service.AgentSessionService;
+import com.health.agent.service.HighRiskFollowUpService;
+import jakarta.servlet.http.HttpServletRequest;
 import com.health.agent.service.DoctorRunResumeService;
 import com.health.agent.service.PendingTaskService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -58,6 +60,9 @@ public class AgentController {
 
     @Autowired
     private DoctorRunResumeService doctorRunResumeService;
+
+    @Autowired
+    private HighRiskFollowUpService reminders;
 
     @Autowired
     private AgentMetrics agentMetrics;
@@ -252,7 +257,7 @@ public class AgentController {
         @ApiResponse(responseCode = "404", description = "会话不存在")
     })
     @GetMapping("/sessions/{sessionId}")
-    public ResponseEntity<AgentSession> getSession(
+    public ResponseEntity<AgentSession> getSession(HttpServletRequest caller,
         @Parameter(description = "会话 ID", required = true, example = "1234567890")
         @PathVariable String sessionId
     ) {
@@ -263,6 +268,9 @@ public class AgentController {
             return ResponseEntity.notFound().build();
         }
 
+        if (!canReadSession(session, caller)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
         return ResponseEntity.ok(session);
     }
 
@@ -274,7 +282,7 @@ public class AgentController {
         @ApiResponse(responseCode = "200", description = "查询成功")
     })
     @GetMapping("/sessions")
-    public ResponseEntity<List<AgentSession>> listSessions(
+    public ResponseEntity<List<AgentSession>> listSessions(HttpServletRequest caller,
         @Parameter(description = "医生 ID", required = true, example = "2001")
         @RequestParam String doctorId,
         @Parameter(description = "会话状态过滤（PAUSED/RUNNING/COMPLETED）", example = "PAUSED")
@@ -290,7 +298,7 @@ public class AgentController {
             sessions = sessionService.listPendingByDoctor(doctorId);
         }
 
-        return ResponseEntity.ok(sessions);
+        return ResponseEntity.ok(sessions.stream().filter(session -> canReadSession(session, caller)).toList());
     }
 
     @Operation(
@@ -301,7 +309,7 @@ public class AgentController {
         @ApiResponse(responseCode = "200", description = "查询成功")
     })
     @GetMapping("/sessions/customer/{customerId}")
-    public ResponseEntity<List<AgentSession>> listCustomerSessions(
+    public ResponseEntity<List<AgentSession>> listCustomerSessions(HttpServletRequest caller,
         @Parameter(description = "患者 ID", required = true, example = "1001")
         @PathVariable String customerId,
         @Parameter(description = "返回记录数量限制", example = "10")
@@ -310,7 +318,7 @@ public class AgentController {
         log.info("查询患者的会话历史: customerId={}, limit={}", customerId, limit);
 
         List<AgentSession> sessions = sessionService.listByCustomer(customerId, limit);
-        return ResponseEntity.ok(sessions);
+        return ResponseEntity.ok(sessions.stream().filter(session -> canReadSession(session, caller)).toList());
     }
 
     @Operation(
@@ -322,7 +330,7 @@ public class AgentController {
         @ApiResponse(responseCode = "404", description = "任务不存在")
     })
     @GetMapping("/pending-tasks/{taskId}")
-    public ResponseEntity<PendingTask> getTask(
+    public ResponseEntity<PendingTask> getTask(HttpServletRequest caller,
         @Parameter(description = "任务 ID", required = true, example = "101")
         @PathVariable Long taskId
     ) {
@@ -333,7 +341,29 @@ public class AgentController {
             return ResponseEntity.notFound().build();
         }
 
+        if (!canReadTask(task, caller)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
         return ResponseEntity.ok(task);
+    }
+
+    private boolean canReadSession(AgentSession session, HttpServletRequest caller) {
+        if (!HighRiskFollowUpService.TITLE.equals(session.getGoal()) || isAssignedDoctor(session.getDoctorId(), caller)) {
+            return true;
+        }
+        // 旧会话也可能使用相同的自然语言目标，以持久化任务类型确认是否属于本场景。
+        return taskService.listBySession(session.getId()).stream()
+                .noneMatch(task -> HighRiskFollowUpService.TOOL.equals(task.getToolName()));
+    }
+
+    private boolean isAssignedDoctor(String doctorId, HttpServletRequest caller) {
+        return caller.getUserPrincipal() != null && caller.isUserInRole("DOCTOR")
+                && caller.getUserPrincipal().getName().equals(doctorId);
+    }
+
+    private boolean canReadTask(PendingTask task, HttpServletRequest caller) {
+        return !HighRiskFollowUpService.TOOL.equals(task.getToolName())
+                || isAssignedDoctor(task.getDoctorId(), caller);
     }
 
     private void streamToEmitter(SseEmitter emitter, Runnable streamTask) {
@@ -362,14 +392,14 @@ public class AgentController {
         @ApiResponse(responseCode = "200", description = "查询成功")
     })
     @GetMapping("/pending-tasks")
-    public ResponseEntity<List<PendingTask>> listPendingTasks(
+    public ResponseEntity<List<PendingTask>> listPendingTasks(HttpServletRequest caller,
         @Parameter(description = "医生 ID", required = true, example = "2001")
         @RequestParam String doctorId
     ) {
         log.info("查询医生的待确认任务: doctorId={}", doctorId);
 
         List<PendingTask> tasks = taskService.listPendingByDoctor(doctorId);
-        return ResponseEntity.ok(tasks);
+        return ResponseEntity.ok(tasks.stream().filter(task -> canReadTask(task, caller)).toList());
     }
 
     @Operation(
@@ -380,14 +410,14 @@ public class AgentController {
         @ApiResponse(responseCode = "200", description = "查询成功")
     })
     @GetMapping("/sessions/{sessionId}/pending-tasks")
-    public ResponseEntity<List<PendingTask>> listSessionTasks(
+    public ResponseEntity<List<PendingTask>> listSessionTasks(HttpServletRequest caller,
         @Parameter(description = "会话 ID", required = true, example = "1234567890")
         @PathVariable String sessionId
     ) {
         log.info("查询会话的待确认任务: sessionId={}", sessionId);
 
         List<PendingTask> tasks = taskService.listBySession(sessionId);
-        return ResponseEntity.ok(tasks);
+        return ResponseEntity.ok(tasks.stream().filter(task -> canReadTask(task, caller)).toList());
     }
 
     @Operation(
@@ -421,12 +451,18 @@ public class AgentController {
         @ApiResponse(responseCode = "404", description = "任务不存在")
     })
     @PostMapping("/pending-tasks/{taskId}/approve")
-    public ResponseEntity<TaskApprovalResponse> approveTask(
+    public ResponseEntity<TaskApprovalResponse> approveTask(HttpServletRequest caller,
         @Parameter(description = "任务 ID", required = true, example = "101")
         @PathVariable Long taskId,
         @RequestBody TaskApprovalRequest request
     ) {
-        log.info("批准任务: taskId={}, comment={}", taskId, request.getReviewComment());
+        PendingTask task = taskService.getById(taskId);
+        if (task != null && HighRiskFollowUpService.TOOL.equals(task.getToolName())) {
+            String doctorId = FollowUpReminderController.identity(caller, "DOCTOR");
+            reminders.review(taskId, doctorId, true, request.getReviewComment());
+            return ResponseEntity.ok(TaskApprovalResponse.builder().success(true)
+                    .taskId(taskId).message("随访提醒已投递至患者站内收件箱").build());
+        }
 
         doctorRunResumeService.approveTask(taskId, request.getReviewComment());
         agentMetrics.recordApprovalDecision("approved", "pending_task");
@@ -469,12 +505,18 @@ public class AgentController {
         @ApiResponse(responseCode = "404", description = "任务不存在")
     })
     @PostMapping("/pending-tasks/{taskId}/reject")
-    public ResponseEntity<TaskApprovalResponse> rejectTask(
+    public ResponseEntity<TaskApprovalResponse> rejectTask(HttpServletRequest caller,
         @Parameter(description = "任务 ID", required = true, example = "101")
         @PathVariable Long taskId,
         @RequestBody TaskApprovalRequest request
     ) {
-        log.info("拒绝任务: taskId={}, comment={}", taskId, request.getReviewComment());
+        PendingTask task = taskService.getById(taskId);
+        if (task != null && HighRiskFollowUpService.TOOL.equals(task.getToolName())) {
+            String doctorId = FollowUpReminderController.identity(caller, "DOCTOR");
+            reminders.review(taskId, doctorId, false, request.getReviewComment());
+            return ResponseEntity.ok(TaskApprovalResponse.builder().success(true)
+                    .taskId(taskId).message("随访提醒已拒绝").build());
+        }
 
         doctorRunResumeService.rejectTask(taskId, request.getReviewComment());
         agentMetrics.recordApprovalDecision("rejected", "pending_task");

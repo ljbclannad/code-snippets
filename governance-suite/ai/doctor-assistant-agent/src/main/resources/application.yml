@@ -50,6 +50,9 @@ mybatis-plus:
 
 # Agent配置
 agent:
+  follow-up-reminder:
+    service-token: ${FOLLOW_UP_SERVICE_TOKEN:}
+    doctors: {} # 患者 ID 到责任医生 ID 的映射，普通 Agent 和高风险随访共用
   max-steps: 15
   session-timeout: 3600
   task-expire-hours: 24

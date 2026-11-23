@@ -83,7 +83,7 @@ class PatientTaskKnowledgeEvidenceFlowTest {
         agentAuditService = Mockito.mock(AgentAuditService.class);
         knowledgeBaseClient = Mockito.mock(KnowledgeBaseClient.class);
 
-        when(sessionService.createSession(anyString(), anyString(), anyString()))
+        when(sessionService.createSession(anyString(), anyString(), anyString(), anyString()))
                 .thenReturn(AgentSession.builder().id("1").build());
 
         HealthKnowledgeMapper healthKnowledgeMapper = Mockito.mock(HealthKnowledgeMapper.class);

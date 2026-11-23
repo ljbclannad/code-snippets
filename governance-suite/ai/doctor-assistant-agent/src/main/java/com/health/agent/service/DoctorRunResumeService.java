@@ -54,6 +54,9 @@ public class DoctorRunResumeService {
         if (!sessionId.equals(task.getAgentSessionId())) {
             throw new AgentException("任务不属于该会话");
         }
+        if (HighRiskFollowUpService.TOOL.equals(task.getToolName())) {
+            throw new AgentException("随访提醒在审批事务中完成处理，无需恢复模型执行");
+        }
         ApprovalDecisionType decisionType = toDecisionType(task.getStatus());
         if (decisionType == null) {
             throw new AgentException("任务尚未形成可恢复决策，当前状态: " + task.getStatus());

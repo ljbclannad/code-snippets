@@ -276,7 +276,7 @@ public class PatientTaskAgentService {
         // 这里创建的是“患者任务分析会话”审计壳，用于后续落 history/context；
         // 不是进入 ReAct 模型循环，也不会从这里开始 sub-agent 推理。
         AgentSession session = persistenceEnabled
-                ? sessionService.createSession(command.getCustomerId(), command.getDoctorId(), goal)
+                ? sessionService.createSession(command.getCustomerId(), command.getDoctorId(), goal, request.getConversationId())
                 : null;
         String agentSessionId = session != null ? String.valueOf(session.getId()) : "patient-agent-" + taskId;
         // 高风险判定来自安全服务，主要识别急症/处方风险信号，后续会影响回复降级和是否转人工。

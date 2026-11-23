@@ -41,7 +41,6 @@ public class DoctorAssistantTaskRequest {
     /**
      * 当前负责该患者任务的医生或工作台医生 ID。
      */
-    @NotBlank(message = "doctorId 不能为空")
     private String doctorId;
 
     /**
