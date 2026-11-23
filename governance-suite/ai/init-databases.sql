@@ -13,8 +13,8 @@
 -- =====================================================
 -- 1. governance - 用户画像、向量记忆、知识库共享
 -- =====================================================
-CREATE DATABASE IF NOT EXISTS \`governance\` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-USE \`governance\`;
+CREATE DATABASE IF NOT EXISTS `governance` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE `governance`;
 
 
 
@@ -233,10 +233,15 @@ CREATE TABLE `b_ai_chat_history` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='AI聊天历史表';
 
 
+CREATE TABLE IF NOT EXISTS ai_chat_conversation_owner (
+    conversation_id VARCHAR(128) COLLATE utf8mb4_bin NOT NULL PRIMARY KEY,
+    customer_id VARCHAR(64) COLLATE utf8mb4_bin NULL COMMENT '历史归属冲突时为空，拒绝访问'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE `t_ai_chat_history` (
   `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
   `customer_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '客户ID',
-  `conversation_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '会话ID',
+  `conversation_id` varchar(128) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '会话ID',
   `user_message` text COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '用户消息',
   `ai_response` text COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'AI回复',
   `prompt_tokens` int DEFAULT NULL COMMENT 'Prompt tokens',
@@ -372,8 +377,8 @@ CREATE TABLE `knowledge_document_parse_result` (
 -- =====================================================
 -- 2. doctor_assistant - 医生助手 Agent
 -- =====================================================
-
-
+CREATE DATABASE IF NOT EXISTS `doctor_assistant` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE `doctor_assistant`;
 
 CREATE TABLE `agent_execution_log` (
   `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键ID',
@@ -428,9 +433,23 @@ CREATE TABLE `agent_pending_task` (
   KEY `idx_created` (`created_at`)
 ) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Agent待确认任务表';
 
+-- 在 doctor_assistant 数据库执行。审批记录和站内投递共用本地事务。
+CREATE TABLE IF NOT EXISTS agent_follow_up_reminder (
+    customer_id VARCHAR(64) NOT NULL,
+    request_id VARCHAR(128) NOT NULL,
+    conversation_id VARCHAR(128) NOT NULL,
+    pending_task_id BIGINT UNIQUE,
+    body VARCHAR(255) NOT NULL,
+    delivered_at DATETIME(6),
+    PRIMARY KEY (customer_id, request_id),
+    INDEX idx_follow_up_inbox (customer_id, delivered_at, pending_task_id)
+) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
+
+
 
 CREATE TABLE `agent_session` (
   `id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '会话ID',
+  `conversation_id` varchar(128) DEFAULT NULL COMMENT '患者侧会话编号',
   `customer_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '客户ID',
   `doctor_id` varchar(64) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '医生ID',
   `goal` text COLLATE utf8mb4_unicode_ci NOT NULL COMMENT '目标',
@@ -445,6 +464,7 @@ CREATE TABLE `agent_session` (
   `completed_at` datetime DEFAULT NULL COMMENT '完成时间',
   `context_json` text COLLATE utf8mb4_unicode_ci COMMENT '上下文JSON',
   PRIMARY KEY (`id`),
+  KEY idx_review_conversation (customer_id, conversation_id),
   KEY `idx_customer` (`customer_id`),
   KEY `idx_doctor` (`doctor_id`),
   KEY `idx_status` (`status`),

@@ -12,6 +12,7 @@ USE doctor_assistant;
 -- =============================================
 CREATE TABLE agent_session (
     id VARCHAR(64) PRIMARY KEY COMMENT '会话ID',
+    conversation_id VARCHAR(128) COMMENT '患者侧会话编号',
     customer_id VARCHAR(64) NOT NULL COMMENT '患者ID',
     doctor_id VARCHAR(64) NOT NULL COMMENT '医生ID',
     goal TEXT NOT NULL COMMENT '任务目标',
@@ -25,6 +26,7 @@ CREATE TABLE agent_session (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     completed_at DATETIME COMMENT '完成时间',
+    INDEX idx_review_conversation (customer_id, conversation_id),
     INDEX idx_customer (customer_id),
     INDEX idx_doctor (doctor_id),
     INDEX idx_status (status),
@@ -53,6 +55,19 @@ CREATE TABLE agent_pending_task (
     INDEX idx_expire (expire_at),
     INDEX idx_created (created_at)
 ) COMMENT='Agent待确认任务表';
+
+-- 在 doctor_assistant 数据库执行。审批记录和站内投递共用本地事务。
+CREATE TABLE IF NOT EXISTS agent_follow_up_reminder (
+    customer_id VARCHAR(64) NOT NULL,
+    request_id VARCHAR(128) NOT NULL,
+    conversation_id VARCHAR(128) NOT NULL,
+    pending_task_id BIGINT UNIQUE,
+    body VARCHAR(255) NOT NULL,
+    delivered_at DATETIME(6),
+    PRIMARY KEY (customer_id, request_id),
+    INDEX idx_follow_up_inbox (customer_id, delivered_at, pending_task_id)
+) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
+
 
 -- =============================================
 -- 3. Agent 执行日志表
