@@ -20,6 +20,25 @@ ai/
 └── knowledge-base-service/  # 知识库服务 (8103)
 ```
 
+## 高风险随访提醒试点
+
+登录患者在普通或流式聊天中命中已有高风险规则后，可由责任医生复核并发送站内提醒。试点默认关闭。启用配置、医生审批、患者收件箱和验收命令见[医生助手的高风险随访提醒说明](doctor-assistant-agent/README.md#高风险随访提醒)。
+
+### 患者聊天入口与会话归属
+
+`POST /api/chat` 和 `POST /api/chat/stream` 使用同一套决策。画像追问适用于需要补全信息的普通对话，知识问答转人工也经过 Agent 放行与待复核检查。两个入口均遵守 `ai-chat.agent.auto-fallback-to-direct-chat`。患者 SSE 每帧为单个 JSON 事件，普通聊天继续流式输出文本。医生助手路径仅输出固定进度、患者安全回复和患者可见证据，完成时返回原聊天会话编号。客户端收到 `ERROR` 即可结束本轮。
+
+患者身份取自可信 Servlet principal 的 `PATIENT` 角色和全局唯一业务 ID。客户端可省略 `customerId`，显式传入时必须与登录身份一致。未登录并声明患者 ID 返回 401，冒用其他患者或会话返回 403。历史列表、消息、搜索、推荐同样校验患者身份。匿名聊天请省略 `customerId`，继续对话携带服务端签发的会话 Cookie 和上一轮的 `conversationId`。多实例部署需支持共享 HTTP 会话或会话亲和。匿名客户端丢失 Cookie 后需新建对话。
+
+已有数据库升级时，先停止旧聊天和医生助手入口写入，依次执行以下迁移，然后部署两个服务。归属回填取自聊天历史和医生端可追溯的任务，同一会话有多个主体时锁定该编号。旧版仅存在于 Redis 的上下文只可由原主体恢复。无法验证归属的旧匿名上下文请重新开始对话。
+
+1. 确认已运行[随访提醒建表迁移](doctor-assistant-agent/sql/migrations/2026-11-23-high-risk-follow-up.sql)。
+2. 执行[医生端会话关联迁移](doctor-assistant-agent/sql/migrations/2026-11-23-patient-conversation.sql)。
+3. 执行[聊天端会话归属迁移](ai-chat-service/sql/migrations/2026-11-23-conversation-owner.sql)。迁移账号需能读取两个库；运行时聊天服务仅读取本库的归属记录。
+
+查询复核进度时，在原会话发送“刚才那条医生看了吗？”或“随访提醒进度”。两个入口均读取当前患者在该会话的最近一条持久化复核任务，支持待处理、批准、拒绝、过期和查无记录。查询无需新建任务，也无需重用原来的 `requestId`。普通 Agent 分析和进度查询均要求两服务配置相同的 `FOLLOW_UP_SERVICE_TOKEN`，关闭高风险提醒试点后已有任务仍可查询。旧任务缺少可恢复的会话关联时，查询只能返回已关联的记录。
+
+
 ## 可重复评测系统
 
 `evaluation-service` 提供版本化样本集、录制结果导入、确定性规则评分、JSON/Markdown 报告及基线/候选对比。
