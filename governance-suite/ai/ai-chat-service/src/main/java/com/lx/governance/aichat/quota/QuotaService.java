@@ -7,6 +7,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -23,6 +24,7 @@ public class QuotaService {
     private final RedisTemplate<String, Object> redisTemplate;
     private final QuotaRepository quotaRepository;
     private final QuotaUsageRepository quotaUsageRepository;
+    private final TransactionTemplate transactionTemplate;
 
     private static final String QUOTA_CACHE_PREFIX = "quota:";
     private static final long CACHE_TTL_MINUTES = 5;
@@ -97,7 +99,7 @@ public class QuotaService {
      */
     @Transactional
     public void consumeQuota(String customerId, String conversationId, String messageId,
-                              int promptTokens, int completionTokens) {
+                             int promptTokens, int completionTokens) {
         if (!quotaEnabled) {
             log.debug("全局配额开关关闭，跳过消费 - customerId: {}", customerId);
             return;
@@ -141,44 +143,46 @@ public class QuotaService {
     /**
      * 创建默认配额
      */
-    @Transactional
     public UserQuota createDefaultQuota(String customerId) {
-        QuotaType quotaType = parseDefaultQuotaType();
-        UserQuota quota = UserQuota.builder()
-                .customerId(customerId)
-                .quotaType(quotaType)
-                .quotaLimit(defaultQuotaLimit)
-                .quotaUsed(0)
-                .resetTime(calculateNextResetTime(quotaType))
-                .createTime(LocalDateTime.now())
-                .updateTime(LocalDateTime.now())
-                .enabled(true)
-                .build();
+        return transactionTemplate.execute(status -> {
+            QuotaType quotaType = parseDefaultQuotaType();
+            UserQuota quota = UserQuota.builder()
+                    .customerId(customerId)
+                    .quotaType(quotaType)
+                    .quotaLimit(defaultQuotaLimit)
+                    .quotaUsed(0)
+                    .resetTime(calculateNextResetTime(quotaType))
+                    .createTime(LocalDateTime.now())
+                    .updateTime(LocalDateTime.now())
+                    .enabled(true)
+                    .build();
 
-        quotaRepository.save(quota);
-        log.info("创建默认配额 - customerId: {}, type: {}, limit: {}",
-                customerId, quota.getQuotaType(), quota.getQuotaLimit());
+            quotaRepository.save(quota);
+            log.info("创建默认配额 - customerId: {}, type: {}, limit: {}",
+                    customerId, quota.getQuotaType(), quota.getQuotaLimit());
 
-        return quota;
+            return quota;
+        });
     }
 
     /**
      * 重置配额
      */
-    @Transactional
     public UserQuota resetQuota(UserQuota quota) {
-        log.info("重置配额 - customerId: {}, oldUsed: {}", quota.getCustomerId(), quota.getQuotaUsed());
+        return transactionTemplate.execute(status -> {
+            log.info("重置配额 - customerId: {}, oldUsed: {}", quota.getCustomerId(), quota.getQuotaUsed());
 
-        quota.setQuotaUsed(0);
-        quota.setResetTime(quota.calculateNextResetTime());
-        quota.setUpdateTime(LocalDateTime.now());
-        quotaRepository.update(quota);
+            quota.setQuotaUsed(0);
+            quota.setResetTime(quota.calculateNextResetTime());
+            quota.setUpdateTime(LocalDateTime.now());
+            quotaRepository.update(quota);
 
-        // 清除缓存
-        String cacheKey = QUOTA_CACHE_PREFIX + quota.getCustomerId();
-        redisTemplate.delete(cacheKey);
+            // 清除缓存
+            String cacheKey = QUOTA_CACHE_PREFIX + quota.getCustomerId();
+            redisTemplate.delete(cacheKey);
 
-        return quota;
+            return quota;
+        });
     }
 
     /**
