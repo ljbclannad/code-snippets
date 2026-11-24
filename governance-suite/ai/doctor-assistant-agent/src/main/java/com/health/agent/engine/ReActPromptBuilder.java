@@ -34,7 +34,7 @@ public class ReActPromptBuilder implements AgentPromptProvider {
 
     public static final String DOCTOR_SCENE = "doctor-weight-management";
     public static final String DOCTOR_AGENT = "doctor-assistant-agent";
-    public static final String DEFAULT_PROMPT_VERSION = "doctor-react-prompt-v1";
+    public static final String DEFAULT_PROMPT_VERSION = "doctor-react-prompt-v2";
 
     @Autowired
     private DoctorScenePromptTemplate doctorScenePromptTemplate = new DoctorScenePromptTemplate();
@@ -125,11 +125,7 @@ public class ReActPromptBuilder implements AgentPromptProvider {
     }
 
     /**
-     * 为患者任务升级链路构建首轮 user prompt。
-     *
-     * <p>相比只给出 goal/customerId，这里会显式注入患者消息、任务类型、
-     * 上游触发原因、画像摘要和记忆快照，帮助真实 Agent 首轮就利用上游资产，
-     * 减少无意义重复采集。</p>
+     * 构建患者任务的首轮用户消息。患者事实由各步的可见上下文统一提供。
      */
     public String buildUserPrompt(AgentExecutionCommand command) {
         if (command == null) {
@@ -151,20 +147,11 @@ public class ReActPromptBuilder implements AgentPromptProvider {
             builder.append("Correlation ID: ").append(command.getCorrelationId()).append('\n');
         }
 
-        appendSection(builder, "Current Patient Message", command.getPatientMessage());
-        appendSection(builder, "Trigger Decision Summary", summarizeTriggerDecisionSnapshot(command.getTriggerDecision()));
-        appendSection(builder, "Profile Snapshot Summary", summarizeProfileSnapshot(command.getProfileSnapshot()));
-        appendSection(builder, "Session Context Summary", summarizeSessionContextSnapshot(command.getSessionContext()));
-
-        MemorySnapshot memorySnapshot = command.getMemorySnapshot();
-        if (memorySnapshot != null) {
-            appendSection(builder, "Memory Snapshot Summary", summarizeMemorySnapshot(memorySnapshot));
-        }
         appendSection(builder, "Task-specific Analysis Focus", taskTypeGuidance(command.getTaskType()));
 
         builder.append("""
 
-            请优先利用以上已预加载的患者任务快照完成分析，只在缺少关键事实时再调用工具。
+            请优先利用已提供的患者上下文完成分析，只在缺少关键事实时再调用工具。
             请开始分析，并严格遵守 JSON 协议。
             """);
         return builder.toString().trim();
@@ -228,25 +215,36 @@ public class ReActPromptBuilder implements AgentPromptProvider {
             return "当前无已缓存状态。";
         }
         Object patientTaskRequest = slotValue(context, "patient_task_request");
-        if (!(patientTaskRequest instanceof Map<?, ?>)) {
+        Object patientMessage = slotValue(context, "patient_message");
+        if (!(patientTaskRequest instanceof Map<?, ?>) && patientMessage == null) {
             return context.toPromptSection();
         }
 
         StringBuilder builder = new StringBuilder();
-        appendSection(builder, "Current Patient Message", summarizeObject(slotValue(context, "patient_message"), 320));
+        Object patientText = patientMessage instanceof Map<?, ?> message ? message.get("content") : patientMessage;
+        appendSection(builder, "Current Patient Message",
+                patientText == null ? null : JSON.toJSONString(String.valueOf(patientText)));
         appendSection(builder, "Upstream Routing Decision", summarizeRoutingDecision(context));
+        Object sessionContext = slotValue(context, "session_context");
+        if (sessionContext instanceof Map<?, ?> sessionMap) {
+            appendSection(builder, "Session Context Summary", summarizeSessionContextSnapshot(sessionMap));
+        } else {
+            appendSection(builder, "Session Context Summary", summarizeObject(sessionContext, 220));
+        }
         Object profileSnapshot = preferredSlotValue(context, "patient_profile", "profile_snapshot");
         if (profileSnapshot instanceof Map<?, ?> profileMap) {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> casted = (Map<String, Object>) profileMap;
-            appendSection(builder, "Patient Profile Facts", summarizeProfileSnapshot(casted));
+            appendSection(builder, "Patient Profile Facts", summarizeProfileSnapshot(profileMap));
         } else {
             appendSection(builder, "Patient Profile Facts", summarizeObject(profileSnapshot, 420));
         }
-        appendSection(builder, "Short-term Memory", summarizeMemorySection(slotValue(context, "chat_history"), 4, 140));
+        Object chatHistory = slotValue(context, "chat_history");
+        if (chatHistory == null) {
+            chatHistory = memorySnapshotItems(context, "shortTermMemories");
+        }
+        appendSection(builder, "Short-term Memory", summarizeMemorySection(chatHistory, 4, 140));
         appendSection(builder, "Long-term Memory", summarizeLongTermMemory(context));
         appendSection(builder, "Current Known Risk", summarizeKnownRisk(context));
-        appendSection(builder, "Working Memory Highlights", summarizeWorkingMemory(context));
+        appendSection(builder, "Working Memory Highlights", summarizeWorkingMemory(context, chatHistory, patientText));
 
         String structured = builder.toString().trim();
         return structured.isBlank() ? context.toPromptSection() : structured;
@@ -280,7 +278,7 @@ public class ReActPromptBuilder implements AgentPromptProvider {
 
                 case OBSERVATION:
                     // Observation 作为 User 消息
-                    messages.add(Message.user("Observation: " + step.getContent()));
+                    messages.add(Message.user(ReActPromptHistory.OBSERVATION_PREFIX + step.getContent()));
                     break;
             }
         }
@@ -316,7 +314,7 @@ public class ReActPromptBuilder implements AgentPromptProvider {
         builder.append(content).append('\n');
     }
 
-    private String extractTriggerSummary(Map<String, Object> triggerDecision) {
+    private String extractTriggerSummary(Map<?, ?> triggerDecision) {
         if (triggerDecision == null || triggerDecision.isEmpty()) {
             return null;
         }
@@ -328,7 +326,7 @@ public class ReActPromptBuilder implements AgentPromptProvider {
         return reason != null ? String.valueOf(reason) : null;
     }
 
-    private String extractTriggerReasons(Map<String, Object> triggerDecision) {
+    private String extractTriggerReasons(Map<?, ?> triggerDecision) {
         if (triggerDecision == null || triggerDecision.isEmpty()) {
             return null;
         }
@@ -339,7 +337,7 @@ public class ReActPromptBuilder implements AgentPromptProvider {
         return null;
     }
 
-    private String summarizeTriggerDecisionSnapshot(Map<String, Object> triggerDecision) {
+    private String summarizeTriggerDecisionSnapshot(Map<?, ?> triggerDecision) {
         if (triggerDecision == null || triggerDecision.isEmpty()) {
             return null;
         }
@@ -351,7 +349,7 @@ public class ReActPromptBuilder implements AgentPromptProvider {
         return lines.isEmpty() ? null : String.join("\n", lines);
     }
 
-    private String summarizeProfileSnapshot(Map<String, Object> profileSnapshot) {
+    private String summarizeProfileSnapshot(Map<?, ?> profileSnapshot) {
         if (profileSnapshot == null || profileSnapshot.isEmpty()) {
             return null;
         }
@@ -363,7 +361,7 @@ public class ReActPromptBuilder implements AgentPromptProvider {
         return lines.isEmpty() ? summarizeMap(profileSnapshot, 6) : String.join("\n", lines);
     }
 
-    private String summarizeSessionContextSnapshot(Map<String, Object> sessionContext) {
+    private String summarizeSessionContextSnapshot(Map<?, ?> sessionContext) {
         if (sessionContext == null || sessionContext.isEmpty()) {
             return null;
         }
@@ -377,17 +375,7 @@ public class ReActPromptBuilder implements AgentPromptProvider {
         return lines.isEmpty() ? summarizeMap(sessionContext, 6) : String.join("\n", lines);
     }
 
-    private String summarizeMemorySnapshot(MemorySnapshot memorySnapshot) {
-        if (memorySnapshot == null) {
-            return null;
-        }
-        List<String> lines = new ArrayList<>();
-        appendSnapshotLine(lines, "shortTerm", summarizeList(memorySnapshot.getShortTermMemories(), 3, 80), 220);
-        appendSnapshotLine(lines, "longTerm", summarizeList(memorySnapshot.getLongTermMemories(), 3, 80), 220);
-        return lines.isEmpty() ? null : String.join("\n", lines);
-    }
-
-    private String summarizeMap(Map<String, Object> source, int maxEntries) {
+    private String summarizeMap(Map<?, ?> source, int maxEntries) {
         if (source == null || source.isEmpty()) {
             return null;
         }
@@ -480,54 +468,51 @@ public class ReActPromptBuilder implements AgentPromptProvider {
         List<String> parts = new ArrayList<>();
         Object taskRequest = slotValue(context, "patient_task_request");
         if (taskRequest instanceof Map<?, ?> taskMap) {
-            Object taskType = taskMap.get("taskType");
             Object source = taskMap.get("source");
-            if (taskType != null) {
-                parts.add("taskType: " + taskType);
-            }
             if (source != null) {
                 parts.add("source: " + source);
             }
         }
         Object triggerDecision = slotValue(context, "trigger_decision");
-        String triggerSummary = summarizeObject(triggerDecision, 260);
+        String triggerSummary = triggerDecision instanceof Map<?, ?> triggerMap
+                ? summarizeTriggerDecisionSnapshot(triggerMap)
+                : summarizeObject(triggerDecision, 260);
         if (triggerSummary != null && !triggerSummary.isBlank()) {
             parts.add(triggerSummary);
-        }
-        Object sessionContext = slotValue(context, "session_context");
-        String sessionSummary = summarizeObject(sessionContext, 220);
-        if (sessionSummary != null && !sessionSummary.isBlank()) {
-            parts.add("session: " + sessionSummary);
         }
         return parts.isEmpty() ? null : String.join("\n", parts);
     }
 
     private String summarizeLongTermMemory(AgentContext context) {
+        return summarizeList(memorySnapshotItems(context, "longTermMemories"), 3, 110);
+    }
+
+    private List<?> memorySnapshotItems(AgentContext context, String field) {
         Object memorySnapshot = slotValue(context, "memory_snapshot");
         if (memorySnapshot instanceof MemorySnapshot snapshot) {
-            return summarizeList(snapshot.getLongTermMemories(), 3, 110);
+            return "shortTermMemories".equals(field) ? snapshot.getShortTermMemories() : snapshot.getLongTermMemories();
         }
-        if (memorySnapshot instanceof Map<?, ?> memoryMap) {
-            Object longTerm = memoryMap.get("longTermMemories");
-            if (longTerm instanceof List<?> list) {
-                return summarizeList(list, 3, 110);
-            }
+        if (memorySnapshot instanceof Map<?, ?> memoryMap && memoryMap.get(field) instanceof List<?> list) {
+            return list;
         }
         return null;
     }
 
     private String summarizeKnownRisk(AgentContext context) {
         List<String> sections = new ArrayList<>();
-        addSummarySection(sections, "trigger", slotValue(context, "trigger_decision"), 180);
         addSummarySection(sections, "plateau", slotValue(context, "plateau_assessment"), 180);
         addSummarySection(sections, "adherence", slotValue(context, "adherence_analysis"), 180);
         addSummarySection(sections, "trend", slotValue(context, "weight_trend_analysis"), 180);
         return sections.isEmpty() ? null : String.join("\n", sections);
     }
 
-    private String summarizeWorkingMemory(AgentContext context) {
+    private String summarizeWorkingMemory(AgentContext context, Object chatHistory, Object patientText) {
         List<String> highlights = new ArrayList<>();
-        highlights.add(summarizeInline("recent_follow_up_signals", slotValue(context, "recent_follow_up_signals"), 180));
+        Object followUpSignals = slotValue(context, "recent_follow_up_signals");
+        if (!Objects.equals(followUpSignals, chatHistory)
+                && (patientText == null || !List.of(patientText).equals(followUpSignals))) {
+            highlights.add(summarizeInline("recent_follow_up_signals", followUpSignals, 180));
+        }
         highlights.add(summarizeInline("last_tool_result", slotValue(context, "last_tool_result"), 180));
         highlights.add(summarizeInline("health_knowledge", slotValue(context, "health_knowledge"), 160));
         return highlights.stream()

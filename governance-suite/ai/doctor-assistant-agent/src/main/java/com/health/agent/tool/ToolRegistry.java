@@ -16,7 +16,9 @@ import com.health.agent.model.FollowUpTask;
 import com.health.agent.model.HealthKnowledge;
 import com.health.agent.model.ToolEvidence;
 import com.health.agent.model.ToolExecutionOutput;
+import com.lx.governance.agentplatform.model.AgentAccessContext;
 import com.lx.governance.agentplatform.model.ToolDefinition;
+import com.lx.governance.agentplatform.model.ToolDescriptor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -93,8 +95,11 @@ public class ToolRegistry implements AgentToolCatalog {
     }
 
     @Override
-    public List<com.lx.governance.agentplatform.model.ToolDescriptor> listToolDescriptors() {
-        return doctorToolDefinitionRegistry.listToolDescriptors();
+    public List<ToolDescriptor> listToolDescriptors(AgentAccessContext accessContext) {
+        return doctorToolDefinitionRegistry.listToolDescriptors().stream()
+                .filter(descriptor -> tools.containsKey(descriptor.getToolName()))
+                .filter(descriptor -> ToolAccessPolicy.allows(getDefinition(descriptor.getToolName()), accessContext))
+                .toList();
     }
 
     private ToolRiskLevel resolveRiskLevel(String riskLevel) {

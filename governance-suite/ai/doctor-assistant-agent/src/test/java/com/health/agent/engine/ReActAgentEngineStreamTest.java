@@ -62,11 +62,14 @@ import com.health.agent.service.ContextPrivacySanitizer;
 import com.health.agent.tool.Tool;
 import com.health.agent.tool.ToolRegistry;
 import com.health.agent.tool.ToolRiskLevel;
+import com.lx.governance.agentplatform.model.AgentAccessContext;
 import com.lx.governance.agentplatform.model.AgentDefinition;
 import com.lx.governance.agentplatform.model.AgentStatus;
 import com.lx.governance.agentplatform.model.AgentType;
 import com.lx.governance.agentplatform.model.PlatformAgentHandoff;
+import com.lx.governance.agentplatform.model.PlatformContextEvidence;
 import com.lx.governance.agentplatform.model.PlatformContextVisibility;
+import com.lx.governance.agentplatform.model.PlatformToolOutput;
 import com.lx.governance.agentplatform.model.ToolDescriptor;
 import com.lx.governance.agentplatform.registry.InMemoryAgentRegistry;
 
@@ -169,7 +172,7 @@ class ReActAgentEngineStreamTest {
     void shouldEmitThoughtActionObservationFinalAnswerAndDoneEvents() {
         AgentSession session = AgentSession.builder().id("1").build();
         when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
-        when(toolRegistry.listToolDescriptors()).thenReturn(descriptorsOf(List.of(
+        when(toolRegistry.listToolDescriptors(any())).thenReturn(descriptorsOf(List.of(
                 Tool.builder()
                         .name("detect_weight_plateau")
                         .description("识别是否进入减重停滞期")
@@ -278,7 +281,7 @@ class ReActAgentEngineStreamTest {
     void shouldEmitPendingApprovalThenDoneWhenActionNeedsApproval() {
         AgentSession session = AgentSession.builder().id("1").build();
         when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
-        when(toolRegistry.listToolDescriptors()).thenReturn(descriptorsOf(List.of(
+        when(toolRegistry.listToolDescriptors(any())).thenReturn(descriptorsOf(List.of(
                 Tool.builder()
                         .name("create_follow_up_task")
                         .description("创建随访任务")
@@ -336,7 +339,7 @@ class ReActAgentEngineStreamTest {
             finalContextRef.set(invocation.getArgument(2));
             return null;
         }).when(sessionService).completeSession(anyString(), anyList(), any(AgentContext.class));
-        when(toolRegistry.listToolDescriptors()).thenReturn(descriptorsOf(List.of(
+        when(toolRegistry.listToolDescriptors(any())).thenReturn(descriptorsOf(List.of(
                 Tool.builder()
                         .name("collect_medical_history")
                         .description("收集病史")
@@ -458,7 +461,7 @@ class ReActAgentEngineStreamTest {
     void shouldPreloadContextFromAgentExecutionCommand() {
         AgentSession session = AgentSession.builder().id("1").build();
         when(sessionService.createSession(anyString(), anyString(), anyString(), anyString())).thenReturn(session);
-        when(toolRegistry.listToolDescriptors()).thenReturn(descriptorsOf(List.of(
+        when(toolRegistry.listToolDescriptors(any())).thenReturn(descriptorsOf(List.of(
                 Tool.builder()
                         .name("detect_weight_plateau")
                         .description("识别是否进入减重停滞期")
@@ -568,7 +571,7 @@ class ReActAgentEngineStreamTest {
     void shouldBuildPatientTaskSpecificFirstTurnPromptFromCommand() {
         AgentSession session = AgentSession.builder().id("1").build();
         when(sessionService.createSession(anyString(), anyString(), anyString(), anyString())).thenReturn(session);
-        when(toolRegistry.listToolDescriptors()).thenReturn(descriptorsOf(List.of(
+        when(toolRegistry.listToolDescriptors(any())).thenReturn(descriptorsOf(List.of(
                 Tool.builder()
                         .name("detect_weight_plateau")
                         .description("识别是否进入减重停滞期")
@@ -616,7 +619,8 @@ class ReActAgentEngineStreamTest {
                 .correlationId("corr_20260616_001")
                 .source(AgentTaskSource.PATIENT_DIALOG_AI_CHAT)
                 .taskType(TaskType.PATIENT_FOLLOW_UP_ANALYSIS)
-                .patientMessage("医生，我这周晚上基本没吃主食，但体重还是没怎么掉，可以回电13812345678吗？")
+                .patientMessage("医生，我这周晚上基本没吃主食，但体重还是没怎么掉，可以回电13812345678吗？"
+                        + "我会继续记录。".repeat(80) + "这是消息末尾的新信息。")
                 .sessionContext(Map.of(
                         "conversationPhase", "follow_up",
                         "currentTopic", "weight_plateau"))
@@ -649,23 +653,26 @@ class ReActAgentEngineStreamTest {
         String firstPrompt = firstTurnMessages.get(0).getContent();
         String systemPrompt = capturedSystemPrompt.get();
         assertTrue(firstPrompt.contains("Task Type: PATIENT_FOLLOW_UP_ANALYSIS"));
-        assertTrue(firstPrompt.contains("Current Patient Message"));
-        assertTrue(firstPrompt.contains("Profile Snapshot Summary"));
-        assertTrue(firstPrompt.contains("Session Context Summary"));
-        assertTrue(firstPrompt.contains("Memory Snapshot Summary"));
-        assertTrue(firstPrompt.contains("shortTerm"));
-        assertTrue(firstPrompt.contains("longTerm"));
         assertTrue(firstPrompt.contains("Task-specific Analysis Focus"));
         assertTrue(firstPrompt.contains("平台期风险"));
-        assertTrue(firstPrompt.contains("近7天体重在68.4kg到68.7kg之间波动"));
-        assertTrue(firstPrompt.contains("female"));
-        assertTrue(firstPrompt.contains("张*"));
-        assertTrue(firstPrompt.contains("138****5678"));
-        assertFalse(firstPrompt.contains("张三"));
-        assertFalse(firstPrompt.contains("13812345678"));
-        assertFalse(firstPrompt.contains("Trigger Decision Summary"));
-        assertFalse(firstPrompt.contains("Trigger Decision Reasons"));
+        assertFalse(firstPrompt.contains("医生，我这周晚上"));
+        assertFalse(firstPrompt.contains("68.4kg"));
+        assertFalse(firstPrompt.contains("female"));
+        assertFalse(firstPrompt.contains("weight_plateau"));
         assertNotNull(systemPrompt);
+        assertTrue(systemPrompt.contains("Current Patient Message:\n\"医生"));
+        assertTrue(systemPrompt.contains("这是消息末尾的新信息。"));
+        assertTrue(systemPrompt.contains("Patient Profile Facts"));
+        assertTrue(systemPrompt.contains("Session Context Summary"));
+        assertTrue(systemPrompt.contains("Long-term Memory"));
+        assertTrue(systemPrompt.contains("Short-term Memory"));
+        assertTrue(systemPrompt.contains("近7天体重在68.4kg到68.7kg之间波动"));
+        assertEquals(1, systemPrompt.split("近7天体重在68.4kg到68.7kg之间波动", -1).length - 1);
+        assertTrue(systemPrompt.contains("female"));
+        assertTrue(systemPrompt.contains("张*"));
+        assertTrue(systemPrompt.contains("138****5678"));
+        assertFalse(systemPrompt.contains("张三"));
+        assertFalse(systemPrompt.contains("13812345678"));
         assertFalse(systemPrompt.contains("命中随访趋势分析信号"));
         assertFalse(systemPrompt.contains("EXPLICIT_ANALYSIS_REQUEST"));
     }
@@ -673,6 +680,16 @@ class ReActAgentEngineStreamTest {
     @Test
     void resumeStreamShouldUpdateContextAndEmitContextUpdatedEventAfterApprovedAction() {
         AgentContext persistedContext = AgentContext.initialize("C001", "D001", "恢复随访分析");
+        persistedContext.putSlot("session_context", Map.of("groupId", "pilot", "tenantId", "tenant-a"), "TEST");
+        var oldRecords = List.of(Map.of("date", "2026-05-18", "weight", 69.4));
+        String oldObservation = ReActPromptHistory.OBSERVATION_PREFIX + JSON.toJSONString(PlatformToolOutput.builder()
+                .toolName("get_weight_history")
+                .data(oldRecords)
+                .stateUpdates(Map.of("weight_history", oldRecords))
+                .evidence(PlatformContextEvidence.builder().source("WEIGHT_HISTORY").payload(oldRecords).build())
+                .build());
+        List<Message> persistedMessages = new ArrayList<>(
+                List.of(Message.user("请继续分析"), Message.user(oldObservation)));
         AgentSession session = AgentSession.builder()
                 .id("1")
                 .customerId("C001")
@@ -680,7 +697,7 @@ class ReActAgentEngineStreamTest {
                 .goal("恢复随访分析")
                 .status(SessionStatus.PAUSED.name())
                 .historyJson(JSON.toJSONString(List.of(Step.thought("等待审批"))))
-                .messagesJson(JSON.toJSONString(List.of(Message.user("请继续分析"))))
+                .messagesJson(JSON.toJSONString(persistedMessages))
                 .contextJson(JSON.toJSONString(persistedContext))
                 .currentStep(1)
                 .build();
@@ -701,21 +718,22 @@ class ReActAgentEngineStreamTest {
                 .session(session)
                 .pendingTask(approvedTask)
                 .history(new ArrayList<>(List.of(Step.thought("等待审批"))))
-                .messages(new ArrayList<>(List.of(Message.user("请继续分析"))))
+                .messages(persistedMessages)
                 .context(persistedContext)
                 .currentStep(1)
                 .approvedAction(approvedAction)
                 .build());
 
-        when(actionExecutor.executeApprovedAction(any())).thenReturn(ActionResult.success(
+        ActionResult approvedOutput = ActionResult.success(
                 ToolExecutionOutput.builder()
                         .summary("已获取最近14天体重历史")
                         .stateUpdates(Map.of("weight_history", List.of(
                                 Map.of("date", "2026-06-01", "weight", 68.5)
                         )))
-                        .build()));
+                        .build());
+        when(actionExecutor.executeApprovedAction(any())).thenReturn(approvedOutput);
 
-        when(toolRegistry.listToolDescriptors()).thenReturn(descriptorsOf(List.of(
+        when(toolRegistry.listToolDescriptors(any())).thenReturn(descriptorsOf(List.of(
                 Tool.builder()
                         .name("get_weight_history")
                         .description("查询体重历史")
@@ -742,7 +760,9 @@ class ReActAgentEngineStreamTest {
                   }
                 }
                 """);
+        AtomicReference<List<Message>> modelMessages = new AtomicReference<>();
         doAnswer(invocation -> {
+            modelMessages.set(invocation.getArgument(1));
             @SuppressWarnings("unchecked")
             java.util.function.Consumer<String> sink = invocation.getArgument(2);
             sink.accept(finalResponse.getContent());
@@ -751,6 +771,16 @@ class ReActAgentEngineStreamTest {
 
         List<AgentStreamEvent> events = new ArrayList<>();
         assertDoesNotThrow(() -> engine.resumeStream("1", 101L, events::add));
+        verify(actionExecutor).executeApprovedAction(approvedAction);
+        verify(toolRegistry).listToolDescriptors(AgentAccessContext.builder()
+                .groupId("pilot").userId("D001").tenantId("tenant-a").build());
+        assertEquals(oldObservation, persistedMessages.get(1).getContent());
+        String compact = modelMessages.get().get(1).getContent();
+        assertTrue(compact.length() < oldObservation.length());
+        assertTrue(compact.contains("2026-05-18"));
+        assertTrue(compact.contains("WEIGHT_HISTORY"));
+        assertEquals(ReActPromptHistory.OBSERVATION_PREFIX + new AgentContextMutationService().formatObservation(approvedOutput),
+                modelMessages.get().get(2).getContent());
 
         List<AgentStreamEventType> eventTypes = events.stream().map(AgentStreamEvent::getType).toList();
         assertTrue(eventTypes.contains(AgentStreamEventType.OBSERVATION));
@@ -780,7 +810,7 @@ class ReActAgentEngineStreamTest {
     void shouldSuppressDuplicateToolCallWhenSameActionRepeatsWithoutNewInformation() {
         AgentSession session = AgentSession.builder().id("1").build();
         when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
-        when(toolRegistry.listToolDescriptors()).thenReturn(descriptorsOf(List.of(
+        when(toolRegistry.listToolDescriptors(any())).thenReturn(descriptorsOf(List.of(
                 Tool.builder()
                         .name("detect_weight_plateau")
                         .description("识别是否进入减重停滞期")

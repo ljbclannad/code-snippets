@@ -41,8 +41,6 @@ import com.health.agent.model.Step;
 import com.health.agent.model.StructuredFinalAnswer;
 import com.health.agent.model.TaskStatus;
 import com.health.agent.model.ThoughtResult;
-import com.health.agent.model.ToolEvidence;
-import com.health.agent.model.ToolExecutionOutput;
 import com.health.agent.safety.MedicalSafetyService;
 import com.health.agent.safety.SafetyAssessment;
 import com.health.agent.service.AgentAuditService;
@@ -248,10 +246,9 @@ public class ReActAgentEngine {
             return result;
         }
 
-        AgentSubAgent initialSubAgent = selectSubAgent(sessionId, goal, context);
-        AgentContext initialVisibleContext = projectContextForSubAgent(context, initialSubAgent);
-        messages.add(Message.user(promptBuilder.buildUserPrompt(
-                commandForPrompt(command, initialVisibleContext))));
+        // 流式任务启动时先登记选择计划，再由循环消费已计划的角色。
+        selectSubAgent(sessionId, goal, context);
+        messages.add(Message.user(promptBuilder.buildUserPrompt(command)));
         return executeLoop(newLoopContext(
                 sessionId,
                 goal,
@@ -446,7 +443,7 @@ public class ReActAgentEngine {
             // 6. 记录 Observation
             String observation = contextMutationService.formatObservation(actionResult);
             history.add(Step.observation(observation));
-            messages.add(Message.user("Observation: " + observation));
+            messages.add(Message.user(ReActPromptHistory.OBSERVATION_PREFIX + observation));
             contextMutationService.applyActionResult(context, action, actionResult, observation);
             recordResumeContextUpdate(session, context, action, beforeSlotSnapshot);
 
@@ -499,7 +496,7 @@ public class ReActAgentEngine {
 
             String observation = contextMutationService.formatObservation(actionResult);
             history.add(Step.observation(observation));
-            messages.add(Message.user("Observation: " + observation));
+            messages.add(Message.user(ReActPromptHistory.OBSERVATION_PREFIX + observation));
             emitEvent(eventSink, sessionId, currentStep + 1, AgentStreamEventType.OBSERVATION, observation);
             contextMutationService.applyActionResult(context, action, actionResult, observation);
             emitContextUpdated(sessionId, currentStep + 1, context, action.getToolName(), eventSink);
@@ -631,11 +628,12 @@ public class ReActAgentEngine {
             int step,
             int stepNumber,
             AgentContext promptContext) {
+        List<Message> messages = ReActPromptHistory.forModel(loopState(execution).getMessages());
         if (loopState(execution).getEventSink() == null) {
-            return requestThoughtResult(systemPrompt, loopState(execution).getMessages(), step,
+            return requestThoughtResult(systemPrompt, messages, step,
                     loopState(execution).getCustomerId(), promptContext);
         }
-        return requestThoughtResultStream(systemPrompt, loopState(execution).getMessages(), step,
+        return requestThoughtResultStream(systemPrompt, messages, step,
                 loopState(execution).getCustomerId(), execution.getRunId(), loopState(execution).getEventSink(),
                 stepNumber, promptContext);
     }
@@ -773,7 +771,7 @@ public class ReActAgentEngine {
             String observation,
             String evidenceSource) {
         loopState(execution).getHistory().add(Step.observation(observation));
-        loopState(execution).getMessages().add(Message.user("Observation: " + observation));
+        loopState(execution).getMessages().add(Message.user(ReActPromptHistory.OBSERVATION_PREFIX + observation));
         loopState(execution).getContext().addEvidence(action.getToolName(), evidenceSource, observation, action.getInput());
         updateLastToolResult(loopState(execution).getContext(), action, observation);
         emitContextUpdated(execution.getRunId(), stepNumber, loopState(execution).getContext(), action.getToolName(),
@@ -829,9 +827,10 @@ public class ReActAgentEngine {
             switchSubAgent(execution.getRunId(), stepNumber, loopState(execution).getContext(), subAgent,
                     loopState(execution).getEventSink());
             AgentContext visibleContext = projectContextForSubAgent(loopState(execution).getContext(), subAgent);
+            AgentAccessContext accessContext = buildToolAccessContext(loopState(execution).getContext());
             RenderedPrompt renderedSystemPrompt = promptBuilder.renderSubAgentSystemPromptFromCatalog(
                     subAgent,
-                    toolRegistry.listToolDescriptors());
+                    toolRegistry.listToolDescriptors(accessContext));
             recordRenderedPromptSnapshot(execution.getRunId(), visibleContext, renderedSystemPrompt);
             ParsedThought parsedThought = requestThought(execution, renderedSystemPrompt.getContent(), step, stepNumber, visibleContext);
             log.info("Agent响应: {}", parsedThought.responseText());
@@ -879,7 +878,7 @@ public class ReActAgentEngine {
                     loopState(execution).getCustomerId(),
                     loopState(execution).getDoctorId(),
                     execution.getRunId(),
-                    buildToolAccessContext(loopState(execution).getContext()));
+                    accessContext);
             recordToolExecution(execution.getRunId(), action.getToolName());
 
             if (actionResult.isNeedsApproval()) {
@@ -888,7 +887,7 @@ public class ReActAgentEngine {
 
             String observation = contextMutationService.formatObservation(actionResult);
             loopState(execution).getHistory().add(Step.observation(observation));
-            loopState(execution).getMessages().add(Message.user("Observation: " + observation));
+            loopState(execution).getMessages().add(Message.user(ReActPromptHistory.OBSERVATION_PREFIX + observation));
             contextMutationService.applyActionResult(loopState(execution).getContext(), action, actionResult, observation);
             emitContextUpdated(execution.getRunId(), stepNumber, loopState(execution).getContext(),
                     action.getToolName(), loopState(execution).getEventSink());
@@ -1489,30 +1488,6 @@ public class ReActAgentEngine {
     }
 
     @SuppressWarnings("unchecked")
-    private AgentExecutionCommand commandForPrompt(AgentExecutionCommand command, AgentContext visibleContext) {
-        if (command == null || visibleContext == null) {
-            return command;
-        }
-        return AgentExecutionCommand.builder()
-                .goal(command.getGoal())
-                .customerId(command.getCustomerId())
-                .doctorId(command.getDoctorId())
-                .conversationId(command.getConversationId())
-                .correlationId(command.getCorrelationId())
-                .traceContext(command.getTraceContext())
-                .platformContext(command.getPlatformContext())
-                .source(command.getSource())
-                .taskType(command.getTaskType())
-                .sessionContext(slotMapValue(visibleContext, "session_context"))
-                .profileSnapshot(slotMapValue(visibleContext, "profile_snapshot"))
-                .memorySnapshot(slotMemorySnapshot(visibleContext, "memory_snapshot"))
-                .triggerDecision(slotMapValue(visibleContext, "trigger_decision"))
-                .patientMessage(slotPatientMessage(visibleContext, "patient_message"))
-                .constraints(command.getConstraints())
-                .build();
-    }
-
-    @SuppressWarnings("unchecked")
     private Map<String, Object> slotMapValue(AgentContext context, String slotKey) {
         if (context == null || context.getSlots() == null) {
             return null;
@@ -1536,15 +1511,6 @@ public class ReActAgentEngine {
             return snapshot;
         }
         return JSON.parseObject(JSON.toJSONString(entry.getValue()), com.health.agent.dto.patient.MemorySnapshot.class);
-    }
-
-    private String slotPatientMessage(AgentContext context, String slotKey) {
-        Map<String, Object> patientMessage = slotMapValue(context, slotKey);
-        if (patientMessage == null) {
-            return null;
-        }
-        Object content = patientMessage.get("content");
-        return content != null ? String.valueOf(content) : null;
     }
 
     private AgentAccessContext buildToolAccessContext(AgentContext context) {

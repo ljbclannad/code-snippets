@@ -15,6 +15,7 @@ import com.health.agent.tool.Tool;
 import com.health.agent.tool.ToolInputValidator;
 import com.health.agent.tool.ToolRegistry;
 import com.health.agent.tool.ToolRiskLevel;
+import com.health.agent.tool.ToolAccessPolicy;
 import com.lx.governance.agentplatform.model.AgentAccessContext;
 import com.lx.governance.agentplatform.model.ToolDefinition;
 import com.lx.governance.agentplatform.model.ToolIdempotencyPolicy;
@@ -28,7 +29,6 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Callable;
@@ -112,7 +112,7 @@ public class ActionExecutor {
         }
 
         ToolRiskLevel effectiveRiskLevel = resolveRiskLevel(tool, definition);
-        if (!canAccessTool(definition, accessContext)) {
+        if (!ToolAccessPolicy.allows(definition, accessContext)) {
             return auditAndReject(
                 sessionId,
                 customerId,
@@ -358,25 +358,6 @@ public class ActionExecutor {
 
     private String idempotencyKey(String toolName, Map<String, Object> normalizedInput) {
         return toolName + "::" + JSON.toJSONString(normalizedInput);
-    }
-
-    private boolean canAccessTool(ToolDefinition definition, AgentAccessContext accessContext) {
-        if (definition == null) {
-            return true;
-        }
-        return matchesScope(definition.getVisibleGroupIds(), accessContext != null ? accessContext.getGroupId() : null)
-            && matchesScope(definition.getVisibleUserIds(), accessContext != null ? accessContext.getUserId() : null)
-            && matchesScope(definition.getVisibleTenantIds(), accessContext != null ? accessContext.getTenantId() : null);
-    }
-
-    private boolean matchesScope(List<String> allowedValues, String actualValue) {
-        if (allowedValues == null || allowedValues.isEmpty()) {
-            return true;
-        }
-        if (actualValue == null || actualValue.isBlank()) {
-            return false;
-        }
-        return allowedValues.contains(actualValue);
     }
 
     private void enforceRateLimit(String toolName, ToolDefinition definition) {

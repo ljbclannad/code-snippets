@@ -162,7 +162,7 @@ class ReActAgentEngineSafetyTest {
     void shouldBlockHighRiskActionWithoutEvidenceBeforeToolExecution() {
         AgentSession session = AgentSession.builder().id("1").build();
         when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
-        when(toolRegistry.listToolDescriptors()).thenReturn(List.of());
+        when(toolRegistry.listToolDescriptors(any())).thenReturn(List.of());
         when(promptBuilder.buildUserPrompt(anyString(), anyString())).thenReturn("user");
         when(promptBuilder.renderSubAgentSystemPromptFromCatalog(any(), any()))
                 .thenReturn(RenderedPrompt.builder().content("system").build());

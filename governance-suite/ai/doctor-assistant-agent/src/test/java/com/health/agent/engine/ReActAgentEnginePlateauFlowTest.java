@@ -25,6 +25,7 @@ import com.health.agent.service.AgentSessionService;
 import com.health.agent.tool.Tool;
 import com.health.agent.tool.ToolRegistry;
 import com.health.agent.tool.ToolRiskLevel;
+import com.lx.governance.agentplatform.model.AgentAccessContext;
 import com.lx.governance.agentplatform.model.AgentDefinition;
 import com.lx.governance.agentplatform.model.AgentStatus;
 import com.lx.governance.agentplatform.model.AgentType;
@@ -151,7 +152,7 @@ class ReActAgentEnginePlateauFlowTest {
     void shouldTriggerDetectWeightPlateauForPlateauGoal() {
         AgentSession session = AgentSession.builder().id("1").build();
         when(sessionService.createSession(anyString(), anyString(), anyString())).thenReturn(session);
-        when(toolRegistry.listToolDescriptors()).thenReturn(descriptorsOf(List.of(
+        when(toolRegistry.listToolDescriptors(any(AgentAccessContext.class))).thenReturn(descriptorsOf(List.of(
             Tool.builder()
                 .name("detect_weight_plateau")
                 .description("识别是否进入减重停滞期")
@@ -253,6 +254,6 @@ class ReActAgentEnginePlateauFlowTest {
                 .anyMatch(snapshot -> snapshot.getToolSequence() != null
                         && snapshot.getToolSequence().contains("detect_weight_plateau")));
         assertTrue(snapshotCaptor.getAllValues().stream()
-                .anyMatch(snapshot -> "doctor-react-prompt-v1".equals(snapshot.getPromptVersion())));
+                .anyMatch(snapshot -> "doctor-react-prompt-v2".equals(snapshot.getPromptVersion())));
     }
 }

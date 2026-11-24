@@ -5,6 +5,7 @@ import com.health.agent.model.ActionDecision;
 import com.health.agent.model.ActionResult;
 import com.health.agent.model.PendingTask;
 import com.health.agent.model.ToolExecutionOutput;
+import com.health.agent.scene.doctor.tool.DoctorToolDefinitionRegistry;
 import com.health.agent.service.AgentAuditService;
 import com.health.agent.service.PendingTaskService;
 import com.health.agent.tool.Tool;
@@ -30,6 +31,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Map;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -109,6 +111,43 @@ class ActionExecutorTest {
         assertEquals("S001", savedTask.getAgentSessionId());
         assertEquals("C001", savedTask.getCustomerId());
         verify(agentAuditService).recordPendingTaskCreated(savedTask, null);
+    }
+
+    @Test
+    void scopedHighRiskToolShouldOnlyBeAdvertisedToUsersWhoCanRequestApproval() {
+        String toolName = "draft_weight_management_plan";
+        DoctorToolDefinitionRegistry definitions = new DoctorToolDefinitionRegistry();
+        ToolDefinition definition = definitions.findDefinition(toolName).orElseThrow();
+        definitions.register(ToolDefinition.builder()
+                .toolName(toolName)
+                .description(definition.getDescription())
+                .schema(definition.getSchema())
+                .riskLevel(definition.getRiskLevel())
+                .visibleGroupIds(List.of("pilot"))
+                .visibleUserIds(List.of("D001"))
+                .visibleTenantIds(List.of("tenant-a"))
+                .build());
+        ToolRegistry catalog = new ToolRegistry(definitions);
+        catalog.registerTools();
+        ReflectionTestUtils.setField(actionExecutor, "toolRegistry", catalog);
+        AgentAccessContext eligible = AgentAccessContext.builder()
+                .groupId("pilot").userId("D001").tenantId("tenant-a").build();
+        AgentAccessContext outsideTenant = AgentAccessContext.builder()
+                .groupId("pilot").userId("D001").tenantId("tenant-b").build();
+        ActionDecision action = ActionDecision.builder()
+                .toolName(toolName)
+                .input(Map.of("customerId", "C001", "recommendations", List.of("安排随访"), "reason", "复核"))
+                .build();
+
+        assertTrue(catalog.listToolDescriptors(eligible).stream().anyMatch(tool -> toolName.equals(tool.getToolName())));
+        assertFalse(catalog.listToolDescriptors(outsideTenant).stream()
+                .anyMatch(tool -> toolName.equals(tool.getToolName())));
+        assertTrue(catalog.listToolDescriptors(outsideTenant).stream()
+                .anyMatch(tool -> "get_weight_history".equals(tool.getToolName())));
+        assertEquals("TOOL_ACCESS_DENIED",
+                assertInstanceOf(PlatformToolError.class,
+                        actionExecutor.execute(action, "C001", "D001", "S001", outsideTenant).getOutput()).getCode());
+        assertTrue(actionExecutor.execute(action, "C001", "D001", "S001", eligible).isNeedsApproval());
     }
 
     @Test

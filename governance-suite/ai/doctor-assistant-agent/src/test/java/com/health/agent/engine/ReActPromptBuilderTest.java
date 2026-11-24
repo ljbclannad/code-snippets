@@ -1,6 +1,7 @@
 package com.health.agent.engine;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import com.health.agent.dto.agent.AgentExecutionCommand;
 import com.health.agent.dto.patient.MemorySnapshot;
 import com.health.agent.dto.patient.TaskType;
@@ -129,7 +130,7 @@ class ReActPromptBuilderTest {
     }
 
     @Test
-    void shouldRenderSnapshotSummariesWithStructuredTemplate() {
+    void shouldKeepOnlyTaskAndAnalysisFocusInPatientUserPrompt() {
         AgentExecutionCommand command = AgentExecutionCommand.builder()
                 .goal("分析患者本轮随访风险")
                 .customerId("customer-1")
@@ -158,14 +159,13 @@ class ReActPromptBuilderTest {
 
         String prompt = promptBuilder.buildUserPrompt(command);
 
-        assertTrue(prompt.contains("Trigger Decision Summary:"));
-        assertTrue(prompt.contains("summary: 命中随访分析升级"));
-        assertTrue(prompt.contains("Profile Snapshot Summary:"));
-        assertTrue(prompt.contains("basicInfo:"));
-        assertTrue(prompt.contains("Session Context Summary:"));
-        assertTrue(prompt.contains("topic: 血糖管理"));
-        assertTrue(prompt.contains("Memory Snapshot Summary:"));
-        assertTrue(prompt.contains("shortTerm:"));
-        assertTrue(prompt.contains("longTerm:"));
+        assertTrue(prompt.contains("Goal: 分析患者本轮随访风险"));
+        assertTrue(prompt.contains("Task Type: PATIENT_FOLLOW_UP_ANALYSIS"));
+        assertTrue(prompt.contains("Task-specific Analysis Focus:"));
+        assertFalse(prompt.contains("患者晚饭后容易加餐"));
+        assertFalse(prompt.contains("血糖管理"));
+        assertFalse(prompt.contains("命中随访分析升级"));
+        assertFalse(prompt.contains("担心血糖波动"));
+        assertFalse(prompt.contains("bmi"));
     }
 }
