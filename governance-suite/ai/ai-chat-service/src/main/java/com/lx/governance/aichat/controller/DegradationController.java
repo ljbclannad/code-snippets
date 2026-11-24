@@ -5,6 +5,7 @@ import com.lx.governance.aichat.degradation.DegradationLevel;
 import com.lx.governance.aichat.degradation.DegradationManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -54,7 +55,9 @@ public class DegradationController {
 
         try {
             DegradationLevel level = DegradationLevel.valueOf(request.getLevel());
-            degradationManager.manualDegradeTo(level, request.getReason(), request.getOperator());
+            if (!degradationManager.manualDegradeTo(level, request.getReason(), request.getOperator())) {
+                return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", "服务降级总开关已关闭"));
+            }
 
             Map<String, String> response = new HashMap<>();
             response.put("message", "降级触发成功");

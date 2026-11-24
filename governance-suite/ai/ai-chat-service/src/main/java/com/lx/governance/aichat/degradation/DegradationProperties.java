@@ -15,7 +15,7 @@ public class DegradationProperties {
     /**
      * 是否启用降级
      */
-    private boolean enabled = true;
+    private boolean enabled;
 
     /**
      * 是否启用自动降级（根据系统负载）

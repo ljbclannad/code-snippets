@@ -255,7 +255,7 @@ ai-chat:
 
   # 降级配置
   degradation:
-    enabled: true # 是否启用降级功能
+    enabled: ${AI_CHAT_DEGRADATION_ENABLED:false} # 服务级降级总开关
     auto-enabled: true # 是否启用自动降级
     check-interval-seconds: 10 # 降级检查间隔（秒）
 

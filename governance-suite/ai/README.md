@@ -269,7 +269,7 @@ mvn -q -pl ai/knowledge-base-service spring-boot:run
 - HTTP 请求指标（QPS、延迟、错误率）
 - 业务指标：
   - `ai_chat_requests_total` - 对话请求总数
-  - `ai_chat_degradation_level` - 当前降级等级
+  - `ai_degradation_level` - 当前降级等级
   - `memory_retrieval_duration` - 记忆检索耗时
   - `memory_retrieval_results` - 记忆检索结果数
 
@@ -398,6 +398,8 @@ curl http://localhost:8102/actuator/health
 
 - **单独启动或调试**：在 `AiChatServiceApplication.main()` 左侧点击运行图标，选择 **Run** 或 **Debug**，即可只启动聊天服务。也可以在「AI 单服务调试」目录中选择同名配置。其他五个服务同样使用各自的启动类名。
 - **同时调试六个服务**：选择 **AI 服务（全部调试）** 并点击 **Debug**。该组合复用上述六个单服务配置，每个 JVM 都有独立的调试会话和控制台。
+
+`ai-chat-service` 的服务级降级总开关 `ai-chat.degradation.enabled` 默认关闭，IDEA、脚本和 Maven 共用此设置。按默认配置启动时，服务级别为 `NORMAL`，负载检查不会触发降级，`POST /api/degradation/manual` 对有效的手动降级请求返回 HTTP 409。可通过 `GET /api/degradation/status` 查看级别，指标 `ai_degradation_level` 的正常值为 0。需要演练降级时，设置 `AI_CHAT_DEGRADATION_ENABLED=true` 并重新启动聊天服务。
 
 如果已经用「AI 服务（全部启动）」运行了服务，先运行「AI 服务（全部停止）」释放本地端口。模型密钥沿用本机环境变量。使用默认服务器且本机缺少中间件密码时，IDEA 通过 SSH 加载凭据。macOS 使用密码登录时会弹出 SSH 密码输入框，多个服务可以复用这次连接。评测服务独立启动时无需加载中间件密码。首次连接新服务器前先在终端确认其 SSH 主机指纹。
 

@@ -129,8 +129,12 @@ public class DegradationManager {
     /**
      * 手动触发降级
      */
-    public void manualDegradeTo(DegradationLevel level, String reason, String operator) {
+    public boolean manualDegradeTo(DegradationLevel level, String reason, String operator) {
+        if (!properties.isEnabled()) {
+            return false;
+        }
         degradeTo(level, reason, true, operator);
+        return true;
     }
 
     /**
