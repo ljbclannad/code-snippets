@@ -22,11 +22,13 @@ import com.lx.governance.aichat.metrics.AiChatMetrics;
 public class RetrievalQueryRewriteService {
 
     private static final int MAX_SUMMARY_COUNT = 2;
-    private static final String[] FOLLOW_UP_MARKERS = {
-            "那", "这个", "这种", "这样", "刚才", "上面", "前面", "继续", "还能", "需要调整", "可以吗", "怎么办", "怎么做"
+    private static final String[] SHORT_FOLLOW_UP_PREFIXES = {
+            "还是没", "还是不", "仍然没", "依然没", "那接下来", "那怎么办", "那怎么做",
+            "那还能", "还能继续", "还可以吗", "可以继续吗", "需要调整吗", "这个呢", "这样呢"
     };
     private static final String[] REFERENTIAL_PATTERNS = {
-            "我这种情况", "我这个情况", "那我", "那这种", "这个情况", "上次说的", "刚刚说的", "前面提到的"
+            "这种情况", "这个情况", "这样吃", "上次说的", "刚才说的", "刚刚说的",
+            "前面提到的", "之前说的", "之前的记录", "上次的记录", "结合我的历史"
     };
 
     private ContextBudgetProperties properties = new ContextBudgetProperties();
@@ -98,13 +100,12 @@ public class RetrievalQueryRewriteService {
         appendCoreProfile(parts, userProfile);
         appendIfPresent(parts, normalizedMessage);
 
-        String ruleQuery = joinAndTrim(parts);
+        String ruleQuery = joinAndTrim(parts, normalizedMessage);
         String source = ruleQuery.equals(normalizedMessage) ? "BYPASS" : "RULE";
         String reason = source.equals("RULE") ? "context_enriched" : "original_message_sufficient";
 
-        // 如果当前消息不复杂、也没有明显上下文指代信号，就直接使用规则结果，
-        // 这样可以把常规请求稳定地留在低成本路径上。
-        if (!shouldUseLlmRewrite(normalizedMessage, sessionContext, ruleQuery)) {
+        String llmReason = determineLlmReason(normalizedMessage, sessionContext);
+        if (llmReason == null) {
             RetrievalQuery result = RetrievalQuery.builder()
                     .originalMessage(message)
                     .rewrittenQuery(ruleQuery)
@@ -115,12 +116,10 @@ public class RetrievalQueryRewriteService {
             return result;
         }
 
-        // 只有在复杂上下文或强 follow-up 信号下才升级到 LLM。
-        // 这里仍然把 ruleQuery 作为 baseline 传进去，保证模型是在“已有上下文补全”的基础上做精修。
-        RetrievalRewriteResult rewriteResult = retrievalRewriteClient != null
-                ? retrievalRewriteClient.rewriteStructured(message, sessionContext, userProfile, ruleQuery)
-                : RetrievalRewriteResult.builder().rewrittenQuery("").build();
-        String llmQuery = rewriteResult.getRewrittenQuery();
+        // 模型以规则查询为基线，仅在满足配置的触发条件时补全检索语义。
+        RetrievalRewriteResult rewriteResult = retrievalRewriteClient
+                .rewriteStructured(message, sessionContext, userProfile, ruleQuery);
+        String llmQuery = rewriteResult == null ? null : rewriteResult.getRewrittenQuery();
 
         // LLM 重写结果必须通过长度、空值、答案化倾向和语义重叠校验；
         // 一旦不可靠，就立刻回退到 ruleQuery，避免把检索查询改坏。
@@ -139,7 +138,7 @@ public class RetrievalQueryRewriteService {
                 .originalMessage(message)
                 .rewrittenQuery(llmQuery)
                 .rewriteSource("LLM")
-                .rewriteReason(determineLlmReason(normalizedMessage, sessionContext))
+                .rewriteReason(llmReason)
                 .keywords(rewriteResult.getKeywords())
                 .suggestedMemoryTypes(rewriteResult.getSuggestedMemoryTypes())
                 .suggestedMinConfidence(rewriteResult.getSuggestedMinConfidence())
@@ -158,7 +157,7 @@ public class RetrievalQueryRewriteService {
                                 .build())
                         .filterExpression(rewriteResult.getFilterExpression())
                         .planSource("LLM")
-                        .planReason(determineLlmReason(normalizedMessage, sessionContext))
+                        .planReason(llmReason)
                         .contextDependent(rewriteResult.getContextDependent())
                         .build())
                 .build();
@@ -176,58 +175,55 @@ public class RetrievalQueryRewriteService {
                 System.currentTimeMillis() - startTime);
     }
 
-    private boolean shouldUseLlmRewrite(String normalizedMessage, SessionContext sessionContext, String ruleQuery) {
-        if (!properties.getMemory().getRewrite().isEnabled()) {
-            return false;
-        }
-        if (retrievalRewriteClient == null) {
-            return false;
-        }
-        // 如果既不要求“仅复杂场景”也不要求“上下文信号驱动”，说明配置上允许直接普遍启用 LLM 重写。
-        if (!properties.getMemory().getRewrite().isComplexOnly()
-                && !properties.getMemory().getRewrite().isContextualSignalsEnabled()) {
-            return true;
-        }
-        if (sessionContext != null && "complex".equalsIgnoreCase(sessionContext.getComplexity())) {
-            return true;
-        }
-        if (!properties.getMemory().getRewrite().isContextualSignalsEnabled()) {
-            return false;
-        }
-        return isContextDependentFollowUp(normalizedMessage, sessionContext, ruleQuery);
-    }
-
-    private boolean isContextDependentFollowUp(String normalizedMessage, SessionContext sessionContext, String ruleQuery) {
-        if (sessionContext == null) {
-            return false;
-        }
-
-        boolean hasSessionSignals = !normalize(sessionContext.getCurrentTopic()).isEmpty()
-                || !normalize(sessionContext.getUserIntent()).isEmpty()
-                || (sessionContext.getRecentSummaries() != null && !sessionContext.getRecentSummaries().isEmpty());
-        if (!hasSessionSignals) {
-            return false;
-        }
-        boolean hasHistorySignals = (sessionContext.getRecentSummaries() != null && !sessionContext.getRecentSummaries().isEmpty())
-                || (sessionContext.getPendingQuestions() != null && !sessionContext.getPendingQuestions().isEmpty())
-                || (sessionContext.getMentionedEntities() != null && !sessionContext.getMentionedEntities().isEmpty());
-
-        int threshold = properties.getMemory().getRewrite().getShortMessageThreshold();
-        boolean isShortMessage = normalizedMessage.length() <= threshold;
-        boolean hasFollowUpMarker = containsAny(normalizedMessage, FOLLOW_UP_MARKERS);
-        boolean hasReferentialPattern = containsAny(normalizedMessage, REFERENTIAL_PATTERNS);
-        boolean ruleNeedsContext = !normalize(ruleQuery).equals(normalizedMessage);
-
-        return (isShortMessage && hasFollowUpMarker && hasHistorySignals)
-                || hasReferentialPattern
-                || (isShortMessage && ruleNeedsContext && hasHistorySignals);
-    }
-
     private String determineLlmReason(String normalizedMessage, SessionContext sessionContext) {
-        if (sessionContext != null && "complex".equalsIgnoreCase(sessionContext.getComplexity())) {
+        ContextBudgetProperties.RewriteConfig rewrite = properties.getMemory().getRewrite();
+        if (!rewrite.isEnabled() || retrievalRewriteClient == null) {
+            return null;
+        }
+        if (rewrite.isComplexOnly() && sessionContext != null
+                && "complex".equalsIgnoreCase(sessionContext.getComplexity())) {
             return "complex_context_rewrite";
         }
-        return "context_signal_rewrite";
+        if (!rewrite.isContextualSignalsEnabled()) {
+            // 保留两个触发门槛都关闭时的全量改写配置。
+            return rewrite.isComplexOnly() ? null : "context_signal_rewrite";
+        }
+        return hasContextReference(normalizedMessage, sessionContext) ? "context_signal_rewrite" : null;
+    }
+
+    boolean isContextDependentFollowUp(String message, SessionContext sessionContext) {
+        return properties.getMemory().getRewrite().isContextualSignalsEnabled()
+                && hasContextReference(normalize(message), sessionContext);
+    }
+
+    private boolean hasContextReference(String normalizedMessage, SessionContext sessionContext) {
+        if (sessionContext == null || normalizedMessage.isEmpty()) {
+            return false;
+        }
+        List<MessageSummary> summaries = sessionContext.getRecentSummaries();
+        if (summaries == null || summaries.isEmpty()) {
+            return false;
+        }
+        int start = Math.max(0, summaries.size() - MAX_SUMMARY_COUNT);
+        // 话题和意图可能来自本轮，只有确有不同的近期用户原话才补全指代。
+        boolean hasPriorMessage = summaries.subList(start, summaries.size()).stream()
+                .filter(summary -> summary != null)
+                .map(summary -> normalize(summary.getUserMessage()))
+                .anyMatch(summary -> !summary.isEmpty() && !summary.equals(normalizedMessage));
+        if (!hasPriorMessage) {
+            return false;
+        }
+        if (containsAny(normalizedMessage, REFERENTIAL_PATTERNS)) {
+            return true;
+        }
+        if (normalizedMessage.length() <= properties.getMemory().getRewrite().getShortMessageThreshold()) {
+            for (String prefix : SHORT_FOLLOW_UP_PREFIXES) {
+                if (normalizedMessage.startsWith(prefix)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private void appendRecentSummaries(List<String> parts, SessionContext sessionContext) {
@@ -270,14 +266,22 @@ public class RetrievalQueryRewriteService {
         }
     }
 
-    private String joinAndTrim(List<String> parts) {
+    private String joinAndTrim(List<String> parts, String normalizedMessage) {
         Set<String> deduplicated = new LinkedHashSet<>(parts);
         String joined = String.join(" ", deduplicated).trim();
         int maxQueryLength = properties.getMemory().getRewrite().getMaxQueryLength();
         if (joined.length() <= maxQueryLength) {
             return joined;
         }
-        return joined.substring(0, maxQueryLength).trim();
+
+        // 规则路径优先保留本轮原话，避免历史摘要耗尽检索词预算。
+        if (normalizedMessage.length() >= maxQueryLength) {
+            return normalizedMessage.substring(0, maxQueryLength).trim();
+        }
+        deduplicated.remove(normalizedMessage);
+        String context = String.join(" ", deduplicated);
+        int contextLength = Math.min(context.length(), maxQueryLength - normalizedMessage.length() - 1);
+        return (context.substring(0, contextLength).trim() + " " + normalizedMessage).trim();
     }
 
     private boolean isValidLlmRewrite(String llmQuery, String normalizedMessage, String ruleQuery) {

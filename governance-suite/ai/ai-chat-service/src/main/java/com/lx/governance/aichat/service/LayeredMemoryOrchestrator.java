@@ -51,9 +51,10 @@ public class LayeredMemoryOrchestrator {
                     .build());
         }
 
-        boolean shouldRetrieve = MessageValidator.shouldRetrieveMemories(
-                message,
-                sessionContext != null ? sessionContext.getComplexity() : null);
+        String complexity = sessionContext != null ? sessionContext.getComplexity() : null;
+        boolean shouldRetrieve = MessageValidator.shouldRetrieveMemoriesByRule(message)
+                && (!"simple".equalsIgnoreCase(complexity)
+                || retrievalQueryRewriteService.isContextDependentFollowUp(message, sessionContext));
 
         if (!shouldRetrieve) {
             return CompletableFuture.completedFuture(LayeredMemories.builder()

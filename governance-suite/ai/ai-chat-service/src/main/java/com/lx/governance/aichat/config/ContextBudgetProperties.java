@@ -68,8 +68,8 @@ public class ContextBudgetProperties {
         /** 是否启用 LLM Query Rewrite */
         private boolean enabled = true;
 
-        /** 是否保留复杂问题强制触发 */
-        private boolean complexOnly = true;
+        /** 是否将复杂度作为独立的模型改写触发条件 */
+        private boolean complexOnly = false;
 
         /** 是否启用基于上下文依赖信号的 LLM Rewrite */
         private boolean contextualSignalsEnabled = true;

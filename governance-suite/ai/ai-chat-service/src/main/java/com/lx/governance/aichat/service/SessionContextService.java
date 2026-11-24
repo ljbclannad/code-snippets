@@ -38,6 +38,8 @@ public class SessionContextService {
     private static final int SIMPLE_WINDOW_SIZE = 3;
     private static final int COMPLEX_WINDOW_SIZE = 5;
     private static final int MAX_SUMMARY_LENGTH = 50;
+    private static final int SHORT_FOLLOW_UP_LENGTH = 20;
+    private static final List<String> FOLLOW_UP_PREFIXES = List.of("那", "还是", "仍然", "依旧", "接下来", "之前", "这次");
 
     @Autowired
     private RedisTemplate<String, String> redisTemplate;
@@ -119,7 +121,7 @@ public class SessionContextService {
                     List<MessageSummary> recentMessages = context.getRecentSummaries();
                     SessionContext updatedContext = intentAnalyzer.analyzeIntentWithTimeout(
                             currentMessage,
-                            recentMessages,
+                            recentMessages == null ? Collections.emptyList() : recentMessages,
                             5000);
 
                     if (updatedContext != null) {
@@ -242,7 +244,8 @@ public class SessionContextService {
             }
 
             // 1. 增加消息计数
-            context.setMessageCount(context.getMessageCount() + 1);
+            int messageCount = context.getMessageCount() != null ? context.getMessageCount() : 1;
+            context.setMessageCount(messageCount + 1);
 
             // 2. 添加消息摘要到滑动窗口
             String summary = truncateMessage(userMessage, MAX_SUMMARY_LENGTH);
@@ -252,6 +255,10 @@ public class SessionContextService {
                     .build();
 
             List<MessageSummary> summaries = context.getRecentSummaries();
+            if (summaries == null) {
+                summaries = new ArrayList<>();
+                context.setRecentSummaries(summaries);
+            }
             summaries.add(messageSummary);
 
             // 3. 维护滑动窗口大小
@@ -259,23 +266,9 @@ public class SessionContextService {
                     ? COMPLEX_WINDOW_SIZE
                     : SIMPLE_WINDOW_SIZE;
 
-            if (summaries.size() > windowSize) {
-                summaries.remove(0);
-            }
+            summaries.subList(0, Math.max(0, summaries.size() - windowSize)).clear();
 
-            // 4. 调用DeepSeek更新意图分析
-            SessionContext updatedContext = intentAnalyzer.analyzeIntent(userMessage, summaries);
-            if (updatedContext != null) {
-                context.setCurrentTopic(updatedContext.getCurrentTopic());
-                context.setConversationPhase(updatedContext.getConversationPhase());
-                context.setMentionedEntities(updatedContext.getMentionedEntities());
-                context.setExtractedData(updatedContext.getExtractedData());
-                context.setUserIntent(updatedContext.getUserIntent());
-                context.setPendingQuestions(updatedContext.getPendingQuestions());
-                context.setComplexity(updatedContext.getComplexity());
-            }
-
-            // 5. 更新时间戳
+            // 意图只在入口按需分析。写回保留入口已入库的意图及同轮更新的路由和审批状态。
             context.setLastUpdateTime(System.currentTimeMillis());
             context.setLastMessageAt(eventTimestamp);
             if (requestId != null && !requestId.isBlank()) {
@@ -283,7 +276,6 @@ public class SessionContextService {
             }
             context.setContextVersion(nextVersion(context.getContextVersion()));
 
-            // 6. 保存到Redis并刷新TTL
             saveToRedis(key, context);
 
             log.debug("更新会话上下文成功: conversationId={}", conversationId);
@@ -404,9 +396,16 @@ public class SessionContextService {
      * 判断是否需要重新分析意图（混合策略）
      */
     private boolean shouldReanalyzeIntent(SessionContext context, String currentMessage) {
-        // 策略1：首条消息后的第2条，快速验证首次分析
-        if (context.getMessageCount() == 1) {
-            log.debug("触发重新分析: 第2条消息验证");
+        Integer messageCount = context.getMessageCount();
+        // 已创建上下文但尚无完成的回复，或者旧数据缺少计数。
+        if (messageCount == null || messageCount <= 1) {
+            return true;
+        }
+
+        // 非通用意图或待确认问题会直接影响路由，下一轮应按当前消息重新判断。
+        if (!DEFAULT_INTENT.equals(context.getUserIntent())
+                || (context.getPendingQuestions() != null && !context.getPendingQuestions().isEmpty())
+                || isContextDependentFollowUp(context, currentMessage)) {
             return true;
         }
 
@@ -417,7 +416,7 @@ public class SessionContextService {
         }
 
         // 策略3：定期重新分析（每5条）
-        if (context.getMessageCount() % 5 == 0) {
+        if (messageCount % 5 == 0) {
             log.debug("触发重新分析: 定期检查（每5条消息）");
             return true;
         }
@@ -431,6 +430,14 @@ public class SessionContextService {
         }
 
         return false;
+    }
+
+    private boolean isContextDependentFollowUp(SessionContext context, String currentMessage) {
+        if (currentMessage == null || context.getRecentSummaries() == null || context.getRecentSummaries().isEmpty()) {
+            return false;
+        }
+        String message = currentMessage.strip();
+        return message.length() <= SHORT_FOLLOW_UP_LENGTH && FOLLOW_UP_PREFIXES.stream().anyMatch(message::startsWith);
     }
 
     /**

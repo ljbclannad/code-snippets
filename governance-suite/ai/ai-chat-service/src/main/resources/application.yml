@@ -123,8 +123,8 @@ ai:
       enable-deduplication: true # 启用去重
       rewrite:
         enabled: true # 启用 LLM Query Rewrite
-        complex-only: true # 复杂问题仍强制走 LLM Rewrite
-        contextual-signals-enabled: true # 简单问题也可按上下文依赖信号触发
+        complex-only: false # 关闭仅凭复杂度触发模型改写
+        contextual-signals-enabled: true # 有明确上下文依赖时触发模型改写
         short-message-threshold: 18 # 短追问判定阈值
         temperature: 0.0 # 尽量稳定输出
         max-tokens: 64 # Rewrite 输出上限

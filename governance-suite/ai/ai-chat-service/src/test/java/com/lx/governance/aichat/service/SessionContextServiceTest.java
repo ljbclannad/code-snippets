@@ -3,7 +3,9 @@ package com.lx.governance.aichat.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lx.governance.aichat.dto.DoctorAssistantTaskResponse;
 import com.lx.governance.aichat.dto.DoctorAssistantTaskStatus;
+import com.lx.governance.aichat.dto.MessageSummary;
 import com.lx.governance.aichat.dto.SessionContext;
+import com.lx.governance.aichat.dto.TaskTriggerContext;
 import com.lx.governance.aichat.dto.TaskTriggerDecision;
 import com.lx.governance.aichat.dto.TaskTriggerReason;
 import com.lx.governance.aichat.dto.TaskTriggerRoute;
@@ -18,7 +20,9 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 
 import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -88,6 +92,7 @@ class SessionContextServiceTest {
             .conversationId(conversationId)
             .customerId("user-001")
             .currentTopic("血糖管理")
+            .userIntent("general_health_consultation")
             .messageCount(2)
             .lastUpdateTime(System.currentTimeMillis())
             .build();
@@ -104,40 +109,114 @@ class SessionContextServiceTest {
         assertEquals(conversationId, result.getConversationId());
         assertEquals(2, result.getMessageCount());
 
-        verify(valueOperations, times(1)).get(anyString());
-        verify(intentAnalyzer, never()).analyzeIntentWithTimeout(anyString(), anyList(), anyLong());
+        sessionContextService.updateContext(conversationId, "继续咨询", "请继续描述您的情况。");
+
+        verify(valueOperations, times(2)).get(anyString());
+        verifyNoInteractions(intentAnalyzer);
     }
 
     @Test
-    void testUpdateContext_Success() throws Exception {
-        // Given
+    void firstTurnAnalyzesOnceAndCompletionKeepsAnalysisAndRoutingMetadata() throws Exception {
         String conversationId = "conv-001";
-        SessionContext existingContext = SessionContext.builder()
-            .conversationId(conversationId)
-            .customerId("user-001")
-            .messageCount(1)
-            .complexity("simple")
-            .recentSummaries(new ArrayList<>())
-            .build();
+        String message = "我想咨询血糖问题";
+        AtomicReference<String> stored = mockStoredContext(conversationId, null);
+        SessionContext analyzedContext = SessionContext.builder()
+                .currentTopic("血糖管理")
+                .userIntent("general_health_consultation")
+                .pendingQuestions(List.of("最近一次血糖是多少？"))
+                .complexity("simple")
+                .build();
+        when(intentAnalyzer.analyzeIntentWithTimeout(eq(message), anyList(), anyLong())).thenReturn(analyzedContext);
 
-        String json = objectMapper.writeValueAsString(existingContext);
-        when(valueOperations.get(anyString())).thenReturn(json);
+        sessionContextService.getOrCreateContext(conversationId, "user-001", "group-001", message, "req-1", 1_000L);
+        sessionContextService.recordTaskTriggerDecision(conversationId, TaskTriggerDecision.builder()
+                .route(TaskTriggerRoute.DIRECT_CHAT)
+                .taskType(TaskType.NONE)
+                .reasons(List.of(TaskTriggerReason.PROFILE_COMPLETION_FOLLOW_UP))
+                .build(), "req-1", 1_000L);
+        sessionContextService.updateContext(conversationId, message, "请补充最近的测量值。", "req-1", 1_000L);
 
-        SessionContext updatedAnalysis = SessionContext.builder()
-            .currentTopic("饮食建议")
-            .conversationPhase("consulting")
-            .complexity("simple")
-            .build();
-        when(intentAnalyzer.analyzeIntent(anyString(), anyList()))
-            .thenReturn(updatedAnalysis);
+        SessionContext completed = objectMapper.readValue(stored.get(), SessionContext.class);
+        assertEquals("血糖管理", completed.getCurrentTopic());
+        assertEquals(List.of("最近一次血糖是多少？"), completed.getPendingQuestions());
+        assertEquals(List.of(TaskTriggerReason.PROFILE_COMPLETION_FOLLOW_UP), completed.getLastTaskTriggerReasons());
+        assertEquals(2, completed.getMessageCount());
+        assertEquals(List.of(message), completed.getRecentSummaries().stream().map(MessageSummary::getUserMessage).toList());
+        assertEquals("req-1", completed.getLastProcessedRequestId());
+        verify(intentAnalyzer).analyzeIntentWithTimeout(eq(message), anyList(), anyLong());
+        verifyNoMoreInteractions(intentAnalyzer);
+    }
 
-        // When
-        sessionContextService.updateContext(conversationId, "我应该吃什么", "建议...");
+    @Test
+    void shortFollowUpReanalyzesWithHistoryBeforeRoutingAndOnlyOnce() throws Exception {
+        String conversationId = "conv-001";
+        String message = "还是没怎么掉";
+        MessageSummary previous = MessageSummary.builder().userMessage("过去一周都在记录体重").build();
+        SessionContext existing = SessionContext.builder()
+                .conversationId(conversationId)
+                .customerId("user-001")
+                .currentTopic("减肥")
+                .userIntent("general_health_consultation")
+                .complexity("simple")
+                .lastUpdateTime(System.currentTimeMillis())
+                .messageCount(3)
+                .recentSummaries(List.of(previous))
+                .build();
+        AtomicReference<String> stored = mockStoredContext(conversationId, existing);
+        when(intentAnalyzer.analyzeIntentWithTimeout(eq(message), eq(List.of(previous)), anyLong()))
+                .thenReturn(SessionContext.builder().currentTopic("减肥").userIntent("follow_up_trend_analysis").build());
 
-        // Then
-        verify(valueOperations, times(1)).get(anyString());
-        verify(intentAnalyzer, times(1)).analyzeIntent(anyString(), anyList());
-        verify(valueOperations, times(1)).set(anyString(), anyString(), anyLong(), any(TimeUnit.class));
+        SessionContext context = sessionContextService.getOrCreateContext(
+                conversationId, "user-001", "group-001", message, "req-2", 2_000L);
+        TaskTriggerDecision decision = new TaskTriggerRouter().route(TaskTriggerContext.builder()
+                .message(message).sessionContext(context).build());
+        sessionContextService.updateContext(conversationId, message, "已提交分析。", "req-2", 2_000L);
+
+        assertEquals(TaskType.PATIENT_FOLLOW_UP_ANALYSIS, decision.getTaskType());
+        SessionContext completed = objectMapper.readValue(stored.get(), SessionContext.class);
+        assertEquals("follow_up_trend_analysis", completed.getUserIntent());
+        assertEquals(2, completed.getRecentSummaries().size());
+        verify(intentAnalyzer).analyzeIntentWithTimeout(eq(message), eq(List.of(previous)), anyLong());
+        verifyNoMoreInteractions(intentAnalyzer);
+    }
+
+    @Test
+    void priorIdleIntentAndPendingQuestionsDoNotMaskNewSensitiveRequest() throws Exception {
+        String conversationId = "conv-001";
+        String message = "我的药能自行减半吗";
+        SessionContext existing = SessionContext.builder()
+                .conversationId(conversationId)
+                .customerId("user-001")
+                .currentTopic("用药咨询")
+                .userIntent("casual_chat")
+                .pendingQuestions(List.of("请补充睡眠情况"))
+                .messageCount(3)
+                .lastUpdateTime(System.currentTimeMillis())
+                .build();
+        mockStoredContext(conversationId, existing);
+        when(intentAnalyzer.analyzeIntentWithTimeout(eq(message), anyList(), anyLong()))
+                .thenReturn(SessionContext.builder().currentTopic("用药咨询").userIntent("risk_review_request").build());
+
+        SessionContext context = sessionContextService.getOrCreateContext(conversationId, "user-001", "group-001", message);
+
+        TaskTriggerDecision decision = new TaskTriggerRouter().route(TaskTriggerContext.builder()
+                .message(message).sessionContext(context).build());
+        assertEquals(TaskType.RISK_STRATIFICATION_AND_ESCALATION, decision.getTaskType());
+        assertTrue(context.getPendingQuestions().isEmpty());
+        verify(intentAnalyzer).analyzeIntentWithTimeout(eq(message), anyList(), anyLong());
+        verifyNoMoreInteractions(intentAnalyzer);
+    }
+
+    private AtomicReference<String> mockStoredContext(String conversationId, SessionContext initial) throws Exception {
+        String key = "ai:session:owned-context:" + conversationId;
+        AtomicReference<String> stored = new AtomicReference<>(
+                initial != null ? objectMapper.writeValueAsString(initial) : null);
+        when(valueOperations.get(key)).thenAnswer(invocation -> stored.get());
+        doAnswer(invocation -> {
+            stored.set(invocation.getArgument(1));
+            return null;
+        }).when(valueOperations).set(eq(key), anyString(), anyLong(), any(TimeUnit.class));
+        return stored;
     }
 
     @Test
