@@ -213,26 +213,6 @@ CREATE TABLE `b_ai_group_memory_review_audit` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='长期记忆审核审计表';
 
 
-CREATE TABLE `b_ai_chat_history` (
-  `id` bigint NOT NULL AUTO_INCREMENT COMMENT '主键',
-  `customer_id` varchar(64) NOT NULL COMMENT '用户ID',
-  `group_id` varchar(64) NOT NULL COMMENT '群组ID',
-  `conversation_id` varchar(128) NOT NULL COMMENT 'Dify会话ID',
-  `user_message` text NOT NULL COMMENT '用户消息',
-  `ai_response` text COMMENT 'AI回复',
-  `role` varchar(32) DEFAULT NULL COMMENT '角色类型: doctor/nutritionist/customer',
-  `trace_id` varchar(64) DEFAULT NULL COMMENT '追踪ID',
-  `response_time` int DEFAULT NULL COMMENT '响应时间(毫秒)',
-  `is_deleted` tinyint DEFAULT '0' COMMENT '逻辑删除: 0=有效, 1=已删除',
-  `create_time` datetime DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-  PRIMARY KEY (`id`),
-  KEY `idx_customer_group` (`customer_id`,`group_id`,`is_deleted`),
-  KEY `idx_conversation` (`conversation_id`),
-  KEY `idx_trace_id` (`trace_id`),
-  KEY `idx_create_time` (`create_time`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='AI聊天历史表';
-
-
 CREATE TABLE IF NOT EXISTS ai_chat_conversation_owner (
     conversation_id VARCHAR(128) COLLATE utf8mb4_bin NOT NULL PRIMARY KEY,
     customer_id VARCHAR(64) COLLATE utf8mb4_bin NULL COMMENT '历史归属冲突时为空，拒绝访问'

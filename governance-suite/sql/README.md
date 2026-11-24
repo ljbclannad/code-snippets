@@ -43,7 +43,7 @@ mysql -h127.0.0.1 -P3306 -uroot -proot < ai/init-databases.sql
 ```
 
 包含数据库：
-- `governance` - 用户画像、向量记忆、知识库（共享）
+- `governance` - 用户画像、向量记忆、对话和知识库服务共享
 - `doctor_assistant` - 医生助手 Agent
 
 ## 完整初始化（推荐）
@@ -81,8 +81,8 @@ docker compose up -d
 | 服务                   | 数据库           | 表                                                                                                           |
 | ---------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------ |
 | user-profile-service   | governance       | t_customer, t_health_assessment, b_ai_user_memory, b_user_profile_*                                          |
-| vector-memory-service  | governance       | b_ai_group_memory*, b_ai_chat_history, t_ai_chat_history                                                     |
-| ai-chat-service        | -                | 无（仅使用 Redis/RabbitMQ/Elasticsearch）                                                                    |
+| vector-memory-service  | governance       | b_ai_group_memory*                                                                                           |
+| ai-chat-service        | governance       | t_ai_chat_history, ai_chat_conversation_owner                                                                |
 | doctor-assistant-agent | doctor_assistant | agent_*, chat_message, follow_up_task, health_knowledge, patient_profile, prescription_record, weight_record |
 | knowledge-base-service | governance       | knowledge_base, knowledge_document, knowledge_document_chunk, knowledge_document_parse_result                |
 
