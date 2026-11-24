@@ -63,7 +63,7 @@ mvn -f pom.xml spring-boot:run
 ### 开启试点
 
 1. 在业务库已有医生助手表的环境，向 `doctor_assistant` 库应用 [随访提醒迁移](sql/migrations/2026-11-23-high-risk-follow-up.sql)。新环境使用本模块的 `sql/schema.sql`。
-2. 为聊天和医生助手两个服务注入相同的 `FOLLOW_UP_SERVICE_TOKEN`，仅允许服务端通过受保护的网络访问 `/internal/patient-tasks/high-risk-follow-up`。沿用 `ai-chat.agent.base-url` 和 `timeout-ms`，服务间经过网络时使用 HTTPS。
+2. 为聊天和医生助手两个服务注入相同的 `FOLLOW_UP_SERVICE_TOKEN`，仅允许服务端通过受保护的网络访问 `/internal/patient-tasks/high-risk-follow-up`。聊天服务通过 `ai-chat.agent.service-id` 在 Nacos 定位医生助手实例，沿用 `ai-chat.agent.timeout-ms`。两服务使用同一 Nacos 命名空间和分组，服务间经过网络时使用 HTTPS。
 3. 在医生助手配置中按患者 ID 分配责任医生。示例配置如下，替换为试点身份系统中的实际标识。
 
    ```yaml

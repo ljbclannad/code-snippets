@@ -3,18 +3,24 @@ package com.lx.governance.aichat.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
-import java.util.concurrent.Executors;
 import java.util.List;
 import com.lx.governance.aichat.dto.StreamEvent;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.cloud.client.DefaultServiceInstance;
+import org.springframework.cloud.client.loadbalancer.LoadBalancerClient;
 import org.springframework.web.client.RestClient;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -29,6 +35,9 @@ import com.sun.net.httpserver.HttpServer;
 
 class HttpDoctorAssistantAgentGatewayTest {
 
+    private static final String SERVICE_ID = "doctor-assistant-agent";
+
+    private final LoadBalancerClient loadBalancer = mock(LoadBalancerClient.class);
     private HttpServer server;
 
     @AfterEach
@@ -41,7 +50,7 @@ class HttpDoctorAssistantAgentGatewayTest {
     @Test
     void patientStreamNeverSerializesInternalStagesOrErrors() throws Exception {
         ObjectMapper mapper = new ObjectMapper();
-        var gateway = new HttpDoctorAssistantAgentGateway(RestClient.create(), mapper, true, "http://localhost", 5000, "test-token");
+        var gateway = gateway(mapper, true);
         var root = mapper.readTree("{\"sessionId\":\"internal-secret\",\"data\":{\"message\":\"internal-secret\"}}");
         var request = DoctorAssistantTaskRequest.builder().conversationId("c1").build();
         for (String stage : List.of("THINKING_DELTA", "THOUGHT", "ACTION", "OBSERVATION", "ERROR", "FUTURE_STAGE")) {
@@ -53,9 +62,7 @@ class HttpDoctorAssistantAgentGatewayTest {
     @Test
     void shouldKeepRunAssociationInStreamResultWithoutInternalPayload() throws Exception {
         ObjectMapper mapper = new ObjectMapper();
-        HttpDoctorAssistantAgentGateway gateway = new HttpDoctorAssistantAgentGateway(
-                RestClient.builder().baseUrl("http://localhost:65535").build(), mapper,
-                true, "http://localhost:65535", 5000, "test-token");
+        var gateway = gateway(mapper, true);
         var result = mapper.readTree("""
                 {"status":"SUCCESS","patientSafeReply":"安全回复",
                  "traceContext":{"runId":"run-123","correlationId":"corr-123"},
@@ -77,7 +84,7 @@ class HttpDoctorAssistantAgentGatewayTest {
 
     @Test
     void shouldCallAnalyzeEndpointAndParseResponse() throws Exception {
-        server = HttpServer.create(new InetSocketAddress(0), 0);
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/api/patient-tasks/analyze", new JsonHandler("""
                 {
                   "agentSessionId": "agent-session-1",
@@ -98,15 +105,9 @@ class HttpDoctorAssistantAgentGatewayTest {
                   "needsHumanReview": true
                 }
                 """));
-        server.setExecutor(Executors.newSingleThreadExecutor());
         server.start();
-
-        HttpDoctorAssistantAgentGateway gateway = new HttpDoctorAssistantAgentGateway(
-                RestClient.builder().baseUrl("http://localhost:" + server.getAddress().getPort()).build(),
-                new ObjectMapper(),
-                true,
-                "http://localhost:" + server.getAddress().getPort(),
-                5000, "test-token");
+        registerTestInstance();
+        var gateway = gateway(new ObjectMapper(), true);
 
         DoctorAssistantTaskResponse response = gateway.analyzePatientTask(DoctorAssistantTaskRequest.builder()
                 .taskType(TaskType.PATIENT_FOLLOW_UP_ANALYSIS)
@@ -119,6 +120,7 @@ class HttpDoctorAssistantAgentGatewayTest {
         assertEquals("agent-session-1", response.getAgentSessionId());
         assertEquals(1, response.getPatientVisibleEvidence().size());
         assertEquals("血糖复盘建议", response.getPatientVisibleEvidence().get(0).getTitle());
+        verify(loadBalancer).choose(SERVICE_ID);
     }
 
     @Test
@@ -145,9 +147,9 @@ class HttpDoctorAssistantAgentGatewayTest {
             }
         });
         server.start();
+        registerTestInstance();
         var mapper = new ObjectMapper();
-        var gateway = new HttpDoctorAssistantAgentGateway(RestClient.create(), mapper, true,
-                "http://127.0.0.1:" + server.getAddress().getPort(), 5000, "test-token");
+        var gateway = gateway(mapper, true);
         var request = DoctorAssistantTaskRequest.builder().conversationId("c1").build();
         var events = gateway.analyzePatientTaskStream(request).collectList().block();
         assertEquals(List.of(StreamEvent.EventType.STATUS, StreamEvent.EventType.CONTENT, StreamEvent.EventType.DONE),
@@ -156,21 +158,41 @@ class HttpDoctorAssistantAgentGatewayTest {
         assertTrue(!mapper.writeValueAsString(events).contains("internal-secret"));
         wire.set("data: {\"type\":\"DONE\"}\n\n");
         assertThrows(AiServiceException.class, () -> gateway.analyzePatientTaskStream(request).collectList().block());
+        verify(loadBalancer, times(2)).choose(SERVICE_ID);
     }
 
     @Test
     void shouldThrowWhenGatewayDisabled() {
-        HttpDoctorAssistantAgentGateway gateway = new HttpDoctorAssistantAgentGateway(
-                RestClient.builder().baseUrl("http://localhost:65535").build(),
-                new ObjectMapper(),
-                false,
-                "http://localhost:65535",
-                5000, "test-token");
+        var gateway = gateway(new ObjectMapper(), false);
 
         AiServiceException exception = assertThrows(AiServiceException.class,
                 () -> gateway.analyzePatientTask(DoctorAssistantTaskRequest.builder().build()));
 
         assertTrue(exception.getMessage().contains("doctor-assistant-agent 未启用"));
+        verifyNoInteractions(loadBalancer);
+    }
+
+    @Test
+    void shouldReportNoAvailableInstanceForBothProtocols() {
+        var gateway = gateway(new ObjectMapper(), true);
+        var request = DoctorAssistantTaskRequest.builder().build();
+
+        var syncFailure = assertThrows(AiServiceException.class, () -> gateway.analyzePatientTask(request));
+        var streamFailure = assertThrows(AiServiceException.class,
+                () -> gateway.analyzePatientTaskStream(request).blockLast());
+
+        assertTrue(syncFailure.getMessage().contains("Nacos 中没有可用的医生助手实例"));
+        assertTrue(streamFailure.getMessage().contains("Nacos 中没有可用的医生助手实例"));
+    }
+
+    private HttpDoctorAssistantAgentGateway gateway(ObjectMapper mapper, boolean enabled) {
+        var endpoint = new DoctorAssistantAgentEndpoint(loadBalancer, SERVICE_ID, "");
+        return new HttpDoctorAssistantAgentGateway(RestClient.create(), mapper, enabled, endpoint, 5000, "test-token");
+    }
+
+    private void registerTestInstance() {
+        when(loadBalancer.choose(SERVICE_ID)).thenReturn(new DefaultServiceInstance(
+                "doctor-test", SERVICE_ID, "127.0.0.1", server.getAddress().getPort(), false));
     }
 
     private static class JsonHandler implements HttpHandler {

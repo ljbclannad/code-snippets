@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.util.Map;
 import java.util.UUID;
@@ -25,15 +26,18 @@ public class HighRiskFollowUpChat {
             + "|(?:处理|发送|送达)了吗|(?:现在)?(?:什么进度|什么状态|进度如何|进度|状态)|(?:任务|复核|随访提醒)(?:怎么样了|有结果了吗)|到哪一步了)[？?。！!]*");
 
     private final RestClient client;
+    private final DoctorAssistantAgentEndpoint endpoint;
     private final AiChatMetrics metrics;
     private final AgentDispatchPolicy dispatch;
     private final boolean enabled;
     private final String serviceToken;
 
-    public HighRiskFollowUpChat(@Qualifier("doctorAssistantAgentRestClient") RestClient client, AiChatMetrics metrics, AgentDispatchPolicy dispatch,
+    public HighRiskFollowUpChat(@Qualifier("doctorAssistantAgentRestClient") RestClient client,
+            DoctorAssistantAgentEndpoint endpoint, AiChatMetrics metrics, AgentDispatchPolicy dispatch,
             @Value("${ai-chat.follow-up-reminder.enabled:false}") boolean enabled,
             @Value("${ai-chat.follow-up-reminder.service-token:}") String serviceToken) {
         this.client = client;
+        this.endpoint = endpoint;
         this.metrics = metrics;
         this.dispatch = dispatch;
         this.enabled = enabled;
@@ -74,7 +78,7 @@ public class HighRiskFollowUpChat {
             return unavailable();
         }
         try {
-            Receipt receipt = client.post().uri("/internal/patient-tasks/high-risk-follow-up")
+            Receipt receipt = client.post().uri(endpoint.resolve("/internal/patient-tasks/high-risk-follow-up"))
                     .header("X-Follow-Up-Token", serviceToken)
                     .body(Map.of("customerId", request.getCustomerId(), "conversationId", request.getConversationId(),
                             "requestId", request.getRequestId(), "patientMessage", request.getMessage()))
@@ -104,9 +108,10 @@ public class HighRiskFollowUpChat {
             return unknown;
         }
         try {
-            Progress result = client.get().uri(builder -> builder.path("/internal/patient-tasks/review-status")
-                            .queryParam("customerId", "{patient}").queryParam("conversationId", "{conversation}")
-                            .build(request.getCustomerId(), request.getConversationId()))
+            var uri = UriComponentsBuilder.fromUri(endpoint.resolve("/internal/patient-tasks/review-status"))
+                    .queryParam("customerId", "{patient}").queryParam("conversationId", "{conversation}")
+                    .build(request.getCustomerId(), request.getConversationId());
+            Progress result = client.get().uri(uri)
                     .header("X-Follow-Up-Token", serviceToken).retrieve().body(Progress.class);
             if (result == null || result.status() == null) {
                 return unknown;

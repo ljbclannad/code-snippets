@@ -115,6 +115,8 @@ ai/
 
 聊天、向量记忆、知识库和医生助手配置了 Nacos 服务注册。画像服务关闭了服务发现，评测服务独立运行。MySQL、Redis、RabbitMQ、Elasticsearch 和 Milvus 由本地与服务器环境共享。
 
+对话自动升级默认启用，可用 `AI_CHAT_AGENT_ENABLED=false` 关闭。聊天服务按 `ai-chat.agent.service-id`（默认 `doctor-assistant-agent`）从 Nacos 选择实例，通过 HTTP 调用同步分析、流式分析及复核接口。两服务必须使用同一个命名空间和分组（默认 `DEFAULT_GROUP`），并且配置相同的 `FOLLOW_UP_SERVICE_TOKEN`。部署到 Compose 时，为两个服务设置 `SPRING_CLOUD_NACOS_DISCOVERY_SERVER_ADDR=nacos:8848` 和 `NACOS_NAMESPACE=public`。固定地址的外部集成测试可使用 `ai-chat.agent.base-url` 覆盖服务发现。
+
 在本地终端或 IDE 运行配置中注入服务器对应的环境变量。业务库使用 `GOVERNANCE_DB_PASSWORD`，医生助手库使用 `DOCTOR_DB_PASSWORD`，Redis 和 RabbitMQ 分别使用 `REDIS_PASSWORD` 和 `RABBITMQ_PASSWORD`。数据库账号默认分别为 `governance_app` 和 `doctor_app`，RabbitMQ 默认使用 `governance_app`。
 
 一键启动脚本优先使用当前环境已有的凭据；连接默认服务器时，它会通过 SSH 从部署目录加载缺少的中间件密码。使用 SSH 密码登录时，在终端按提示输入。单独运行 Maven 时，可以先将四项凭据载入当前终端：

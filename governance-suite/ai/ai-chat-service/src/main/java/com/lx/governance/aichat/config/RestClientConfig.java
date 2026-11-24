@@ -18,9 +18,6 @@ import org.springframework.web.client.RestClient;
 @Configuration
 public class RestClientConfig {
 
-    @Value("${ai-chat.agent.base-url:http://localhost:8088}")
-    private String doctorAssistantAgentBaseUrl;
-
     @Value("${ai-chat.agent.timeout-ms:15000}")
     private int doctorAssistantAgentTimeoutMs;
 
@@ -39,7 +36,6 @@ public class RestClientConfig {
     @Bean
     public RestClient doctorAssistantAgentRestClient() {
         return RestClient.builder()
-                .baseUrl(doctorAssistantAgentBaseUrl)
                 .defaultHeader("Content-Type", "application/json")
                 .requestFactory(clientHttpRequestFactory(doctorAssistantAgentTimeoutMs))
                 .build();

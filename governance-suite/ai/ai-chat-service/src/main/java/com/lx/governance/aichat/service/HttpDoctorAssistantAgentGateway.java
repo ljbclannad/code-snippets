@@ -4,7 +4,6 @@ import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -42,7 +41,7 @@ public class HttpDoctorAssistantAgentGateway implements DoctorAssistantAgentGate
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
     private final boolean enabled;
-    private final String baseUrl;
+    private final DoctorAssistantAgentEndpoint endpoint;
     private final Duration timeout;
     private final HttpClient httpClient;
     private final String serviceToken;
@@ -51,14 +50,14 @@ public class HttpDoctorAssistantAgentGateway implements DoctorAssistantAgentGate
             @Qualifier("doctorAssistantAgentRestClient") RestClient restClient,
             ObjectMapper objectMapper,
             @Value("${ai-chat.agent.enabled:false}") boolean enabled,
-            @Value("${ai-chat.agent.base-url:http://localhost:8088}") String baseUrl,
+            DoctorAssistantAgentEndpoint endpoint,
             @Value("${ai-chat.agent.timeout-ms:15000}") int timeoutMs,
             @Value("${ai-chat.follow-up-reminder.service-token:}") String serviceToken) {
         this.restClient = restClient;
         this.serviceToken = serviceToken;
         this.objectMapper = objectMapper;
         this.enabled = enabled;
-        this.baseUrl = baseUrl;
+        this.endpoint = endpoint;
         this.timeout = Duration.ofMillis(timeoutMs);
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(this.timeout)
@@ -79,7 +78,7 @@ public class HttpDoctorAssistantAgentGateway implements DoctorAssistantAgentGate
 
         try {
             DoctorAssistantTaskResponse response = restClient.post()
-                    .uri("/api/patient-tasks/analyze")
+                    .uri(endpoint.resolve("/api/patient-tasks/analyze"))
                     .header("X-Follow-Up-Token", serviceToken)
                     .body(request)
                     .retrieve()
@@ -121,7 +120,7 @@ public class HttpDoctorAssistantAgentGateway implements DoctorAssistantAgentGate
             HttpRequest httpRequest;
             try {
                 httpRequest = HttpRequest.newBuilder()
-                        .uri(URI.create(baseUrl + "/api/patient-tasks/analyze/stream"))
+                        .uri(endpoint.resolve("/api/patient-tasks/analyze/stream"))
                         .timeout(timeout)
                         .header("Content-Type", "application/json")
                         .header("X-Follow-Up-Token", serviceToken)

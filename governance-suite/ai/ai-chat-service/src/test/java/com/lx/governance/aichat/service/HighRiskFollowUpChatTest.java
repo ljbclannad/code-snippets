@@ -3,7 +3,10 @@ package com.lx.governance.aichat.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.metrics.AiChatMetrics;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.cloud.client.DefaultServiceInstance;
+import org.springframework.cloud.client.loadbalancer.LoadBalancerClient;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
@@ -18,8 +21,17 @@ class HighRiskFollowUpChatTest {
     private final RestClient.Builder client = RestClient.builder();
     private final MockRestServiceServer server = MockRestServiceServer.bindTo(client).build();
     private final AgentDispatchPolicy dispatch = mock(AgentDispatchPolicy.class);
-    private final HighRiskFollowUpChat chat = new HighRiskFollowUpChat(client.build(), mock(AiChatMetrics.class),
-            dispatch, true, "test-token");
+    private final LoadBalancerClient loadBalancer = mock(LoadBalancerClient.class);
+    private final DoctorAssistantAgentEndpoint endpoint = new DoctorAssistantAgentEndpoint(
+            loadBalancer, "doctor-assistant-agent", "");
+    private final HighRiskFollowUpChat chat = new HighRiskFollowUpChat(client.build(), endpoint,
+            mock(AiChatMetrics.class), dispatch, true, "test-token");
+
+    @BeforeEach
+    void registerDoctorInstance() {
+        when(loadBalancer.choose("doctor-assistant-agent")).thenReturn(new DefaultServiceInstance(
+                "doctor-1", "doctor-assistant-agent", "127.0.0.1", 8088, false));
+    }
 
     @Test void onlyRegisteredHighRiskRequestsReceivePendingConfirmation() {
         assertTrue(chat.handles("你好，我现在胸痛"));
@@ -28,7 +40,7 @@ class HighRiskFollowUpChatTest {
         String conversationId = chat.conversationId(request);
         assertEquals(conversationId, chat.conversationId(request()));
         when(dispatch.evaluate(eq(request), isNull(), any())).thenReturn(new AgentDispatchPolicy.Decision(true, "ok"));
-        server.expect(requestTo("/internal/patient-tasks/high-risk-follow-up"))
+        server.expect(requestTo("http://127.0.0.1:8088/internal/patient-tasks/high-risk-follow-up"))
                 .andExpect(header("X-Follow-Up-Token", "test-token"))
                 .andExpect(jsonPath("$.requestId").value("r1"))
                 .andRespond(withSuccess("{\"taskId\":7,\"status\":\"PENDING\"}", MediaType.APPLICATION_JSON));
@@ -45,7 +57,7 @@ class HighRiskFollowUpChatTest {
         when(dispatch.evaluate(eq(request), isNull(), any())).thenReturn(new AgentDispatchPolicy.Decision(false, "circuit_open"));
         assertTrue(chat.reply(request).contains("无法确认"));
         when(dispatch.evaluate(eq(request), isNull(), any())).thenReturn(new AgentDispatchPolicy.Decision(true, "ok"));
-        server.expect(requestTo("/internal/patient-tasks/high-risk-follow-up")).andRespond(withGatewayTimeout());
+        server.expect(requestTo("http://127.0.0.1:8088/internal/patient-tasks/high-risk-follow-up")).andRespond(withGatewayTimeout());
         assertTrue(chat.reply(request).contains("无法确认"));
         server.verify();
     }
@@ -57,7 +69,7 @@ class HighRiskFollowUpChatTest {
         request.setMessage("刚才那条医生看了吗？");
         assertTrue(chat.handles(request.getMessage()));
         assertFalse(chat.handles("医生看了吗，我还想问一下晚饭怎么吃"));
-        server.expect(requestTo("/internal/patient-tasks/review-status?customerId=p1&conversationId=c1"))
+        server.expect(requestTo("http://127.0.0.1:8088/internal/patient-tasks/review-status?customerId=p1&conversationId=c1"))
                 .andExpect(method(org.springframework.http.HttpMethod.GET))
                 .andExpect(header("X-Follow-Up-Token", "test-token"))
                 .andRespond(withSuccess("{\"status\":\"APPROVED\",\"delivered\":false}", MediaType.APPLICATION_JSON));
