@@ -68,11 +68,12 @@ function bindEvents() {
     elements.streamMode.addEventListener("change", updateModeText);
     elements.conversationId.addEventListener("input", updateConversationView);
     elements.customerId.addEventListener("change", maybeLoadConversations);
-    elements.customerId.addEventListener("blur", maybeLoadConversations);
     elements.messageInput.addEventListener("keydown", (event) => {
-        if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+        if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && !event.isComposing) {
             event.preventDefault();
-            handleSend();
+            if (!event.repeat) {
+                handleSend();
+            }
         }
     });
 
@@ -131,22 +132,28 @@ async function maybeLoadConversations() {
     if (!customerId) {
         state.conversations = [];
         renderConversationList();
-        setHistoryStatus("请输入用户 ID 后刷新历史。");
+        setHistoryStatus("访客可直接开始对话。会话历史仅向登录患者开放。");
         return;
     }
 
     setHistoryStatus("正在加载会话历史...");
     try {
         const response = await fetch(`/api/chat/conversations?customerId=${encodeURIComponent(customerId)}&page=0&size=20`);
-        const data = await response.json();
         if (!response.ok) {
-            throw new Error(data.detail || data.message || `会话列表加载失败: HTTP ${response.status}`);
+            throw await responseError(response, "会话列表加载失败");
+        }
+        const data = await response.json();
+        if (customerId !== elements.customerId.value.trim()) {
+            return;
         }
         state.conversations = Array.isArray(data) ? data : [];
         renderConversationList();
         setHistoryStatus(state.conversations.length ? `已加载 ${state.conversations.length} 个会话。` : "当前用户暂无会话历史。");
         appendTrace("历史", `会话列表已刷新 · customerId=${customerId}`);
     } catch (error) {
+        if (customerId !== elements.customerId.value.trim()) {
+            return;
+        }
         state.conversations = [];
         renderConversationList();
         setHistoryStatus(`加载失败: ${error.message}`);
@@ -154,9 +161,20 @@ async function maybeLoadConversations() {
     }
 }
 
+async function responseError(response, fallback) {
+    if (response.status === 401) {
+        return new Error("请先登录患者账号。访客聊天请留空患者 ID。");
+    }
+    if (response.status === 403) {
+        return new Error("无权访问此患者或会话。");
+    }
+    const data = await response.json().catch(() => null);
+    return new Error(data?.errorMessage || data?.detail || data?.message || `${fallback}（HTTP ${response.status}）`);
+}
+
 function getPayload() {
     return {
-        customerId: elements.customerId.value.trim(),
+        customerId: elements.customerId.value.trim() || undefined,
         groupId: elements.groupId.value.trim(),
         conversationId: elements.conversationId.value.trim() || undefined,
         requestId: Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join(""),
@@ -164,35 +182,33 @@ function getPayload() {
     };
 }
 
-function validatePayload(payload) {
-    if (!payload.customerId || !payload.groupId || !payload.message) {
-        throw new Error("用户 ID、群组 ID 和消息内容都不能为空。");
-    }
-}
-
 async function handleSend() {
-    const payload = getPayload();
-
-    try {
-        validatePayload(payload);
-    } catch (error) {
-        addMessage("error", "输入校验失败", error.message);
-        appendTrace("校验", error.message);
+    if (state.isBusy) {
         return;
     }
 
-    const messageText = payload.message;
-    elements.messageInput.value = "";
-    addMessage("user", "你", messageText);
-    state.connectionStatus = elements.streamMode.checked ? "streaming" : "sync";
-    setBusy(true);
-    updateTokenUsage(null);
-    updateAgentStatus("处理中", "等待流式响应建立");
+    const payload = getPayload();
+    if (!payload.groupId || !payload.message) {
+        const message = "群组 ID 和消息内容都不能为空。";
+        addMessage("error", "输入校验失败", message);
+        appendTrace("校验", message);
+        return;
+    }
 
-    if (elements.streamMode.checked) {
-        await sendStreamMessage(payload);
-    } else {
-        await sendRegularMessage(payload);
+    const isStream = elements.streamMode.checked;
+    setBusy(true);
+    try {
+        elements.messageInput.value = "";
+        addMessage("user", "你", payload.message);
+        updateTokenUsage(null);
+        updateAgentStatus("处理中", isStream ? "等待流式响应建立" : "等待响应");
+        if (isStream) {
+            await sendStreamMessage(payload);
+        } else {
+            await sendRegularMessage(payload);
+        }
+    } finally {
+        setBusy(false);
     }
 }
 
@@ -207,11 +223,12 @@ async function sendRegularMessage(payload) {
             },
             body: JSON.stringify(payload)
         });
+        if (!response.ok) {
+            throw await responseError(response, "发送失败");
+        }
         const data = await response.json();
-
-        if (!response.ok || data.success === false) {
-            const errorMessage = data.errorMessage || `请求失败: HTTP ${response.status}`;
-            throw new Error(errorMessage);
+        if (data.success === false) {
+            throw new Error(data.errorMessage || "本轮对话未能完成，请稍后重试。");
         }
 
         applyConversationId(data.conversationId);
@@ -219,15 +236,13 @@ async function sendRegularMessage(payload) {
         renderRecommendations(data.recommendations || []);
         updateAgentStatus("已完成", "普通响应完成");
         updateLiveConnection("complete");
-        await maybeLoadConversations();
+        void maybeLoadConversations();
         appendTrace("响应", `普通响应完成 · conversationId=${data.conversationId || "-"}`);
     } catch (error) {
         updateAgentStatus("异常", error.message);
         updateLiveConnection("error");
         addMessage("error", "系统", error.message);
         appendTrace("错误", error.message);
-    } finally {
-        setBusy(false);
     }
 }
 
@@ -248,85 +263,92 @@ async function sendStreamMessage(payload) {
             signal: state.abortController.signal
         });
 
-        if (!response.ok || !response.body) {
-            throw new Error(`流式请求失败: HTTP ${response.status}`);
+        if (!response.ok) {
+            throw await responseError(response, "流式请求失败");
         }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder("utf-8");
-        let buffer = "";
-
-        while (true) {
-            const { value, done } = await reader.read();
-            if (done) {
-                break;
-            }
-            buffer += decoder.decode(value, { stream: true });
-            buffer = processSseBuffer(buffer);
+        if (!response.body || !(await readStreamEvents(response.body, state.abortController.signal))) {
+            showStreamError("连接提前结束，本轮回复可能不完整。", "interrupted");
         }
-
-        buffer += decoder.decode();
-        processSseBuffer(buffer, true);
-        appendTrace("响应", "流式连接结束。");
     } catch (error) {
-        if (error.name === "AbortError") {
+        if (state.abortController.signal.aborted) {
             appendTrace("中断", "已手动停止当前流式输出。");
             markAssistantMeta("已手动停止");
             updateAgentStatus(elements.activeAgentText.textContent, "已手动停止");
             updateLiveConnection("stopped");
         } else {
-            addMessage("error", "系统", error.message);
-            appendTrace("错误", error.message);
-            markAssistantMeta("流式响应失败");
-            updateAgentStatus("异常", error.message);
-            updateLiveConnection("error");
+            showStreamError(error.message);
         }
     } finally {
         state.abortController = null;
         state.activeAssistantMessage = null;
         if (elements.customerId.value.trim()) {
-            await maybeLoadConversations();
+            void maybeLoadConversations();
         }
-        setBusy(false);
     }
 }
 
-function processSseBuffer(buffer, flush = false) {
-    let cursor = 0;
-    while (true) {
-        const separatorIndex = buffer.indexOf("\n\n", cursor);
-        if (separatorIndex === -1) {
-            break;
-        }
-        const rawEvent = buffer.slice(cursor, separatorIndex).trim();
-        cursor = separatorIndex + 2;
-        if (!rawEvent) {
-            continue;
-        }
-        const dataLine = rawEvent
-            .split("\n")
-            .find((line) => line.startsWith("data: "));
-        if (!dataLine) {
-            continue;
-        }
-        const payload = dataLine.slice(6);
-        try {
-            handleStreamEvent(JSON.parse(payload));
-        } catch (error) {
-            appendTrace("解析", `SSE 事件解析失败: ${error.message}`);
-        }
-    }
+async function readStreamEvents(body, signal) {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
 
-    const rest = buffer.slice(cursor);
-    if (flush && rest.trim().startsWith("data: ")) {
+    try {
+        while (true) {
+            const { value, done } = await reader.read().catch(error => {
+                signal.throwIfAborted();
+                appendTrace("流式连接", error.message);
+                return { done: true };
+            });
+            signal.throwIfAborted();
+            if (done) {
+                return false;
+            }
+            buffer += decoder.decode(value, { stream: true });
+            const { remaining, terminal } = processSseBuffer(buffer);
+            if (terminal) {
+                return true;
+            }
+            buffer = remaining;
+        }
+    } finally {
+        // 终态已处理，取消后续读取，避免等待连接关闭或覆盖终态。
+        void reader.cancel().catch(() => {});
+        reader.releaseLock();
+    }
+}
+
+function processSseBuffer(buffer) {
+    let cursor = 0;
+    for (const separator of buffer.matchAll(/\r?\n\r?\n/g)) {
+        const payload = buffer.slice(cursor, separator.index)
+            .split(/\r?\n/)
+            .filter(line => line.startsWith("data:"))
+            .map(line => line.slice(5).replace(/^ /, ""))
+            .join("\n");
+        cursor = separator.index + separator[0].length;
+        if (!payload) {
+            continue;
+        }
+        let event;
         try {
-            handleStreamEvent(JSON.parse(rest.trim().slice(6)));
-            return "";
-        } catch (error) {
-            appendTrace("解析", `尾包解析失败: ${error.message}`);
+            event = JSON.parse(payload);
+        } catch {
+            throw new Error("收到无效的流式响应，本轮回复可能不完整。");
+        }
+        handleStreamEvent(event);
+        if (event.type === "DONE" || event.type === "ERROR") {
+            return { remaining: "", terminal: true };
         }
     }
-    return rest;
+    return { remaining: buffer.slice(cursor), terminal: false };
+}
+
+function showStreamError(message, status = "error") {
+    markAssistantMeta(status === "interrupted" ? "连接已中断" : "生成失败");
+    updateAgentStatus("异常", message);
+    updateLiveConnection(status);
+    addMessage("error", "系统", message);
+    appendTrace("错误", message);
 }
 
 function handleStreamEvent(event) {
@@ -354,11 +376,7 @@ function handleStreamEvent(event) {
             appendTrace("SSE", "DONE");
             break;
         case "ERROR":
-            markAssistantMeta("生成失败");
-            updateAgentStatus("异常", event.error || "未知错误");
-            updateLiveConnection("error");
-            addMessage("error", "系统", event.error || "未知流式错误");
-            appendTrace("SSE", `ERROR · ${event.error || "未知错误"}`);
+            showStreamError(event.error || "流式响应失败，请稍后重试。");
             break;
         default:
             appendTrace("SSE", `未知事件类型: ${event.type}`);
@@ -570,9 +588,12 @@ async function loadConversationHistory(conversationId) {
         const response = await fetch(
             `/api/chat/conversations/${encodeURIComponent(conversationId)}/messages?customerId=${encodeURIComponent(customerId)}`
         );
-        const data = await response.json();
         if (!response.ok) {
-            throw new Error(data.detail || data.message || `会话历史加载失败: HTTP ${response.status}`);
+            throw await responseError(response, "会话历史加载失败");
+        }
+        const data = await response.json();
+        if (customerId !== elements.customerId.value.trim()) {
+            return;
         }
 
         applyConversationId(data.conversationId);
@@ -580,6 +601,9 @@ async function loadConversationHistory(conversationId) {
         setHistoryStatus(`已加载 ${data.rounds ?? 0} 轮历史会话。`);
         appendTrace("历史", `会话已切换到 ${conversationId}`);
     } catch (error) {
+        if (customerId !== elements.customerId.value.trim()) {
+            return;
+        }
         setHistoryStatus(`加载失败: ${error.message}`);
         addMessage("error", "系统", error.message);
         appendTrace("历史", `会话历史加载失败: ${error.message}`);
@@ -652,6 +676,7 @@ function updateLiveConnection(status) {
         streaming: "流式输出中",
         complete: "已完成",
         error: "异常",
+        interrupted: "连接已中断",
         stopped: "已停止"
     };
 

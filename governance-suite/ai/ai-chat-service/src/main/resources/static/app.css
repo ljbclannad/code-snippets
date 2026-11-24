@@ -535,7 +535,8 @@ textarea {
     background: var(--success);
 }
 
-.live-badge[data-state="error"] .live-badge-dot {
+.live-badge[data-state="error"] .live-badge-dot,
+.live-badge[data-state="interrupted"] .live-badge-dot {
     background: var(--danger);
 }
 

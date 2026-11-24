@@ -29,8 +29,8 @@
                 </div>
 
                 <label class="field">
-                    <span>用户 ID</span>
-                    <input id="customerId" type="text" value="test-customer-001" placeholder="test-customer-001">
+                    <span>患者 ID（选填）</span>
+                    <input id="customerId" type="text" placeholder="访客请留空" autocomplete="off">
                 </label>
 
                 <label class="field">
@@ -66,8 +66,8 @@
                     <h2>会话历史</h2>
                     <button id="refreshHistoryBtn" class="ghost-btn" type="button">刷新</button>
                 </div>
-                <p class="history-tip">基于当前 `customerId` 拉取最近会话，点击后会回放消息并切换到对应 `conversationId`。</p>
-                <div id="historyStatus" class="history-status">请输入用户 ID 后刷新历史。</div>
+                <p class="history-tip">登录患者账号后，填写对应的患者 ID 即可查看最近会话。</p>
+                <div id="historyStatus" class="history-status">访客可直接开始对话。会话历史仅向登录患者开放。</div>
                 <div id="conversationList" class="conversation-list"></div>
             </section>
 

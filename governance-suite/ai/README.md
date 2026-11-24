@@ -30,6 +30,8 @@ ai/
 
 患者身份取自可信 Servlet principal 的 `PATIENT` 角色和全局唯一业务 ID。客户端可省略 `customerId`，显式传入时必须与登录身份一致。未登录并声明患者 ID 返回 401，冒用其他患者或会话返回 403。历史列表、消息、搜索、推荐同样校验患者身份。匿名聊天请省略 `customerId`，继续对话携带服务端签发的会话 Cookie 和上一轮的 `conversationId`。多实例部署需支持共享 HTTP 会话或会话亲和。匿名客户端丢失 Cookie 后需新建对话。
 
+启动 `ai-chat-service` 后可访问 `http://localhost:8100/` 打开对话控制台。访客留空患者 ID 即可发送消息，页内续聊会沿用服务端返回的会话 ID 和会话 Cookie。登录后填写对应的患者 ID 可以加载历史。发送按钮和 `Ctrl/Cmd + Enter` 在请求处理期间共用同一提交保护。流式界面区分完成、服务报错、手动停止和连接提前结束。
+
 已有数据库升级时，先停止旧聊天和医生助手入口写入，依次执行以下迁移，然后部署两个服务。归属回填取自聊天历史和医生端可追溯的任务，同一会话有多个主体时锁定该编号。旧版仅存在于 Redis 的上下文只可由原主体恢复。无法验证归属的旧匿名上下文请重新开始对话。
 
 1. 确认已运行[随访提醒建表迁移](doctor-assistant-agent/sql/migrations/2026-11-23-high-risk-follow-up.sql)。
@@ -398,6 +400,9 @@ mvn -q -pl ai/ai-chat-service spring-boot:run \
 ```bash
 # 单元测试
 mvn -f ai/ai-chat-service/pom.xml test
+
+# 对话控制台回归（Node.js 18+）
+node --test ai/ai-chat-service/src/test/js/chat-console.test.cjs
 
 # 集成测试（需要基础设施运行）
 bash sh/test/test-03-ai-chat.sh
