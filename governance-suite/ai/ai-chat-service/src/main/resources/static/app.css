@@ -397,10 +397,6 @@ a {
     overflow-wrap: anywhere;
 }
 
-.message-meta span:first-child {
-    display: none;
-}
-
 .message.user .message-meta {
     text-align: right;
 }
@@ -416,6 +412,88 @@ a {
 
 .message-content:empty {
     display: none;
+}
+
+.markdown-content {
+    white-space: normal;
+}
+
+.markdown-content :where(p, ul, ol, blockquote, pre, .markdown-table, hr, h1, h2, h3, h4, h5, h6) {
+    margin: 0 0 0.7em;
+}
+
+.markdown-content :where(p, ul, ol, blockquote, pre, .markdown-table, hr, h1, h2, h3, h4, h5, h6):last-child {
+    margin-bottom: 0;
+}
+
+.markdown-content :where(h1, h2, h3, h4, h5, h6) {
+    font-size: 1.08em;
+    line-height: 1.45;
+}
+
+.markdown-content :where(ol, ul) {
+    padding-inline-start: 1.5em;
+}
+
+.markdown-content li + li,
+.markdown-content li > :where(ol, ul) {
+    margin-top: 0.28em;
+}
+
+.markdown-content blockquote {
+    padding-inline-start: 0.75em;
+    border-inline-start: 3px solid var(--control-line);
+    color: var(--muted);
+}
+
+.markdown-content hr {
+    border: 0;
+    border-top: 1px solid var(--control-line);
+}
+
+.markdown-content a {
+    color: var(--accent);
+    text-underline-offset: 0.18em;
+}
+
+.markdown-content code {
+    padding: 0.12em 0.28em;
+    border-radius: 4px;
+    background: var(--surface);
+    font: 0.9em ui-monospace, monospace;
+}
+
+.markdown-content :where(pre, .markdown-table) {
+    max-width: 100%;
+    overflow-x: auto;
+}
+
+.markdown-content pre {
+    padding: 0.65em 0.8em;
+    border-radius: 6px;
+    background: var(--surface);
+    white-space: pre;
+}
+
+.markdown-content pre code {
+    padding: 0;
+    background: transparent;
+    overflow-wrap: normal;
+}
+
+.markdown-content table {
+    border-collapse: collapse;
+    background: var(--surface);
+}
+
+.markdown-content :where(th, td) {
+    padding: 0.3em 0.6em;
+    border: 1px solid var(--control-line);
+    white-space: nowrap;
+}
+
+.markdown-content th {
+    background: var(--accent-soft);
 }
 
 .message.user .message-content {

@@ -1,6 +1,21 @@
+const chatMarkdown = typeof markdownit === "function" ? markdownit({ html: false, breaks: true }) : null;
+if (chatMarkdown) {
+    chatMarkdown.validateLink = url => /^https?:\/\//i.test(url);
+    chatMarkdown.renderer.rules.link_open = (tokens, index, options, _env, renderer) => {
+        tokens[index].attrSet("target", "_blank");
+        tokens[index].attrSet("rel", "noopener noreferrer");
+        return renderer.renderToken(tokens, index, options);
+    };
+    chatMarkdown.renderer.rules.image = (tokens, index) => chatMarkdown.utils.escapeHtml(tokens[index].content);
+    chatMarkdown.renderer.rules.table_open = () => '<div class="markdown-table" role="region" aria-label="回复表格" tabindex="0"><table>\n';
+    chatMarkdown.renderer.rules.table_close = () => "</table></div>\n";
+}
+
 const state = {
     abortController: null,
     activeAssistantMessage: null,
+    activeAssistantMarkdown: "",
+    assistantRenderFrame: null,
     activeConversationId: "",
     connectionStatus: "idle",
     isBusy: false,
@@ -266,8 +281,13 @@ async function sendStreamMessage(payload) {
             showStreamError(error.message);
         }
     } finally {
+        if (state.assistantRenderFrame !== null) {
+            cancelAnimationFrame(state.assistantRenderFrame);
+            renderActiveAssistantContent();
+        }
         state.abortController = null;
         state.activeAssistantMessage = null;
+        state.activeAssistantMarkdown = "";
         if (elements.customerId.value.trim()) {
             void maybeLoadConversations();
         }
@@ -390,20 +410,58 @@ function handleStatusEvent(event) {
 }
 
 function appendAssistantContent(content) {
-    if (!state.activeAssistantMessage) {
-        state.activeAssistantMessage = addMessage("assistant", "AI", "");
+    if (!content) {
+        return;
+    }
+    state.activeAssistantMarkdown += content;
+    if (state.assistantRenderFrame === null) {
+        state.assistantRenderFrame = requestAnimationFrame(renderActiveAssistantContent);
+    }
+}
+
+function renderActiveAssistantContent() {
+    state.assistantRenderFrame = null;
+    const contentNode = state.activeAssistantMessage.querySelector(".message-content");
+    renderAssistantMarkdown(contentNode, state.activeAssistantMarkdown);
+    maybeScroll();
+}
+
+function renderAssistantMarkdown(contentNode, source) {
+    if (!chatMarkdown) {
+        contentNode.textContent = source;
+        return;
+    }
+    contentNode.innerHTML = chatMarkdown.render(repairSplitBold(source));
+}
+
+function repairSplitBold(source) {
+    if (!source.includes("****")) {
+        return source;
     }
 
-    const contentNode = state.activeAssistantMessage.querySelector(".message-content");
-    contentNode.textContent += content;
-    maybeScroll();
+    // 流式输出可能在编号标题末尾重复闭合加粗，并把多余标记留到下一行。
+    const lines = source.split(/\r\n?|\n/);
+    let repaired = false;
+    for (const token of chatMarkdown.parse(source, {})) {
+        if (token.type !== "list_item_open") {
+            continue;
+        }
+        const [line] = token.map;
+        const heading = /^( {0,3}\d{1,9}[.)] +\*\*[^*]+\*\*)\*{2}[ \t]*$/.exec(lines[line]);
+        if (heading && /^\*{2} {3,}\S/.test(lines[line + 1] ?? "")) {
+            lines[line] = heading[1];
+            lines[line + 1] = lines[line + 1].slice(2);
+            repaired = true;
+        }
+    }
+    return repaired ? lines.join("\n") : source;
 }
 
 function markAssistantMeta(text) {
     if (!state.activeAssistantMessage) {
         return;
     }
-    const metaNode = state.activeAssistantMessage.querySelector(".message-meta span:last-child");
+    const metaNode = state.activeAssistantMessage.querySelector(".message-meta");
     metaNode.textContent = text;
 }
 
@@ -475,11 +533,16 @@ function addMessage(kind, roleLabel, content, options = {}) {
 
     const meta = document.createElement("div");
     meta.className = "message-meta";
-    meta.innerHTML = `<span>${roleLabel}</span><span>${options.meta || formatTime(Date.now())}</span>`;
+    meta.textContent = options.meta || formatTime(Date.now());
 
     const contentNode = document.createElement("div");
     contentNode.className = "message-content";
-    contentNode.textContent = content || "";
+    if (kind === "assistant" && chatMarkdown) {
+        contentNode.className += " markdown-content";
+        renderAssistantMarkdown(contentNode, content || "");
+    } else {
+        contentNode.textContent = content || "";
+    }
 
     body.append(meta, contentNode);
     item.append(role, body);
@@ -545,7 +608,7 @@ function renderConversationList() {
         button.innerHTML = `
             <div class="conversation-item-top">
                 <span>${escapeHtml(conversation.conversationId || "未命名会话")}</span>
-                <span>${formatDateTime(conversation.latestMessageTime)}</span>
+                <span>${escapeHtml(formatDateTime(conversation.latestMessageTime))}</span>
             </div>
             <p class="conversation-item-title">${escapeHtml(conversation.latestUserMessage || "无用户消息")}</p>
             <div class="conversation-item-preview">最近回复：${escapeHtml(conversation.latestAiResponse || "暂无 AI 回复")}</div>

@@ -3,11 +3,14 @@ const { webcrypto } = require("node:crypto");
 const { readFileSync } = require("node:fs");
 const { join } = require("node:path");
 const test = require("node:test");
+const { setImmediate: nextFrame } = require("node:timers/promises");
 const { runInNewContext } = require("node:vm");
 
 const staticPath = join(__dirname, "../../main/resources/static");
 const html = readFileSync(join(staticPath, "index.html"), "utf8");
 const script = readFileSync(join(staticPath, "app.js"), "utf8");
+const markdownPath = html.match(/<script src="\/(vendor\/markdown-it[^"]+)"/)[1];
+const markdownit = require(join(staticPath, markdownPath));
 
 class TestElement {
     className = "";
@@ -17,11 +20,15 @@ class TestElement {
     classList = { toggle() {} };
     dataset = {};
     listeners = {};
-    metaTime = {};
+    markup = "";
 
     get childElementCount() { return this.children.length; }
     get lastElementChild() { return this.children.at(-1); }
-    set innerHTML(value) { this.children = []; }
+    get innerHTML() { return this.markup; }
+    set innerHTML(value) {
+        this.children = [];
+        this.markup = value;
+    }
 
     append(...children) { this.children.push(...children); }
     appendChild(child) { this.append(child); }
@@ -38,9 +45,6 @@ class TestElement {
     }
 
     querySelector(selector) {
-        if (selector === ".message-meta span:last-child") {
-            return this.querySelector(".message-meta").metaTime;
-        }
         return this.querySelectorAll(selector)[0];
     }
 }
@@ -64,7 +68,9 @@ function openConsole(respond) {
         crypto: webcrypto,
         AbortController,
         TextDecoder,
-        requestAnimationFrame: callback => callback(),
+        markdownit,
+        requestAnimationFrame: setImmediate,
+        cancelAnimationFrame: clearImmediate,
         fetch: async (path, options = {}) => {
             if (path === "/api/chat/health") return new Response("OK");
             requests.push({ path, ...options });
@@ -81,7 +87,7 @@ function openConsole(respond) {
         },
         message(kind) {
             const item = controls.messageList.children.findLast(child => child.dataset.kind === kind);
-            return item?.querySelector(".message-content").textContent;
+            return item?.querySelector(".message-content");
         }
     };
 }
@@ -125,7 +131,7 @@ test("访客可使用普通与流式入口，后续消息沿用会话", async ()
     assert.equal(next.groupId, "health-group-001");
     assert.equal(next.conversationId, "visitor-session");
     assert.notEqual(first.requestId, next.requestId);
-    assert.equal(page.message("assistant"), "访客回复");
+    assert.equal(page.message("assistant").innerHTML, "<p>访客回复</p>\n");
 });
 
 test("显式填写患者 ID 时由接口确认身份，并处理无响应体的 401 和 403", async () => {
@@ -138,10 +144,10 @@ test("显式填写患者 ID 时由接口确认身份，并处理无响应体的 
     assert.match(page.controls.historyStatus.textContent, /请先登录患者账号/);
 
     await page.send("测试对话");
-    assert.match(page.message("error"), /请先登录患者账号/);
+    assert.match(page.message("error").textContent, /请先登录患者账号/);
     page.controls.streamMode.checked = false;
     await page.send("再次发送");
-    assert.match(page.message("error"), /无权访问此患者或会话/);
+    assert.match(page.message("error").textContent, /无权访问此患者或会话/);
     const posts = page.requests.filter(request => request.method === "POST");
     assert.equal(posts.length, 2);
     assert.ok(posts.every(request => JSON.parse(request.body).customerId === "patient-demo"));
@@ -157,7 +163,7 @@ test("兼容有无空格的 SSE，收到 DONE 后立即结束读取", { timeout:
         { open: true, cancel: () => { cancelled = true; } }
     ));
     await page.send("测试消息");
-    assert.equal(page.message("assistant"), "流式回复");
+    assert.equal(page.message("assistant").innerHTML, "<p>流式回复</p>\n");
     assert.equal(page.controls.conversationId.value, "stream-session");
     assert.equal(page.controls.liveConnectionText.textContent, "已完成");
     assert.match(page.controls.tokenUsageText.textContent, /总计 42/);
@@ -170,7 +176,7 @@ test("SSE 的 ERROR 结束本轮，后续 DONE 无法覆盖错误", async () => 
         sse({ type: "ERROR", error: "本轮服务异常" }) + sse({ type: "DONE" })
     ));
     await page.send("测试消息");
-    assert.equal(page.message("error"), "本轮服务异常");
+    assert.equal(page.message("error").textContent, "本轮服务异常");
     assert.equal(page.controls.liveConnectionText.textContent, "异常");
 });
 
@@ -186,8 +192,8 @@ test("已登录患者可加载对应 ID 的历史会话", async () => {
 test("SSE 在终态前关闭时保留部分回复并显示中断", async () => {
     const page = openConsole(() => chunkedStream(sse({ type: "CONTENT", content: "部分回复" })));
     await page.send("测试消息");
-    assert.equal(page.message("assistant"), "部分回复");
-    assert.match(page.message("error"), /回复可能不完整/);
+    assert.equal(page.message("assistant").innerHTML, "<p>部分回复</p>\n");
+    assert.match(page.message("error").textContent, /回复可能不完整/);
     assert.equal(page.controls.liveConnectionText.textContent, "连接已中断");
     assert.equal(page.controls.sendBtn.disabled, false);
 });
@@ -212,7 +218,7 @@ test("手动停止流式输出后可继续发送", { timeout: 3000 }, async () =
     assert.equal(page.controls.sendBtn.disabled, false);
     page.controls.streamMode.checked = false;
     await page.send("继续聊天");
-    assert.equal(page.message("assistant"), "下轮回复");
+    assert.equal(page.message("assistant").innerHTML, "<p>下轮回复</p>\n");
 });
 
 test("请求未结束时快捷键无法重复发送，也保留输入草稿", async () => {
@@ -239,10 +245,72 @@ test("自动滚动仅更新消息列表，关闭后保留列表滚动位置", as
     messageList.scrollTop = 0;
     autoScroll.checked = true;
     await page.send("自动滚动");
+    await nextFrame();
     assert.equal(messageList.scrollTop, 720);
 
     autoScroll.checked = false;
     messageList.scrollTop = 120;
     await page.send("保留滚动位置");
+    await nextFrame();
     assert.equal(messageList.scrollTop, 120);
+});
+
+test("流式回复把跨分片的加粗、编号和子列表渲染完整", async () => {
+    const page = openConsole(() => new Response(
+        sse({ type: "CONTENT", content: "1. **主要是哪种睡眠问题？**" })
+        + sse({ type: "CONTENT", content: "**  \n**   - 入睡困难\n   - 易醒\n\n2. **作息怎样？****  \n" })
+        + sse({ type: "CONTENT", content: "**   比如：几点上床。\n\n请补充。" })
+        + sse({ type: "DONE" })
+    ));
+    await page.send("睡眠建议");
+
+    const reply = page.message("assistant").innerHTML;
+    assert.match(reply, /<ol>\s*<li>\s*<p><strong>主要是哪种睡眠问题？<\/strong><\/p>\s*<ul>\s*<li>入睡困难<\/li>\s*<li>易醒<\/li>/);
+    assert.match(reply, /<strong>作息怎样？<\/strong><br>\s*比如：几点上床。/);
+    assert.match(reply, /<p>请补充。<\/p>/);
+    assert.doesNotMatch(reply, /\*\*/);
+});
+
+test("同步回复保留代码原文，只生成受支持的链接和标签", async () => {
+    const reply = [
+        "## 回复标题",
+        "> 引用和 `行内代码`",
+        "",
+        "```md",
+        "1. **保留原文****  ",
+        "**   - 代码示例",
+        "```",
+        "",
+        "| 项目 | 内容 |",
+        "| --- | --- |",
+        "| 示例 | 文本 |",
+        "",
+        "[参考](https://example.com) [不可用](javascript:void(0)) ![替代文字](https://example.com/image.png) <b>原始标签</b>"
+    ].join("\n");
+    const page = openConsole(() => Response.json({ success: true, message: reply }));
+    page.controls.streamMode.checked = false;
+    await page.send("**用户输入**");
+
+    const markup = page.message("assistant").innerHTML;
+    assert.match(markup, /<h2>回复标题<\/h2>/);
+    assert.match(markup, /<blockquote>[\s\S]+<code>行内代码<\/code>/);
+    assert.match(markup, /<pre><code[^>]*>1\. \*\*保留原文\*{4} {2}\n\*\* {3}- 代码示例/);
+    assert.match(markup, /<table>[\s\S]+<td>文本<\/td>/);
+    assert.match(markup, /<a href="https:\/\/example\.com" target="_blank" rel="noopener noreferrer">参考<\/a>/);
+    assert.match(markup, /替代文字 &lt;b&gt;原始标签&lt;\/b&gt;/);
+    assert.doesNotMatch(markup, /href="javascript:|<img|<b>/);
+    assert.equal(page.message("user").textContent, "**用户输入**");
+});
+
+test("历史会话沿用助手 Markdown 渲染", async () => {
+    const page = openConsole(path => Response.json(path.includes("/messages") ? {
+        conversationId: "patient-session",
+        rounds: 1,
+        messages: [{ role: "assistant", content: "**历史**\n- 一项" }]
+    } : [{ conversationId: "patient-session" }]));
+    page.controls.customerId.value = "patient-demo";
+    await page.controls.customerId.fire("change");
+    await page.controls.conversationList.children[0].fire("click");
+
+    assert.match(page.message("assistant").innerHTML, /<strong>历史<\/strong><\/p>\s*<ul>\s*<li>一项<\/li>/);
 });
