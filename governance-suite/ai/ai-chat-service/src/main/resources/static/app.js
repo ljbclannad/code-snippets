@@ -4,20 +4,18 @@ const state = {
     activeConversationId: "",
     connectionStatus: "idle",
     isBusy: false,
-    traceCount: 0,
-    messageCount: 0,
     tokenUsage: null,
     conversations: []
 };
 
 const elements = {
     customerId: document.getElementById("customerId"),
-    groupId: document.getElementById("groupId"),
     conversationId: document.getElementById("conversationId"),
     streamMode: document.getElementById("streamMode"),
     autoScroll: document.getElementById("autoScroll"),
     messageInput: document.getElementById("messageInput"),
     messageList: document.getElementById("messageList"),
+    chatTitle: document.getElementById("chatTitle"),
     emptyState: document.getElementById("emptyState"),
     sendBtn: document.getElementById("sendBtn"),
     stopBtn: document.getElementById("stopBtn"),
@@ -30,12 +28,8 @@ const elements = {
     tokenUsageText: document.getElementById("tokenUsageText"),
     activeAgentText: document.getElementById("activeAgentText"),
     activeStageText: document.getElementById("activeStageText"),
-    transportStatValue: document.getElementById("transportStatValue"),
-    healthStatValue: document.getElementById("healthStatValue"),
-    sessionStatValue: document.getElementById("sessionStatValue"),
     liveConnectionBadge: document.getElementById("liveConnectionBadge"),
     liveConnectionText: document.getElementById("liveConnectionText"),
-    liveBusyText: document.getElementById("liveBusyText"),
     messageCountText: document.getElementById("messageCountText"),
     traceCountText: document.getElementById("traceCountText"),
     healthBadge: document.getElementById("healthBadge"),
@@ -49,7 +43,6 @@ function init() {
     updateConversationView();
     updateTokenUsage(null);
     updateAgentStatus("未触发", "空闲");
-    updateRuntimeStats();
     pingHealth();
     maybeLoadConversations();
     appendTrace("系统", "页面已加载，等待发送请求。");
@@ -61,7 +54,6 @@ function bindEvents() {
     elements.clearChatBtn.addEventListener("click", clearChat);
     elements.clearTraceBtn.addEventListener("click", () => {
         elements.traceLog.innerHTML = "";
-        syncTraceCount();
         appendTrace("系统", "调试日志已清空。");
     });
     elements.refreshHistoryBtn.addEventListener("click", maybeLoadConversations);
@@ -86,9 +78,7 @@ function bindEvents() {
 }
 
 function updateModeText() {
-    const isStream = elements.streamMode.checked;
-    elements.modeText.textContent = isStream ? "流式输出" : "普通响应";
-    elements.transportStatValue.textContent = isStream ? "SSE Stream" : "JSON Sync";
+    elements.modeText.textContent = elements.streamMode.checked ? "SSE 流式" : "同步 JSON";
     updateLiveConnection();
 }
 
@@ -96,7 +86,6 @@ function updateConversationView() {
     const value = elements.conversationId.value.trim();
     state.activeConversationId = value;
     elements.activeConversationText.textContent = value || "未创建";
-    elements.sessionStatValue.textContent = value ? abbreviateConversationId(value) : "Idle";
     highlightActiveConversation();
 }
 
@@ -118,11 +107,9 @@ async function pingHealth() {
         }
         elements.healthBadge.className = "badge success";
         elements.healthBadge.textContent = "服务正常";
-        elements.healthStatValue.textContent = "Healthy";
     } catch (error) {
         elements.healthBadge.className = "badge error";
         elements.healthBadge.textContent = "服务异常";
-        elements.healthStatValue.textContent = "Degraded";
         appendTrace("健康检查", `探测失败: ${error.message}`);
     }
 }
@@ -175,7 +162,7 @@ async function responseError(response, fallback) {
 function getPayload() {
     return {
         customerId: elements.customerId.value.trim() || undefined,
-        groupId: elements.groupId.value.trim(),
+        groupId: "health-group-001",
         conversationId: elements.conversationId.value.trim() || undefined,
         requestId: Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join(""),
         message: elements.messageInput.value.trim()
@@ -188,8 +175,8 @@ async function handleSend() {
     }
 
     const payload = getPayload();
-    if (!payload.groupId || !payload.message) {
-        const message = "群组 ID 和消息内容都不能为空。";
+    if (!payload.message) {
+        const message = "消息内容不能为空。";
         addMessage("error", "输入校验失败", message);
         appendTrace("校验", message);
         return;
@@ -600,6 +587,9 @@ async function loadConversationHistory(conversationId) {
         renderConversationMessages(data.messages || []);
         setHistoryStatus(`已加载 ${data.rounds ?? 0} 轮历史会话。`);
         appendTrace("历史", `会话已切换到 ${conversationId}`);
+        if (elements.autoScroll.checked) {
+            elements.chatTitle.focus();
+        }
     } catch (error) {
         if (customerId !== elements.customerId.value.trim()) {
             return;
@@ -637,10 +627,8 @@ function setBusy(isBusy) {
     elements.sendBtn.disabled = isBusy;
     elements.stopBtn.disabled = !isBusy || !elements.streamMode.checked;
     elements.customerId.disabled = isBusy;
-    elements.groupId.disabled = isBusy;
     elements.conversationId.disabled = isBusy;
     elements.streamMode.disabled = isBusy;
-    updateRuntimeStats();
     updateLiveConnection();
 }
 
@@ -655,14 +643,8 @@ function appendTrace(tag, message) {
     line.className = "trace-entry";
     line.textContent = `[${formatTime(Date.now())}] ${tag}: ${message}`;
     elements.traceLog.appendChild(line);
-    syncTraceCount();
+    elements.traceCountText.textContent = String(elements.traceLog.childElementCount);
     elements.traceLog.scrollTop = elements.traceLog.scrollHeight;
-}
-
-function updateRuntimeStats() {
-    elements.liveBusyText.textContent = state.isBusy ? "Running" : "Idle";
-    elements.messageCountText.textContent = String(state.messageCount);
-    elements.traceCountText.textContent = String(state.traceCount);
 }
 
 function updateLiveConnection(status) {
@@ -691,13 +673,7 @@ function deriveConnectionStatus() {
 }
 
 function syncMessageCount() {
-    state.messageCount = elements.messageList.querySelectorAll(".message").length;
-    updateRuntimeStats();
-}
-
-function syncTraceCount() {
-    state.traceCount = elements.traceLog.childElementCount;
-    updateRuntimeStats();
+    elements.messageCountText.textContent = String(elements.messageList.childElementCount);
 }
 
 function maybeScroll() {
@@ -705,10 +681,6 @@ function maybeScroll() {
         requestAnimationFrame(() => {
             const container = elements.messageList;
             container.scrollTop = container.scrollHeight;
-            container.lastElementChild?.scrollIntoView({
-                block: "end",
-                behavior: "smooth"
-            });
         });
     }
 }
@@ -736,13 +708,6 @@ function formatScore(score) {
         return "-";
     }
     return score.toFixed(2);
-}
-
-function abbreviateConversationId(value) {
-    if (!value) {
-        return "Idle";
-    }
-    return value.length > 16 ? `${value.slice(0, 7)}...${value.slice(-6)}` : value;
 }
 
 function escapeHtml(text) {

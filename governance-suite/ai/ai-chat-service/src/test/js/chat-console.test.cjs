@@ -20,12 +20,14 @@ class TestElement {
     metaTime = {};
 
     get childElementCount() { return this.children.length; }
+    get lastElementChild() { return this.children.at(-1); }
     set innerHTML(value) { this.children = []; }
 
     append(...children) { this.children.push(...children); }
     appendChild(child) { this.append(child); }
     addEventListener(name, listener) { this.listeners[name] = listener; }
     fire(name, event) { return this.listeners[name](event); }
+    scrollIntoView() { assert.fail("自动滚动只能更新消息列表的滚动位置"); }
 
     querySelectorAll(selector) {
         const className = selector.slice(1);
@@ -62,6 +64,7 @@ function openConsole(respond) {
         crypto: webcrypto,
         AbortController,
         TextDecoder,
+        requestAnimationFrame: callback => callback(),
         fetch: async (path, options = {}) => {
             if (path === "/api/chat/health") return new Response("OK");
             requests.push({ path, ...options });
@@ -108,6 +111,7 @@ test("访客可使用普通与流式入口，后续消息沿用会话", async ()
         return Response.json({ success: true, message: "访客回复", conversationId: "visitor-session" });
     });
     assert.equal(page.controls.customerId.value, "");
+    assert.equal(page.controls.groupId, undefined);
     assert.match(page.controls.historyStatus.textContent, /访客可直接开始对话/);
     await page.send("第一轮");
     page.controls.streamMode.checked = false;
@@ -117,6 +121,8 @@ test("访客可使用普通与流式入口，后续消息沿用会话", async ()
     const [first, next] = page.requests.map(request => JSON.parse(request.body));
     assert.equal(Object.hasOwn(first, "customerId"), false);
     assert.equal(Object.hasOwn(next, "customerId"), false);
+    assert.equal(first.groupId, "health-group-001");
+    assert.equal(next.groupId, "health-group-001");
     assert.equal(next.conversationId, "visitor-session");
     assert.notEqual(first.requestId, next.requestId);
     assert.equal(page.message("assistant"), "访客回复");
@@ -223,4 +229,20 @@ test("请求未结束时快捷键无法重复发送，也保留输入草稿", as
     complete(Response.json({ success: true, message: "完成" }));
     await pending;
     assert.equal(page.controls.sendBtn.disabled, false);
+});
+
+test("自动滚动仅更新消息列表，关闭后保留列表滚动位置", async () => {
+    const page = openConsole(() => Response.json({ success: true, message: "模拟回复" }));
+    const { messageList, autoScroll, streamMode } = page.controls;
+    streamMode.checked = false;
+    messageList.scrollHeight = 720;
+    messageList.scrollTop = 0;
+    autoScroll.checked = true;
+    await page.send("自动滚动");
+    assert.equal(messageList.scrollTop, 720);
+
+    autoScroll.checked = false;
+    messageList.scrollTop = 120;
+    await page.send("保留滚动位置");
+    assert.equal(messageList.scrollTop, 120);
 });

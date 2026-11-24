@@ -4,45 +4,97 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Chat Console</title>
+    <title>医疗对话工作台</title>
     <link rel="stylesheet" href="/app.css">
 </head>
 
 <body>
-    <div class="shell">
-        <aside class="sidebar">
-            <div class="brand">
-                <div class="brand-mark">
-                    <span class="brand-dot"></span>
-                    <span class="brand-dot"></span>
-                    <span class="brand-dot"></span>
+    <header id="top" class="topbar">
+        <div class="topbar-inner">
+            <a class="brand" href="#top">
+                <span class="chat-mark" aria-hidden="true"><span></span></span>
+                医疗对话台
+            </a>
+            <nav class="topbar-nav" aria-label="工作台导航">
+                <a href="#chatTitle">对话</a>
+                <a href="#settings">会话参数</a>
+                <a href="#history">会话历史</a>
+                <a href="#debug">调试状态</a>
+            </nav>
+            <span id="healthBadge" class="badge pending" role="status">检测中</span>
+        </div>
+    </header>
+
+    <main class="workspace">
+        <section class="hero" aria-labelledby="pageTitle">
+            <h1 id="pageTitle">医疗对话工作台</h1>
+            <p>体验连续问答，验证患者画像、长期记忆和 Agent 调用。</p>
+        </section>
+
+        <section id="chatViewport" class="chat-viewport" aria-labelledby="chatTitle">
+            <header class="viewport-head">
+                <div class="assistant">
+                    <span class="chat-mark" aria-hidden="true"><span></span></span>
+                    <div>
+                        <h2 id="chatTitle" tabindex="-1">医疗助手</h2>
+                        <span id="liveConnectionBadge" class="live-badge" role="status">
+                            <span id="liveConnectionText">待机中</span>
+                        </span>
+                    </div>
                 </div>
-                <p class="eyebrow">AI Chat Service</p>
-                <h1>对话控制台</h1>
-                <p class="subtitle">面向画像、记忆与流式对话链路的本地验证工作台，保留调试效率，也把界面质感拉起来。</p>
+                <div class="viewport-stats">
+                    <span>消息 <strong id="messageCountText">0</strong></span>
+                    <a href="#settings" id="modeText" class="mode-link">SSE 流式</a>
+                </div>
+            </header>
+
+            <div class="chat-body">
+                <div id="emptyState" class="empty-state">
+                    <span class="chat-mark" aria-hidden="true"><span></span></span>
+                    <div class="welcome">
+                        <h3>你好，想聊些什么？</h3>
+                        <p>输入你的问题，或选一个示例开始对话。</p>
+                        <div class="quick-prompts" role="group" aria-label="示例问题">
+                            <button class="chip" type="button" data-prompt="我最近总是睡不好，应该怎么调整作息？">睡眠建议</button>
+                            <button class="chip" type="button" data-prompt="结合我之前的情况，晚饭怎么吃比较合适？">饮食建议</button>
+                            <button class="chip" type="button" data-prompt="帮我总结一下这次会话里需要继续补充的画像信息。">补充画像</button>
+                        </div>
+                    </div>
+                </div>
+                <div id="messageList" class="message-list" role="region" aria-label="对话消息" tabindex="0" hidden></div>
             </div>
 
-            <section class="panel config-panel">
-                <div class="panel-header">
-                    <h2>会话参数</h2>
-                    <span id="healthBadge" class="badge pending">检测中</span>
+            <div class="composer">
+                <label class="visually-hidden" for="messageInput">输入消息</label>
+                <div class="composer-input">
+                    <textarea id="messageInput" rows="2" placeholder="输入你的健康问题…" aria-describedby="sendHint"></textarea>
+                    <button id="sendBtn" class="primary-btn" type="button">
+                        <span class="send-icon" aria-hidden="true"></span>发送
+                    </button>
                 </div>
+                <div class="composer-actions">
+                    <span id="sendHint" class="hint"><kbd>Ctrl/Cmd</kbd> + <kbd>Enter</kbd> 发送</span>
+                    <div class="action-group">
+                        <button id="stopBtn" class="text-btn" type="button" disabled>停止输出</button>
+                        <button id="clearChatBtn" class="text-btn" type="button">清空对话</button>
+                    </div>
+                </div>
+            </div>
+        </section>
 
+        <div class="support-grid">
+            <section id="settings" class="tool-panel config-panel" aria-labelledby="settingsTitle" tabindex="-1">
+                <div class="panel-header">
+                    <h2 id="settingsTitle">会话参数</h2>
+                </div>
                 <label class="field">
-                    <span>患者 ID（选填）</span>
+                    <span>患者 ID <small>选填</small></span>
                     <input id="customerId" type="text" placeholder="访客请留空" autocomplete="off">
                 </label>
-
-                <label class="field">
-                    <span>群组 ID</span>
-                    <input id="groupId" type="text" value="health-group-001" placeholder="health-group-001">
-                </label>
-
                 <label class="field">
                     <span>会话 ID</span>
                     <input id="conversationId" type="text" placeholder="留空则由服务端创建">
                 </label>
-
                 <div class="field-row">
                     <label class="toggle">
                         <input id="streamMode" type="checkbox" checked>
@@ -53,36 +105,24 @@
                         <span>自动滚动</span>
                     </label>
                 </div>
-
-                <div class="quick-prompts">
-                    <button class="chip" type="button" data-prompt="我最近总是睡不好，应该怎么调整作息？">睡眠建议</button>
-                    <button class="chip" type="button" data-prompt="结合我之前的情况，晚饭怎么吃比较合适？">饮食建议</button>
-                    <button class="chip" type="button" data-prompt="帮我总结一下这次会话里需要继续补充的画像信息。">画像补齐</button>
-                </div>
             </section>
 
-            <section class="panel history-panel">
+            <section id="history" class="tool-panel history-panel" aria-labelledby="historyTitle" tabindex="-1">
                 <div class="panel-header">
-                    <h2>会话历史</h2>
-                    <button id="refreshHistoryBtn" class="ghost-btn" type="button">刷新</button>
+                    <h2 id="historyTitle">会话历史</h2>
+                    <button id="refreshHistoryBtn" class="text-btn" type="button">刷新</button>
                 </div>
-                <p class="history-tip">登录患者账号后，填写对应的患者 ID 即可查看最近会话。</p>
-                <div id="historyStatus" class="history-status">访客可直接开始对话。会话历史仅向登录患者开放。</div>
+                <p id="historyStatus" class="history-status" role="status">访客可直接开始对话。会话历史仅向登录患者开放。</p>
                 <div id="conversationList" class="conversation-list"></div>
             </section>
 
-            <section class="panel trace-panel">
+            <section id="debug" class="tool-panel trace-panel" aria-labelledby="debugTitle" tabindex="-1">
                 <div class="panel-header">
-                    <h2>调试状态</h2>
-                    <button id="clearTraceBtn" class="ghost-btn" type="button">清空</button>
+                    <h2 id="debugTitle">调试状态</h2>
                 </div>
                 <dl class="status-list">
                     <div>
-                        <dt>当前模式</dt>
-                        <dd id="modeText">流式输出</dd>
-                    </div>
-                    <div>
-                        <dt>最新会话</dt>
+                        <dt>当前会话</dt>
                         <dd id="activeConversationText">未创建</dd>
                     </div>
                     <div>
@@ -98,80 +138,14 @@
                         <dd id="activeStageText">空闲</dd>
                     </div>
                 </dl>
-                <div id="traceLog" class="trace-log"></div>
+                <div class="trace-header">
+                    <h3>日志 <span id="traceCountText">0</span></h3>
+                    <button id="clearTraceBtn" class="text-btn" type="button">清空日志</button>
+                </div>
+                <div id="traceLog" class="trace-log" role="region" aria-label="调试日志" tabindex="0"></div>
             </section>
-        </aside>
-
-        <main class="workspace">
-            <section class="hero panel">
-                <div class="hero-copy-group">
-                    <p class="eyebrow">Command Surface</p>
-                    <h2>流式对话调试台</h2>
-                    <p class="hero-copy">支持连续追问、同步 / 流式响应切换、推荐相似会话回填，以及关键状态的实时观测。</p>
-                </div>
-                <div class="hero-status">
-                    <div class="hero-stat">
-                        <span class="hero-stat-label">Transport</span>
-                        <strong id="transportStatValue">Stream</strong>
-                    </div>
-                    <div class="hero-stat">
-                        <span class="hero-stat-label">Health</span>
-                        <strong id="healthStatValue">Checking</strong>
-                    </div>
-                    <div class="hero-stat">
-                        <span class="hero-stat-label">Session</span>
-                        <strong id="sessionStatValue">Idle</strong>
-                    </div>
-                </div>
-            </section>
-
-            <section id="chatViewport" class="chat-viewport panel">
-                <div class="viewport-head">
-                    <div id="liveConnectionBadge" class="live-badge">
-                        <span class="live-badge-dot"></span>
-                        <span id="liveConnectionText">待机中</span>
-                    </div>
-                    <div class="telemetry-grid">
-                        <div class="telemetry-card">
-                            <span class="telemetry-label">Run State</span>
-                            <strong id="liveBusyText">Idle</strong>
-                        </div>
-                        <div class="telemetry-card">
-                            <span class="telemetry-label">Messages</span>
-                            <strong id="messageCountText">0</strong>
-                        </div>
-                        <div class="telemetry-card">
-                            <span class="telemetry-label">Trace</span>
-                            <strong id="traceCountText">0</strong>
-                        </div>
-                    </div>
-                </div>
-                <div id="emptyState" class="empty-state">
-                    <div class="empty-illustration">
-                        <span></span>
-                        <span></span>
-                        <span></span>
-                    </div>
-                    <h3>开始一轮对话</h3>
-                    <p>输入问题后，右侧会实时展示用户消息、AI 响应、错误提示、推荐问题，以及已加载的会话历史。</p>
-                </div>
-                <div id="messageList" class="message-list" hidden></div>
-            </section>
-
-            <section class="composer panel">
-                <label class="composer-label" for="messageInput">输入消息</label>
-                <textarea id="messageInput" rows="4" placeholder="例如：我最近经常血糖偏高，早餐和运动该怎么安排？"></textarea>
-                <div class="composer-actions">
-                    <div class="hint">`Cmd/Ctrl + Enter` 发送，流式模式下可手动中断。</div>
-                    <div class="action-group">
-                        <button id="stopBtn" class="secondary-btn" type="button" disabled>停止</button>
-                        <button id="clearChatBtn" class="ghost-btn" type="button">清空对话</button>
-                        <button id="sendBtn" class="primary-btn" type="button">发送消息</button>
-                    </div>
-                </div>
-            </section>
-        </main>
-    </div>
+        </div>
+    </main>
 
     <script src="/app.js"></script>
 </body>
