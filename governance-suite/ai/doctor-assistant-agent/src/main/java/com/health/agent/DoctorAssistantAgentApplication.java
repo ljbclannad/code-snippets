@@ -1,5 +1,6 @@
 package com.health.agent;
 
+import org.apache.ibatis.annotations.Mapper;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -8,7 +9,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  * 医生助手 ReAct Agent 应用启动类
  */
 @SpringBootApplication
-@MapperScan("com.health.agent")
+@MapperScan(basePackages = "com.health.agent", annotationClass = Mapper.class)
 public class DoctorAssistantAgentApplication {
 
     public static void main(String[] args) {
