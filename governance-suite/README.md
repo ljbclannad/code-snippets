@@ -84,12 +84,12 @@ bash sh/run/start-all-services.sh
 # 需要先配置 API Keys
 export DASHSCOPE_API_KEY=your-key
 export DEEPSEEK_API_KEY=your-key
-export DIFY_API_KEY=your-key
 
-bash sh/run/start-ai-services.sh
+# 启动全部六个本地 AI 服务
+bash sh/run/start-ai-services.sh --all
 ```
 
-说明：该脚本默认启动 AI 主链路依赖的 `user-profile-service`、`vector-memory-service`、`ai-chat-service` 和 `doctor-assistant-agent`；`knowledge-base-service` 仍需按需单独启动。
+省略 `--all` 可仅启动四个主链路服务。`--all` 同时启动知识库和评测服务。远程中间件凭据和停止命令见 [AI 服务说明](ai/README.md#基础设施依赖)。
 
 ### 4. 验证运行
 

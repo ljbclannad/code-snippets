@@ -9,15 +9,15 @@ spring:
   cloud:
     nacos:
       discovery:
-        server-addr: localhost:8848
-        namespace: public
+        server-addr: ${NACOS_ADDR:${AI_MIDDLEWARE_HOST:175.27.242.127}:8848}
+        namespace: ${NACOS_NAMESPACE:ai-local}
 
   # 数据源配置
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3306/governance?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false
-    username: root
-    password: root
+    url: jdbc:mysql://${AI_MYSQL_HOST:${AI_MIDDLEWARE_HOST:175.27.242.127}}:${AI_MYSQL_PORT:3306}/governance?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: ${AI_MYSQL_USERNAME:governance_app}
+    password: ${AI_MYSQL_PASSWORD:${GOVERNANCE_DB_PASSWORD:}}
     hikari:
       minimum-idle: 5
       maximum-pool-size: 20
@@ -25,8 +25,9 @@ spring:
   # Redis 配置
   data:
     redis:
-      host: localhost
-      port: 36379
+      host: ${REDIS_HOST:${AI_MIDDLEWARE_HOST:175.27.242.127}}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
       timeout: 3000ms
 
   # Spring AI Milvus 配置
@@ -34,7 +35,7 @@ spring:
     vectorstore:
       milvus:
         client:
-          host: localhost
+          host: ${AI_MIDDLEWARE_HOST:175.27.242.127}
           port: 19530
         database-name: default
         embedding-dimension: 1024 # Qwen embedding dimension

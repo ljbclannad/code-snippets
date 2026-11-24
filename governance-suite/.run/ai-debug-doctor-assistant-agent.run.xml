@@ -1,0 +1,13 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="DoctorAssistantAgentApplication" type="SpringBootApplicationConfigurationType" factoryName="Spring Boot" folderName="AI 单服务调试">
+    <module name="doctor-assistant-agent" />
+    <option name="SPRING_BOOT_MAIN_CLASS" value="com.health.agent.DoctorAssistantAgentApplication" />
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/ai/doctor-assistant-agent" />
+    <option name="envFilePaths">
+      <option value="$PROJECT_DIR$/sh/run/ai-middleware-env.sh" />
+    </option>
+    <method v="2">
+      <option name="Make" enabled="true" />
+    </method>
+  </configuration>
+</component>

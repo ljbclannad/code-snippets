@@ -1,0 +1,10 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="EvaluationApplication" type="SpringBootApplicationConfigurationType" factoryName="Spring Boot" folderName="AI 单服务调试">
+    <module name="evaluation-service" />
+    <option name="SPRING_BOOT_MAIN_CLASS" value="com.lx.governance.evaluation.EvaluationApplication" />
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/ai/evaluation-service" />
+    <method v="2">
+      <option name="Make" enabled="true" />
+    </method>
+  </configuration>
+</component>

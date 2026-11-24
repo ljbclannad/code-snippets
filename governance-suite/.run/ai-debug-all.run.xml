@@ -1,0 +1,11 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="AI 服务（全部调试）" type="CompoundRunConfigurationType">
+    <toRun name="AiChatServiceApplication" type="SpringBootApplicationConfigurationType" />
+    <toRun name="UserProfileServiceApplication" type="SpringBootApplicationConfigurationType" />
+    <toRun name="VectorMemoryServiceApplication" type="SpringBootApplicationConfigurationType" />
+    <toRun name="KnowledgeBaseServiceApplication" type="SpringBootApplicationConfigurationType" />
+    <toRun name="DoctorAssistantAgentApplication" type="SpringBootApplicationConfigurationType" />
+    <toRun name="EvaluationApplication" type="SpringBootApplicationConfigurationType" />
+    <method v="2" />
+  </configuration>
+</component>

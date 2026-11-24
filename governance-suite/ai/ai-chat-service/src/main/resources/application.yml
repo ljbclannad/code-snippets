@@ -5,20 +5,20 @@ spring:
   application:
     name: ai-chat-service
   datasource:
-    url: jdbc:mysql://localhost:3306/governance?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
-    username: root
-    password: root
+    url: jdbc:mysql://${AI_MYSQL_HOST:${AI_MIDDLEWARE_HOST:175.27.242.127}}:${AI_MYSQL_PORT:3306}/governance?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: ${AI_MYSQL_USERNAME:governance_app}
+    password: ${AI_MYSQL_PASSWORD:${GOVERNANCE_DB_PASSWORD:}}
     driver-class-name: com.mysql.cj.jdbc.Driver
   cloud:
     nacos:
       discovery:
-        server-addr: localhost:8848
-        namespace: public
+        server-addr: ${NACOS_ADDR:${AI_MIDDLEWARE_HOST:175.27.242.127}:8848}
+        namespace: ${NACOS_NAMESPACE:ai-local}
   rabbitmq:
-    host: localhost
+    host: ${AI_MIDDLEWARE_HOST:175.27.242.127}
     port: 5672
-    username: guest
-    password: guest
+    username: ${RABBITMQ_USERNAME:governance_app}
+    password: ${RABBITMQ_PASSWORD:}
     listener:
       simple:
         retry:
@@ -28,11 +28,12 @@ spring:
           multiplier: 2
   data:
     redis:
-      host: localhost
-      port: 36379
+      host: ${REDIS_HOST:${AI_MIDDLEWARE_HOST:175.27.242.127}}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
       timeout: 3000ms
   elasticsearch:
-    uris: http://localhost:9200
+    uris: http://${AI_MIDDLEWARE_HOST:175.27.242.127}:9200
     connection-timeout: 5s
     socket-timeout: 30s
   # Spring AI Configuration (使用 OpenAI 兼容客户端连接 DeepSeek)

@@ -9,13 +9,14 @@ spring:
     nacos:
       discovery:
         enabled: false
-        server-addr: localhost:8848
+        server-addr: ${NACOS_ADDR:${AI_MIDDLEWARE_HOST:175.27.242.127}:8848}
+        namespace: ${NACOS_NAMESPACE:ai-local}
 
   data:
     redis:
-      host: localhost
-      port: 36379
-      password:
+      host: ${REDIS_HOST:${AI_MIDDLEWARE_HOST:175.27.242.127}}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
       database: 0
       lettuce:
         pool:
@@ -27,10 +28,10 @@ spring:
       timeout: 5000ms
 
   rabbitmq:
-    host: localhost
+    host: ${AI_MIDDLEWARE_HOST:175.27.242.127}
     port: 5672
-    username: guest
-    password: guest
+    username: ${RABBITMQ_USERNAME:governance_app}
+    password: ${RABBITMQ_PASSWORD:}
 
   cache:
     type: redis
@@ -38,9 +39,9 @@ spring:
       time-to-live: 300000  # 5分钟
   
   datasource:
-    url: jdbc:mysql://localhost:3306/governance?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
-    username: root
-    password: root
+    url: jdbc:mysql://${AI_MYSQL_HOST:${AI_MIDDLEWARE_HOST:175.27.242.127}}:${AI_MYSQL_PORT:3306}/governance?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: ${AI_MYSQL_USERNAME:governance_app}
+    password: ${AI_MYSQL_PASSWORD:${GOVERNANCE_DB_PASSWORD:}}
     driver-class-name: com.mysql.cj.jdbc.Driver
 
 mybatis:

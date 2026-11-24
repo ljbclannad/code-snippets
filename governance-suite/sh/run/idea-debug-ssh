@@ -1,0 +1,29 @@
+#!/usr/bin/perl
+# IDEA 并行启动时串行认证并复用同一个短时 SSH 连接。
+use strict;
+use warnings;
+use Cwd qw(abs_path);
+use Fcntl qw(:flock);
+
+if ($ENV{AI_DEBUG_ASKPASS}) {
+    exec '/usr/bin/osascript', '-e', 'on run argv', '-e',
+        'return text returned of (display dialog (item 1 of argv) with hidden answer default answer "" with title "AI 服务调试 · SSH 登录")',
+        '-e', 'end run', '--', ($ARGV[0] // '请输入 SSH 密码');
+    die "无法打开 SSH 密码输入框：$!";
+}
+
+umask 0077;
+my $dir = "$ENV{HOME}/.ssh";
+mkdir $dir, 0700 unless -d $dir;
+open my $lock, '>>', "$dir/governance-ai-debug.lock" or die "无法打开 SSH 连接锁：$!";
+flock $lock, LOCK_EX or die "无法锁定 SSH 连接：$!";
+if ($^O eq 'darwin' && !$ENV{SSH_ASKPASS}) {
+    $ENV{SSH_ASKPASS} = abs_path($0);
+    $ENV{SSH_ASKPASS_REQUIRE} = 'force';
+    $ENV{AI_DEBUG_ASKPASS} = 1;
+}
+my $result = system 'ssh', '-o', 'StrictHostKeyChecking=yes',
+    '-o', 'ControlMaster=auto', '-o', 'ControlPersist=60',
+    '-o', "ControlPath=$dir/governance-ai-debug-%C",
+    '-o', 'NumberOfPasswordPrompts=1', @ARGV;
+exit($result == -1 || ($result & 127) ? 1 : $result >> 8);

@@ -15,6 +15,7 @@
  */
 
 CREATE DATABASE IF NOT EXISTS nacos DEFAULT CHARACTER SET utf8mb4;
+USE nacos;
 
 /******************************************/
 /*   表名称 = config_info                  */

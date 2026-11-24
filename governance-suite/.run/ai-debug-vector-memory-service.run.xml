@@ -1,0 +1,13 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="VectorMemoryServiceApplication" type="SpringBootApplicationConfigurationType" factoryName="Spring Boot" folderName="AI 单服务调试">
+    <module name="vector-memory-service" />
+    <option name="SPRING_BOOT_MAIN_CLASS" value="com.lx.governance.vectormemory.VectorMemoryServiceApplication" />
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/ai/vector-memory-service" />
+    <option name="envFilePaths">
+      <option value="$PROJECT_DIR$/sh/run/ai-middleware-env.sh" />
+    </option>
+    <method v="2">
+      <option name="Make" enabled="true" />
+    </method>
+  </configuration>
+</component>

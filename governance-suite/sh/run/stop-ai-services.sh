@@ -7,11 +7,25 @@ ROOT_DIR=$(cd "${SCRIPT_DIR}/../.." && pwd)
 LOG_DIR="${ROOT_DIR}/logs/ai-services"
 
 SERVICES=(
-  "user-profile-service:8101"
-  "vector-memory-service:8102"
   "ai-chat-service:8100"
   "doctor-assistant-agent:8088"
 )
+
+case "${1:-}" in
+  --all)
+    SERVICES+=("evaluation-service:${EVALUATION_PORT:-8104}" "knowledge-base-service:8103")
+    shift
+    ;;
+  -h|--help)
+    echo '用法：bash sh/run/stop-ai-services.sh [--all]'
+    exit 0
+    ;;
+esac
+if [[ $# -ne 0 ]]; then
+  echo '用法：bash sh/run/stop-ai-services.sh [--all]' >&2
+  exit 1
+fi
+SERVICES+=("vector-memory-service:8102" "user-profile-service:8101")
 
 stop_pid_if_running() {
   local pid="$1"
@@ -41,7 +55,7 @@ force_kill_port() {
   local service="$2"
   local pids
 
-  pids=$(lsof -ti tcp:"${port}" 2>/dev/null || true)
+  pids=$(lsof -nP -tiTCP:"${port}" -sTCP:LISTEN 2>/dev/null || true)
   if [[ -z "${pids}" ]]; then
     echo "端口 ${port} 空闲 (${service})"
     return 0
@@ -73,6 +87,7 @@ for entry in "${SERVICES[@]}"; do
     rm -f "${pid_file}"
   else
     echo "跳过 ${service}: 未找到 PID 文件"
+    continue
   fi
 
   if [[ "${handled}" -eq 0 ]]; then

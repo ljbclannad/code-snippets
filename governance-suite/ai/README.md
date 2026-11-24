@@ -98,36 +98,48 @@ ai/
 
 ### 基础设施依赖
 
-- MySQL (`localhost:3306`)
-- Redis (`localhost:36379`)
-- RabbitMQ (`http://localhost:15672`)
-- Nacos (`http://localhost:8848`)
-- Milvus (`localhost:19530`)
+本地运行 AI 服务时，中间件主机默认为 `175.27.242.127`。可用 `AI_MIDDLEWARE_HOST` 统一覆盖，Docker 部署继续使用 Compose 注入的各服务地址。
+
+| 中间件 | 端口 |
+| --- | --- |
+| MySQL | 3306 |
+| Redis | 6379 |
+| RabbitMQ（AMQP） | 5672 |
+| Nacos | 8848（HTTP）、9848（客户端 gRPC） |
+| Elasticsearch | 9200 |
+| Milvus | 19530 |
+
+本地通过 IDEA、启动脚本或 Maven 启动时，Nacos 服务发现和配置中心默认使用命名空间 ID `ai-local`，可用环境变量 `NACOS_NAMESPACE` 覆盖。服务器 Docker Compose 显式使用 `public`。在 Nacos 控制台的服务列表或配置列表切换命名空间，即可分别查看两个环境。
+
+空 MySQL 数据卷首次初始化时会创建 `ai-local`。在已有服务器上，开机执行 `/home/ubuntu/governance-ai/start-all.sh` 会自动补建缺失的空间；Nacos 已运行时，也可以单独执行 `/home/ubuntu/governance-ai/start-all.sh --namespace-only`。此操作恢复命名空间 ID，空间内曾发布的配置需从 Nacos 导出文件或数据库备份还原。
+
+聊天、向量记忆、知识库和医生助手配置了 Nacos 服务注册。画像服务关闭了服务发现，评测服务独立运行。MySQL、Redis、RabbitMQ、Elasticsearch 和 Milvus 由本地与服务器环境共享。
+
+在本地终端或 IDE 运行配置中注入服务器对应的环境变量。业务库使用 `GOVERNANCE_DB_PASSWORD`，医生助手库使用 `DOCTOR_DB_PASSWORD`，Redis 和 RabbitMQ 分别使用 `REDIS_PASSWORD` 和 `RABBITMQ_PASSWORD`。数据库账号默认分别为 `governance_app` 和 `doctor_app`，RabbitMQ 默认使用 `governance_app`。
+
+一键启动脚本优先使用当前环境已有的凭据；连接默认服务器时，它会通过 SSH 从部署目录加载缺少的中间件密码。使用 SSH 密码登录时，在终端按提示输入。单独运行 Maven 时，可以先将四项凭据载入当前终端：
+
+```bash
+while IFS= read -r setting; do
+  export "$setting"
+done < <(ssh ubuntu@175.27.242.127 "grep -E '^(GOVERNANCE_DB_PASSWORD|DOCTOR_DB_PASSWORD|REDIS_PASSWORD|RABBITMQ_PASSWORD)=' /home/ubuntu/governance-ai/.env")
+```
+
+本地实例与服务器实例会访问同一套数据和消息队列；启动同一队列的消费者后，两边都有可能收到消息。外部集成测试请使用独立的 `AI_TEST_*` 配置。
 
 ### 快速启动
 
-从项目根目录执行：
+在 IntelliJ IDEA 中打开 `governance-suite`，从右上角运行配置选择 **AI 服务（全部启动）**，点击 ▶。脚本在 IDEA 终端中运行，需要能找到 `mvn` 和下文的两个模型密钥。需要 SSH 密码时，直接在该终端输入。启动脚本完成健康检查后退出，六个服务在后台运行；结束开发时运行 **AI 服务（全部停止）**。
+
+在 `governance-suite` 目录配置好环境变量后执行：
 
 ```bash
-# 主链路 4 个服务
-mvn -q -pl ai/user-profile-service spring-boot:run
-mvn -q -pl ai/vector-memory-service spring-boot:run
-mvn -q -pl ai/ai-chat-service spring-boot:run
-mvn -q -pl ai/doctor-assistant-agent spring-boot:run
-
-# 如需启用 KB QA / 知识检索链路，再单独启动知识库服务
-mvn -q -pl ai/knowledge-base-service spring-boot:run
+bash sh/run/start-ai-services.sh --all
 ```
 
-说明：
+脚本依次启动画像、向量记忆、知识库、评测、医生助手、聊天服务，并检查各服务的 HTTP 健康端点。聊天页面为 `http://localhost:8100/`，每个服务的日志位于 `logs/ai-services/<服务名>.log`。停止整套应用可执行 `bash sh/run/stop-ai-services.sh --all`。
 
-- 当前仓库内未包含统一启动脚本，以上命令以各模块 `pom.xml` 和 `application.yml` 为准
-- 默认对话主链路依赖：
-  - `user-profile-service`
-  - `vector-memory-service`
-  - `ai-chat-service`
-  - `doctor-assistant-agent`
-- `knowledge-base-service` 可独立启动，按需支撑 KB QA 和 Agent 证据检索
+省略 `--all` 可仅启动四个主链路服务。中间件默认连接服务器；需要本地 Compose 基础设施时可设置 `AI_MIDDLEWARE_HOST=localhost`。
 
 ### 环境变量
 
@@ -136,7 +148,6 @@ mvn -q -pl ai/knowledge-base-service spring-boot:run
 ```bash
 export DASHSCOPE_API_KEY=your-key
 export DEEPSEEK_API_KEY=your-key
-export DIFY_API_KEY=your-key
 ```
 
 ### 快速验证
@@ -322,15 +333,8 @@ bash sh/run/stop-ai-services.sh
 **检查基础设施：**
 
 ```bash
-docker compose ps
+ssh ubuntu@175.27.242.127 'cd /home/ubuntu/governance-ai && sudo docker compose ps'
 ```
-
-确保以下容器运行：
-- gov-mysql
-- gov-redis
-- gov-rabbitmq
-- gov-nacos
-- gov-milvus
 
 **检查端口占用：**
 
@@ -342,7 +346,7 @@ lsof -i :8102
 
 ### 2. 服务注册到 Nacos 失败
 
-访问 Nacos 控制台检查：`http://localhost:8848/nacos`
+访问 Nacos 控制台检查：`http://175.27.242.127:8848/nacos`
 
 检查服务配置中的 Nacos 地址：
 - `application.yml` 中的 `spring.cloud.nacos.discovery.server-addr`
@@ -368,7 +372,7 @@ curl http://localhost:8100/actuator/prometheus | grep degradation
 检查 Milvus 连接：
 
 ```bash
-docker logs gov-milvus
+ssh ubuntu@175.27.242.127 'cd /home/ubuntu/governance-ai && sudo docker compose logs --tail 100 milvus'
 ```
 
 检查向量数据是否已导入：
@@ -381,19 +385,21 @@ curl http://localhost:8102/actuator/health
 
 ### 本地开发
 
-1. 启动基础设施：`docker compose up -d`
+1. 确认服务器中间件已启动，并按上文配置连接凭据。
 2. 编译：`mvn clean compile`
 3. 启动单个服务：`mvn -q -pl ai/ai-chat-service spring-boot:run`
 4. 修改代码后重启服务
 
 ### 调试
 
-使用 IDE 调试模式启动：
+在 IntelliJ IDEA 中打开 `governance-suite`：
 
-```bash
-# IDEA: Run → Debug → Edit Configurations
-# 设置 Main class 和 Module classpath
-```
+- **单独启动或调试**：在 `AiChatServiceApplication.main()` 左侧点击运行图标，选择 **Run** 或 **Debug**，即可只启动聊天服务。也可以在「AI 单服务调试」目录中选择同名配置。其他五个服务同样使用各自的启动类名。
+- **同时调试六个服务**：选择 **AI 服务（全部调试）** 并点击 **Debug**。该组合复用上述六个单服务配置，每个 JVM 都有独立的调试会话和控制台。
+
+如果已经用「AI 服务（全部启动）」运行了服务，先运行「AI 服务（全部停止）」释放本地端口。模型密钥沿用本机环境变量。使用默认服务器且本机缺少中间件密码时，IDEA 通过 SSH 加载凭据。macOS 使用密码登录时会弹出 SSH 密码输入框，多个服务可以复用这次连接。评测服务独立启动时无需加载中间件密码。首次连接新服务器前先在终端确认其 SSH 主机指纹。
+
+可在 `AiChatController.health()` 的返回语句打断点，待聊天服务启动后访问 `http://localhost:8100/api/chat/health`。调试多个服务时，在 IDEA 的 Debug 窗口切换对应会话；结束时在 IDEA 中停止这些调试进程。
 
 或使用 Maven 调试参数：
 

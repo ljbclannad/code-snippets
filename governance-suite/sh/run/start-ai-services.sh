@@ -8,12 +8,11 @@ LOG_DIR="${ROOT_DIR}/logs/ai-services"
 RESTART_MODE=0
 DEPENDENCIES_PREPARED=0
 WITH_OBSERVABILITY=0
+ALL_SERVICES=0
 
 SERVICES=(
   "user-profile-service:8101:/actuator/health"
   "vector-memory-service:8102:/actuator/health"
-  "ai-chat-service:8100:/api/chat/health"
-  "doctor-assistant-agent:8088:/actuator/health"
 )
 
 REQUIRED_CONTAINERS=(
@@ -47,13 +46,15 @@ OBSERVABILITY_INFRA_SERVICES=(
 usage() {
   cat <<'EOF'
 用法:
-  ./sh/run/start-ai-services.sh [--restart] [--with-observability]
+  ./sh/run/start-ai-services.sh [--all] [--restart] [--with-observability]
 
 参数:
-  --restart              先停止并清理 8088、8100~8102 对应服务，再重新启动
+  --all                  启动全部六个 AI 服务，包含知识库和评测
+  --restart              重启本次选中的服务
   --with-observability   额外启动 Kibana / Logstash / Prometheus / Grafana / Jaeger
 
 可选环境变量:
+  AI_MIDDLEWARE_HOST       中间件主机，默认 175.27.242.127；设为 localhost 可启动本地 Compose 基础设施
   MEMORY_RERANK_PROVIDER   rerank 模式，默认 embedding，可选 bge-http
   MEMORY_RERANK_BASE_URL   外部 rerank 服务地址，默认 http://localhost:9997
 EOF
@@ -99,7 +100,7 @@ cleanup_stale_pid() {
 
 is_port_in_use() {
   local port="$1"
-  lsof -ti tcp:"${port}" >/dev/null 2>&1
+  lsof -nP -tiTCP:"${port}" -sTCP:LISTEN >/dev/null 2>&1
 }
 
 kill_port_occupants() {
@@ -107,7 +108,7 @@ kill_port_occupants() {
   local service="$2"
   local pids
 
-  pids=$(lsof -ti tcp:"${port}" 2>/dev/null || true)
+  pids=$(lsof -nP -tiTCP:"${port}" -sTCP:LISTEN 2>/dev/null || true)
   if [[ -z "${pids}" ]]; then
     return 0
   fi
@@ -160,12 +161,17 @@ wait_for_health() {
   local service="$1"
   local port="$2"
   local path="$3"
-  local timeout="${4:-90}"
+  local pid="$4"
+  local timeout=90
   local url="http://localhost:${port}${path}"
   local start_ts
   start_ts=$(date +%s)
 
   while true; do
+    if ! kill -0 "${pid}" 2>/dev/null; then
+      echo "  ${service} 启动进程已退出，请检查日志: ${LOG_DIR}/${service}.log"
+      return 1
+    fi
     if curl -fsS "${url}" >/dev/null 2>&1; then
       echo "  ${service} 健康检查通过: ${url}"
       return 0
@@ -215,11 +221,6 @@ start_infra() {
   echo "启动基础设施容器（默认基础链路 + vector）..."
   docker compose up -d "${DEFAULT_INFRA_SERVICES[@]}"
 
-  if [[ "${WITH_OBSERVABILITY}" -eq 1 ]]; then
-    echo "启动可观测性容器..."
-    docker compose --profile observability up -d "${OBSERVABILITY_INFRA_SERVICES[@]}"
-  fi
-
   echo "等待核心基础设施就绪..."
   for container in "${REQUIRED_CONTAINERS[@]}"; do
     wait_for_container_ready "${container}"
@@ -230,13 +231,11 @@ launch_service_process() {
   local log_file="$1"
   shift
 
-  nohup python3 -c '
-import os
-import sys
-
-os.setsid()
-os.execvp(sys.argv[1], sys.argv[1:])
-' "$@" < /dev/null > "${log_file}" 2>&1 &
+  # 独立会话让后台服务在启动终端退出后继续运行，exec 保留 PID 文件里的进程号。
+  nohup perl -MPOSIX=setsid -e '
+    defined(setsid()) or die "无法建立后台会话: $!";
+    exec { $ARGV[0] } @ARGV or die "无法启动服务: $!";
+  ' -- "$@" < /dev/null > "${log_file}" 2>&1 &
 }
 
 append_profile() {
@@ -281,11 +280,7 @@ start_service() {
   fi
 
   if is_port_in_use "${port}"; then
-    kill_port_occupants "${port}" "${service}"
-  fi
-
-  if is_port_in_use "${port}"; then
-    echo "错误: 端口 ${port} 清理后仍被占用，无法启动 ${service}"
+    echo "错误: 端口 ${port} 已被占用，无法启动 ${service}"
     exit 1
   fi
 
@@ -312,7 +307,7 @@ start_service() {
   local pid=$!
   echo "${pid}" > "${pid_file}"
 
-  if ! wait_for_health "${service}" "${port}" "${health_path}"; then
+  if ! wait_for_health "${service}" "${port}" "${health_path}" "${pid}"; then
     echo "  ${service} 启动失败，最近日志如下:"
     tail -n 80 "${log_file}" || true
     exit 1
@@ -324,6 +319,10 @@ echo "项目目录: ${ROOT_DIR}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --all)
+      ALL_SERVICES=1
+      shift
+      ;;
     --restart)
       RESTART_MODE=1
       shift
@@ -351,9 +350,13 @@ if [[ "${WITH_OBSERVABILITY}" -eq 1 ]]; then
   echo "模式: with observability"
 fi
 
+if [[ "${ALL_SERVICES}" -eq 1 ]]; then
+  SERVICES+=("knowledge-base-service:8103:/actuator/health" "evaluation-service:${EVALUATION_PORT:-8104}:/api/evaluation/health")
+fi
+SERVICES+=("doctor-assistant-agent:8088:/actuator/health" "ai-chat-service:8100:/api/chat/health")
+
 require_env "DASHSCOPE_API_KEY"
 require_env "DEEPSEEK_API_KEY"
-require_env "DIFY_API_KEY"
 
 export MEMORY_RERANK_PROVIDER="${MEMORY_RERANK_PROVIDER:-embedding}"
 export MEMORY_RERANK_BASE_URL="${MEMORY_RERANK_BASE_URL:-http://localhost:9997}"
@@ -363,17 +366,32 @@ if [[ "${MEMORY_RERANK_PROVIDER}" == "bge-http" ]]; then
   echo "Rerank base URL: ${MEMORY_RERANK_BASE_URL}"
 fi
 
-echo "检查基础设施状态..."
 cd "${ROOT_DIR}"
-start_infra
-running_containers=$(docker compose ps --status running)
-for container in "${REQUIRED_CONTAINERS[@]}"; do
-  if ! grep -q "${container}" <<< "${running_containers}"; then
-    echo "错误: ${container} 未启动"
-    exit 1
-  fi
-done
-echo "基础设施检查通过"
+export AI_MIDDLEWARE_HOST="${AI_MIDDLEWARE_HOST:-175.27.242.127}"
+case "${AI_MIDDLEWARE_HOST}" in
+  localhost|127.0.0.1)
+    export REDIS_PORT="${REDIS_PORT:-36379}"
+    export AI_MYSQL_USERNAME="${AI_MYSQL_USERNAME:-root}"
+    export AI_MYSQL_PASSWORD="${AI_MYSQL_PASSWORD:-root}"
+    export AI_DOCTOR_MYSQL_USERNAME="${AI_DOCTOR_MYSQL_USERNAME:-root}"
+    export AI_DOCTOR_MYSQL_PASSWORD="${AI_DOCTOR_MYSQL_PASSWORD:-${MYSQL_PASSWORD:-root}}"
+    export RABBITMQ_USERNAME="${RABBITMQ_USERNAME:-guest}"
+    export RABBITMQ_PASSWORD="${RABBITMQ_PASSWORD:-guest}"
+    start_infra
+    ;;
+  175.27.242.127)
+    echo "使用远程中间件：${AI_MIDDLEWARE_HOST}"
+    _ai_ssh_transport=ssh source "${SCRIPT_DIR}/ai-middleware-env.sh"
+    ;;
+  *)
+    echo "使用远程中间件：${AI_MIDDLEWARE_HOST}"
+    ;;
+esac
+
+if [[ "${WITH_OBSERVABILITY}" -eq 1 ]]; then
+  echo "启动可观测性容器..."
+  docker compose --profile observability up -d "${OBSERVABILITY_INFRA_SERVICES[@]}"
+fi
 
 if [[ "${MEMORY_RERANK_PROVIDER}" == "bge-http" ]]; then
   rerank_health_url="${MEMORY_RERANK_BASE_URL%/}/health"
@@ -394,11 +412,15 @@ done
 
 echo ""
 echo "=== 启动完成 ==="
-echo "user-profile-service: http://localhost:8101"
-echo "vector-memory-service: http://localhost:8102"
-echo "ai-chat-service: http://localhost:8100"
-echo "doctor-assistant-agent: http://localhost:8088"
+for entry in "${SERVICES[@]}"; do
+  IFS=":" read -r service port _ <<< "${entry}"
+  echo "${service}: http://localhost:${port}"
+done
 echo ""
 echo "日志目录: ${LOG_DIR}"
 echo "查看日志: tail -f ${LOG_DIR}/*.log"
-echo "停止服务: ${ROOT_DIR}/sh/run/stop-ai-services.sh"
+if [[ "${ALL_SERVICES}" -eq 1 ]]; then
+  echo "停止服务: bash ${ROOT_DIR}/sh/run/stop-ai-services.sh --all"
+else
+  echo "停止服务: bash ${ROOT_DIR}/sh/run/stop-ai-services.sh"
+fi

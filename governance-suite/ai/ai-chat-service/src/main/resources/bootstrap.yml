@@ -4,8 +4,8 @@ spring:
   cloud:
     nacos:
       config:
-        server-addr: ${NACOS_ADDR:localhost:8848}
-        namespace: ${NACOS_NAMESPACE:public}
+        server-addr: ${NACOS_ADDR:${AI_MIDDLEWARE_HOST:175.27.242.127}:8848}
+        namespace: ${NACOS_NAMESPACE:ai-local}
         group: DEFAULT_GROUP
         file-extension: yml
         refresh-enabled: true

@@ -2,11 +2,18 @@ spring:
   application:
     name: doctor-assistant-agent
 
+  cloud:
+    nacos:
+      discovery:
+        server-addr: ${NACOS_ADDR:${AI_MIDDLEWARE_HOST:175.27.242.127}:8848}
+        namespace: ${NACOS_NAMESPACE:ai-local}
+        group: DEFAULT_GROUP
+
   # 数据源配置
   datasource:
-    url: jdbc:mysql://localhost:3306/doctor_assistant?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
-    username: root
-    password: ${MYSQL_PASSWORD:root}
+    url: jdbc:mysql://${AI_MYSQL_HOST:${AI_MIDDLEWARE_HOST:175.27.242.127}}:${AI_MYSQL_PORT:3306}/doctor_assistant?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: ${AI_DOCTOR_MYSQL_USERNAME:doctor_app}
+    password: ${AI_DOCTOR_MYSQL_PASSWORD:${DOCTOR_DB_PASSWORD:${MYSQL_PASSWORD:}}}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       maximum-pool-size: 20
@@ -18,8 +25,9 @@ spring:
   # Redis配置
   data:
     redis:
-      host: localhost
-      port: 36379
+      host: ${REDIS_HOST:${AI_MIDDLEWARE_HOST:175.27.242.127}}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
       database: 0
       timeout: 3000ms
       lettuce:
@@ -154,7 +162,7 @@ doctor:
 # Milvus 向量数据库配置
 milvus:
   enabled: false # 默认关闭，需要时启用
-  host: localhost
+  host: ${AI_MIDDLEWARE_HOST:175.27.242.127}
   port: 19530
   collection-name: medical_cases
   dimension: 768
