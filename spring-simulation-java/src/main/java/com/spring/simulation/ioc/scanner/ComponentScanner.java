@@ -52,7 +52,7 @@ public class ComponentScanner {
                 if (clazz.isAnnotationPresent(Component.class) || clazz.isAnnotationPresent(Configuration.class)) {
                     components.add(clazz);
                     Component annotation = clazz.getAnnotation(Component.class);
-                    String beanName = annotation.value().isEmpty() ? generateBeanName(clazz) : annotation.value();
+                    String beanName = annotation == null || annotation.value().isEmpty() ? generateBeanName(clazz) : annotation.value();
 
                     // 检查 @Scope 注解
                     String scope = BeanScope.SINGLETON;

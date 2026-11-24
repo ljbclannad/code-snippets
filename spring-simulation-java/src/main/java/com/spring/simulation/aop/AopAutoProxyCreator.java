@@ -20,8 +20,17 @@ import com.spring.simulation.transaction.Transactional;
  * 在每个业务 Bean 初始化完成后，统一识别 @Transactional 与 @Aspect 通知；
  * 命中任一规则时返回包含全部匹配拦截器的 JDK 代理，因此被代理 Bean 应通过其业务接口注入或获取。
  */
-public class AopAutoProxyCreator implements BeanPostProcessor, BeanFactoryAware {
+public class AopAutoProxyCreator implements com.spring.simulation.ioc.factory.SmartInstantiationAwareBeanPostProcessor, BeanFactoryAware {
     private BeanFactory beanFactory;
+    private final Map<String, Object> earlyProxies = new HashMap<>();
+    @Override
+    public Object getEarlyBeanReference(Object bean, String beanName) throws Exception {
+        Object proxy = wrapIfNecessary(bean, beanName);
+        earlyProxies.put(beanName, proxy);
+        return proxy;
+    }
+    @Override
+    public void clearEarlyReference(String beanName) { earlyProxies.remove(beanName); }
 
     @Override
     public void setBeanFactory(BeanFactory beanFactory) {
@@ -35,13 +44,18 @@ public class AopAutoProxyCreator implements BeanPostProcessor, BeanFactoryAware 
 
     @Override
     public Object postProcessAfterInitialization(Object bean, String beanName) throws Exception {
+        if (earlyProxies.containsKey(beanName)) return earlyProxies.remove(beanName);
+        return wrapIfNecessary(bean, beanName);
+    }
+
+    private Object wrapIfNecessary(Object bean, String beanName) throws Exception {
         if (isInfrastructureBean(bean)) {
             return bean;
         }
 
         List<MethodInterceptor> interceptors = new ArrayList<>();
         if (hasTransactionalMethod(bean.getClass())) {
-            interceptors.add(new TransactionInterceptor());
+            interceptors.add(new TransactionInterceptor(beanFactory.getTransactionManager()));
         }
         interceptors.addAll(findMatchingAspectInterceptors(bean.getClass()));
 

@@ -30,10 +30,11 @@ public class ApplicationContext {
 
     // 在这里创建的目的是保证：当前 Context 内，按 Bean 名称从容器取环境对象，身份完全一致。
     private final Environment environment = new Environment();
-    private BeanFactory beanFactory = new BeanFactory();
+    private final BeanFactory beanFactory = new BeanFactory();
     private List<BeanPostProcessor> beanPostProcessors = new ArrayList<>();
     private List<BeanFactoryPostProcessor> beanFactoryPostProcessors = new ArrayList<>();
-    private List<String> registeredBeanNames = new ArrayList<>();
+    private boolean refreshAttempted;
+    private volatile boolean unavailable;
     private List<ApplicationListener<? extends ApplicationEvent>> applicationListeners = new ArrayList<>();
     private MessageSource messageSource;
     private ApplicationEventMulticaster applicationEventMulticaster;
@@ -49,82 +50,89 @@ public class ApplicationContext {
      *
      * 这 12 个阶段是 Spring 框架设计的精髓，理解它们就理解了 Spring 的启动流程
      */
-    public void refresh() throws Exception {
-        System.out.println("\n========== Spring Container Initialization Started ==========");
-        System.out.println("Simulating org.springframework.context.support.AbstractApplicationContext.refresh()");
+    public synchronized void refresh() throws Exception {
+        if (unavailable) throw new IllegalStateException("Context is closed or refresh failed");
+        if (refreshAttempted) throw new IllegalStateException("This context supports one refresh attempt");
+        refreshAttempted = true;
+        try {
+            System.out.println("\n========== Spring Container Initialization Started ==========");
+            System.out.println("Simulating org.springframework.context.support.AbstractApplicationContext.refresh()");
 
-        // 阶段 1：准备刷新。
-        // 设计原因：先建立本轮启动的边界与运行环境，避免后续读取配置或创建 Bean 时才暴露
-        // 环境缺失的问题。处理目标：初始化/校验 PropertySource、记录启动信息，并让失败尽早发生。
-        prepareRefresh();
+            // 阶段 1：准备刷新。
+            // 设计原因：先建立本轮启动的边界与运行环境，避免后续读取配置或创建 Bean 时才暴露
+            // 环境缺失的问题。处理目标：初始化/校验 PropertySource、记录启动信息，并让失败尽早发生。
+            prepareRefresh();
 
-        // 阶段 2：获取一个全新的 BeanFactory。
-        // 设计原因：BeanFactory 同时保存 BeanDefinition 和单例、三级缓存、后处理器等运行时状态；
-        // 若沿用旧工厂，上一轮 refresh 的对象会污染本轮。处理目标：销毁旧单例及其资源、
-        // 创建干净工厂，并从配置源重新加载“如何创建 Bean”的定义，但此处不创建业务 Bean。
-        obtainFreshBeanFactory();
+            // 阶段 2：沿用本 Context 的 BeanFactory，并加载外部定义。
+            // 本实现采用单次 refresh 语义，保留调用者提前注册的定义和单例。
+            obtainFreshBeanFactory();
 
-        // 阶段 3：为 BeanFactory 装配上下文基础设施。
-        // 设计原因：业务 Bean 创建前，工厂必须先具备统一的类加载、表达式解析和上下文感知能力；
-        // 否则 @Autowired、@Value、Aware 等机制会因基础设施尚未就绪而失效。
-        // 处理目标：注册 Environment、可解析依赖和内建后处理器，配置 ClassLoader 与表达式解析器。
-        prepareBeanFactory();
+            // 阶段 3：为 BeanFactory 装配上下文基础设施。
+            // 设计原因：业务 Bean 创建前，工厂必须先具备统一的类加载、表达式解析和上下文感知能力；
+            // 否则 @Autowired、@Value、Aware 等机制会因基础设施尚未就绪而失效。
+            // 处理目标：注册 Environment、可解析依赖和内建后处理器，配置 ClassLoader 与表达式解析器。
+            prepareBeanFactory();
 
-        // 阶段 4：执行特定 Context 的 BeanFactory 扩展钩子。
-        // 设计原因：Web、Reactive 等上下文需要额外能力，但基类不应依赖具体运行环境，
-        // 因此通过模板方法隔离差异。处理目标：让子类注册 Scope、Web 基础设施或专属处理器；
-        // 必须早于后处理器执行和普通 Bean 创建。
-        postProcessBeanFactory();
+            // 阶段 4：执行特定 Context 的 BeanFactory 扩展钩子。
+            // 设计原因：Web、Reactive 等上下文需要额外能力，但基类不应依赖具体运行环境，
+            // 因此通过模板方法隔离差异。处理目标：让子类注册 Scope、Web 基础设施或专属处理器；
+            // 必须早于后处理器执行和普通 Bean 创建。
+            postProcessBeanFactory();
 
-        // 阶段 5：调用 BeanFactoryPostProcessor，完成 BeanDefinition 的最终加工。
-        // 设计原因：配置占位符替换、扫描补充定义、scope 调整等只应修改“创建配方”，不应混入
-        // BeanFactory 核心流程。处理目标：在任何普通单例实例化前执行全部定义级扩展，保证
-        // 后续 Bean 都按最终定义创建；阶段 1～5 至此完成容器和 Bean 定义的准备工作。
-        invokeBeanFactoryPostProcessors();
+            // 阶段 5：调用 BeanFactoryPostProcessor，完成 BeanDefinition 的最终加工。
+            // 设计原因：配置占位符替换、扫描补充定义、scope 调整等只应修改“创建配方”，不应混入
+            // BeanFactory 核心流程。处理目标：在任何普通单例实例化前执行全部定义级扩展，保证
+            // 后续 Bean 都按最终定义创建；阶段 1～5 至此完成容器和 Bean 定义的准备工作。
+            invokeBeanFactoryPostProcessors();
 
-        // 阶段 6：发现、排序并注册 BeanPostProcessor。
-        // 设计原因：依赖注入、生命周期回调与 AOP 代理作用于“Bean 实例”，而不是定义；
-        // 所有此类处理器都必须在首个业务 Bean 创建前就绪。处理目标：按优先级把处理器放入
-        // BeanFactory 的创建链，使阶段 11 创建的每个 Bean 都经历一致的增强流程。
-        registerBeanPostProcessors();
+            // 阶段 6：发现、排序并注册 BeanPostProcessor。
+            // 设计原因：依赖注入、生命周期回调与 AOP 代理作用于“Bean 实例”，而不是定义；
+            // 所有此类处理器都必须在首个业务 Bean 创建前就绪。处理目标：按优先级把处理器放入
+            // BeanFactory 的创建链，使阶段 11 创建的每个 Bean 都经历一致的增强流程。
+            registerBeanPostProcessors();
 
-        // 阶段 7：初始化 MessageSource（国际化基础设施）。
-        // 设计原因：消息解析是 Context 级服务，不应由每个业务 Bean 自行创建或维护。
-        // 处理目标：优先采用用户提供的 messageSource；若不存在则注册默认实现，供容器和
-        // 业务代码在后续阶段稳定地按 Locale 获取消息。
-        initMessageSource();
+            // 阶段 7：初始化 MessageSource（国际化基础设施）。
+            // 设计原因：消息解析是 Context 级服务，不应由每个业务 Bean 自行创建或维护。
+            // 处理目标：优先采用用户提供的 messageSource；若不存在则注册默认实现，供容器和
+            // 业务代码在后续阶段稳定地按 Locale 获取消息。
+            initMessageSource();
 
-        // 阶段 8：初始化 ApplicationEventMulticaster（事件分发基础设施）。
-        // 设计原因：事件发布者与监听器不应直接耦合，需要一个 Context 统一持有的分发中心。
-        // 处理目标：优先使用用户定义的多播器，否则创建默认实现，并将当前 BeanFactory 注入它，
-        // 为下一阶段登记延迟创建的监听器 Bean 做准备。
-        initApplicationEventMulticaster();
+            // 阶段 8：初始化 ApplicationEventMulticaster（事件分发基础设施）。
+            // 设计原因：事件发布者与监听器不应直接耦合，需要一个 Context 统一持有的分发中心。
+            // 处理目标：优先使用用户定义的多播器，否则创建默认实现，并将当前 BeanFactory 注入它，
+            // 为下一阶段登记延迟创建的监听器 Bean 做准备。
+            initApplicationEventMulticaster();
 
-        // 阶段 9：执行 Context 刷新完成前的运行环境扩展。
-        // 设计原因：某些上下文需要启动嵌入式服务器、创建 DispatcherServlet 等运行时组件，
-        // 这些行为不能由通用 Context 强制承担。处理目标：为子类提供启动专属运行时的时机，
-        // 此时 BeanFactory 与事件基础设施已可用，但尚未对外声明容器已就绪。
-        onRefresh();
+            // 阶段 9：执行 Context 刷新完成前的运行环境扩展。
+            // 设计原因：某些上下文需要启动嵌入式服务器、创建 DispatcherServlet 等运行时组件，
+            // 这些行为不能由通用 Context 强制承担。处理目标：为子类提供启动专属运行时的时机，
+            // 此时 BeanFactory 与事件基础设施已可用，但尚未对外声明容器已就绪。
+            onRefresh();
 
-        // 阶段 10：注册应用监听器。
-        // 设计原因：ContextRefreshedEvent 会在最后发布，监听器必须先进入多播器；同时不应为了
-        // 注册监听器而过早实例化所有监听器 Bean。处理目标：立即登记编程式监听器，并以 Bean 名称
-        // 延迟登记容器内监听器，确保它们能接收到阶段 12 的刷新完成事件。
-        registerListeners();
+            // 阶段 10：注册应用监听器。
+            // 设计原因：ContextRefreshedEvent 会在最后发布，监听器必须先进入多播器；同时不应为了
+            // 注册监听器而过早实例化所有监听器 Bean。处理目标：立即登记编程式监听器，并以 Bean 名称
+            // 延迟登记容器内监听器，确保它们能接收到阶段 12 的刷新完成事件。
+            registerListeners();
 
-        // 阶段 11：实例化剩余的非懒加载单例 Bean。
-        // 设计原因：此前的定义、扩展点和基础设施均已准备完成，此时创建才能保证 Bean 经历完整的
-        // 注入、Aware 回调、初始化方法和 AOP 增强链。处理目标：及早暴露配置、依赖和初始化错误，
-        // 并使容器在对外可用前完成核心单例的构建。
-        finishBeanFactoryInitialization();
+            // 阶段 11：实例化剩余的非懒加载单例 Bean。
+            // 设计原因：此前的定义、扩展点和基础设施均已准备完成，此时创建才能保证 Bean 经历完整的
+            // 注入、Aware 回调、初始化方法和 AOP 增强链。处理目标：及早暴露配置、依赖和初始化错误，
+            // 并使容器在对外可用前完成核心单例的构建。
+            finishBeanFactoryInitialization();
 
-        // 阶段 12：完成刷新并发布 ContextRefreshedEvent。
-        // 设计原因：只有所有非懒加载单例都可用后，监听器、定时任务等协作组件才能安全启动。
-        // 处理目标：通知外部“容器已经就绪”，并执行最终的生命周期收尾；此后 Context 才进入
-        // 可供业务代码使用的稳定状态。
-        finishRefresh();
+            // 阶段 12：完成刷新并发布 ContextRefreshedEvent。
+            // 设计原因：只有所有非懒加载单例都可用后，监听器、定时任务等协作组件才能安全启动。
+            // 处理目标：通知外部“容器已经就绪”，并执行最终的生命周期收尾；此后 Context 才进入
+            // 可供业务代码使用的稳定状态。
+            finishRefresh();
 
-        System.out.println("\n========== Spring Container Initialization Completed ==========\n");
+            System.out.println("\n========== Spring Container Initialization Completed ==========\n");
+        } catch (Exception | Error failure) {
+            unavailable = true;
+            try { beanFactory.destroySingletons(); } catch (Exception cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
+        }
     }
 
     /**
@@ -148,73 +156,14 @@ public class ApplicationContext {
     }
 
     /**
-     * 阶段 2: 获取 BeanFactory
-     *
-     * 设计原因：加载 Bean 定义
-     * 1. 刷新 BeanFactory（如果已存在则销毁重建）
-     * 为什么要先销毁？
-     * - BeanFactory 里不只是“定义”，还持有上一轮 refresh 的运行时状态
-     * - 如果不先清理，旧的单例对象、三级缓存、后处理器等状态会污染新一轮启动
-     * - refresh 的目标是拿到一个“干净的工厂”，确保本轮容器初始化结果可预测
-     *
-     * 一般需要销毁/清理的内容：
-     * - singletonObjects：已经完成初始化的单例 Bean
-     * - earlySingletonObjects：循环依赖时提前暴露的早期引用
-     * - singletonFactories：三级缓存中的 Bean 工厂
-     * - singletonsCurrentlyInCreation：正在创建中的 Bean 标记
-     * - beanPostProcessors：上一轮注册的 BeanPostProcessor
-     * - beanDefinitions：上一轮加载的 Bean 定义
-     *
-     * 实际框架里通常还会触发：
-     * - DisposableBean.destroy() / 自定义 destroy-method
-     * - 连接池、线程池、文件句柄等资源释放
-     *
-     * 最朴素的重建方式通常就是：
-     * - 先销毁旧 BeanFactory 管理的 Bean 和缓存
-     * - 再 new 一个新的 BeanFactory
-     * - 然后重新加载 BeanDefinition
-     * 2. 加载 Bean 定义（从 XML、注解、Java Config 等）
-     * - XML：解析 <bean> 标签，提取 beanName、class、scope、依赖关系等元数据
-     * - 注解：扫描指定包下的 @Component、@Configuration 等候选组件，生成定义元数据
-     * - Java Config：解析 @Configuration 类中的 @Bean 方法，为方法返回值生成定义元数据
-     * - 注册：将解析出的 BeanDefinition 按 beanName 保存到 BeanFactory 的定义表中
-     *
-     * 此阶段只描述“如何创建 Bean”，不会调用构造器或创建实际对象；
-     * Bean 的实例化在后续 finishBeanFactoryInitialization() 阶段进行。
-     * 3. 返回可用的 BeanFactory
-     *
-     * 这是 Bean 定义注册的阶段，但 Bean 还未实例化
+     * 阶段 2：保留已有注册并加载外部定义。每个 Context 只允许一次 refresh。
+     * 注解扫描在 loadBeanDefinitions 中补充定义，不替换当前工厂。
      */
     protected BeanFactory obtainFreshBeanFactory() throws Exception {
         System.out.println("\n[Phase 2] obtainFreshBeanFactory()");
-        destroyOldBeanFactoryIfNecessary();
-        refreshBeanFactory();
         System.out.println("  - Loading bean definitions");
         loadBeanDefinitions();
         return beanFactory;
-    }
-
-    /**
-     * 销毁上一轮 refresh 遗留的 BeanFactory 运行时状态。
-     *
-     * 这里只负责清理旧工厂，不负责创建新工厂。
-     */
-    protected void destroyOldBeanFactoryIfNecessary() throws Exception {
-        if (this.beanFactory != null) {
-            System.out.println("  - Destroying existing BeanFactory state");
-            beanFactory.destroySingletons();
-        }
-        registeredBeanNames.clear();
-    }
-
-    /**
-     * 创建一个全新的 BeanFactory，并完成最基础的上下文绑定。
-     *
-     * 这里只负责“拿到一个干净的工厂”，不负责加载 BeanDefinition。
-     */
-    protected void refreshBeanFactory() {
-        System.out.println("  - Refreshing BeanFactory");
-        this.beanFactory = new BeanFactory();
     }
 
     /**
@@ -242,7 +191,7 @@ public class ApplicationContext {
      * 3. 注册环境相关的 Bean（Environment、SystemProperties 等）
      *
      * 与 obtainFreshBeanFactory() 的区别：
-     * - obtainFreshBeanFactory() 负责销毁旧工厂、创建新工厂，并加载用户声明的 BeanDefinition；
+     * - obtainFreshBeanFactory() 负责保留编程式注册，并加载外部配置声明的 BeanDefinition；
      * 它解决的是“业务 Bean 如何被定义”。
      * - prepareBeanFactory() 在新工厂和用户定义都准备好后，为工厂补充 ApplicationContext
      * 提供的基础设施；它解决的是“工厂具备哪些管理 Bean 的能力”。
@@ -456,7 +405,7 @@ public class ApplicationContext {
         // 步骤 3: 从 BeanFactory 中查找所有 BeanPostProcessor 类型的 Bean
         System.out.println("  - Discovering BeanPostProcessor beans from BeanFactory");
         List<String> postProcessorNames = new ArrayList<>();
-        for (String beanName : registeredBeanNames) {
+        for (String beanName : new ArrayList<>(beanFactory.getBeanDefinitions().keySet())) {
             BeanDefinition bd = beanFactory.getBeanDefinition(beanName);
             if (bd != null && BeanPostProcessor.class.isAssignableFrom(bd.getBeanClass())) {
                 postProcessorNames.add(beanName);
@@ -471,16 +420,18 @@ public class ApplicationContext {
         for (String ppName : postProcessorNames) {
             BeanPostProcessor pp = (BeanPostProcessor) beanFactory.getBean(ppName);
 
-            // 简化实现：根据类名判断优先级
-            if (pp.getClass().getSimpleName().contains("Priority")) {
+            // 按接口分类，组内按 order 排序
+            if (pp instanceof PriorityOrdered) {
                 priorityOrderedPostProcessors.add(pp);
-            } else if (pp.getClass().getSimpleName().contains("Ordered")) {
+            } else if (pp instanceof Ordered) {
                 orderedPostProcessors.add(pp);
             } else {
                 regularPostProcessors.add(pp);
             }
         }
 
+        priorityOrderedPostProcessors.sort(Comparator.comparingInt(pp -> ((Ordered) pp).getOrder()));
+        orderedPostProcessors.sort(Comparator.comparingInt(pp -> ((Ordered) pp).getOrder()));
         // 步骤 5: 按优先级顺序注册 (通过 List 顺序实现优先级)
         System.out.println("  - Registering BeanPostProcessors by priority:");
 
@@ -672,7 +623,7 @@ public class ApplicationContext {
     }
 
     private void instantiateSingletons() throws Exception {
-        for (String beanName : registeredBeanNames) {
+        for (String beanName : new ArrayList<>(beanFactory.getBeanDefinitions().keySet())) {
             BeanDefinition beanDefinition = beanFactory.getBeanDefinition(beanName);
             if (beanDefinition != null && beanDefinition.isSingleton() && !beanDefinition.isLazyInit()) {
                 beanFactory.getBean(beanName);
@@ -683,12 +634,10 @@ public class ApplicationContext {
     public void registerBeanDefinition(String beanName, Class<?> beanClass) {
         BeanDefinition beanDefinition = new BeanDefinition(beanName, beanClass);
         beanFactory.registerBeanDefinition(beanName, beanDefinition);
-        registeredBeanNames.add(beanName);
     }
 
     public void registerBeanDefinition(String beanName, BeanDefinition beanDefinition) {
         beanFactory.registerBeanDefinition(beanName, beanDefinition);
-        registeredBeanNames.add(beanName);
     }
 
     public void addBeanPostProcessor(BeanPostProcessor processor) {
@@ -728,6 +677,7 @@ public class ApplicationContext {
     }
 
     public Object getBean(String beanName) throws Exception {
+        if (unavailable) throw new IllegalStateException("Context is closed or refresh failed");
         return beanFactory.getBean(beanName);
     }
 
@@ -735,11 +685,16 @@ public class ApplicationContext {
         return beanFactory;
     }
 
-    public void close() throws Exception {
-        System.out.println("\n========== Closing Application Context ==========");
-        if (applicationEventMulticaster != null) {
-            publishEvent(new ContextClosedEvent(this));
+    public synchronized void close() throws Exception {
+        if (unavailable) return;
+        try {
+            System.out.println("\n========== Closing Application Context ==========");
+            if (applicationEventMulticaster != null) {
+                publishEvent(new ContextClosedEvent(this));
+            }
+        } finally {
+            unavailable = true;
+            beanFactory.destroySingletons();
         }
-        beanFactory.destroySingletons();
     }
 }

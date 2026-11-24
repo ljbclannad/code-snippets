@@ -342,6 +342,10 @@ public Object proceed() throws Throwable {
 
 ## 5. 声明式事务的实现原理
 
+异常完成由 `TransactionInterceptor` 选择规则：默认 RuntimeException / Error 回滚，受检异常提交后继续抛出；`rollbackFor` / `noRollbackFor` 按继承距离匹配，同类型冲突优先回滚。方法规则覆盖类规则，已有 rollback-only 不会被不回滚规则清除。详见 [回滚规则实验](../transaction/ROLLBACK_RULE_EXPERIMENT.md)。下文流程代码为概念示意，实际异常路径以拦截器实现为准。
+
+默认 `TransactionManager` 提供状态模拟。可选的 `JdbcTransactionManager` 在相同代理链上绑定真实 JDBC 连接，目前支持 REQUIRED、REQUIRES_NEW 与基于 JDBC 保存点的 NESTED；H2 实验通过覆盖容器的 `getTransactionManager()` 接入。连接由管理器统一提交、回滚和关闭，业务仅关闭语句和结果集。完整运行步骤和边界见 [H2 真实事务实验](../transaction/H2_TRANSACTION_EXPERIMENT.md)。
+
 ### 核心流程
 
 ```java

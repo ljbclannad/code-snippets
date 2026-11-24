@@ -8,6 +8,8 @@ import java.lang.annotation.Target;
 @Target({ElementType.TYPE, ElementType.METHOD})
 @Retention(RetentionPolicy.RUNTIME)
 public @interface Transactional {
+    Class<? extends Throwable>[] rollbackFor() default {};
+    Class<? extends Throwable>[] noRollbackFor() default {};
     String propagation() default "REQUIRED";
     String isolation() default "DEFAULT";
     int timeout() default -1;

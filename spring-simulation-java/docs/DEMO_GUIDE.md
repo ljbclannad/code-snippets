@@ -1,6 +1,6 @@
 # Demo Guide
 
-项目里的 demo 已经收敛成“1 条主线 + 3 个专题”。
+项目里的示例按容器主线和专题实验组织。
 
 ## 主线 Demo
 
@@ -56,6 +56,14 @@
 ### `com.spring.simulation.examples.aop.AopOrderedDemo`
 
 只讲 `Ordered` / `PriorityOrdered` 的排序规则。
+
+### `com.spring.simulation.examples.transaction.H2OrderExperiment`
+
+通过 `sh scripts/test-h2.sh --demo` 运行，比较创建订单与写审计记录在 REQUIRED / REQUIRES_NEW / NESTED 下的真实数据库结果。对应回归入口为 `sh scripts/test-h2.sh`，详见 [H2 实验说明](transaction/H2_TRANSACTION_EXPERIMENT.md)。
+
+### `com.spring.simulation.examples.transaction.H2RollbackRuleExperiment`
+
+运行 `sh scripts/test-h2.sh --rules-demo` 展示默认受检异常、默认运行时异常及显式回滚/不回滚的数据库结果。定向回归入口为 `sh scripts/test-h2.sh --rules`，详见 [回滚规则实验](transaction/ROLLBACK_RULE_EXPERIMENT.md)。
 
 ## 为什么删除了两个旧 Demo
 

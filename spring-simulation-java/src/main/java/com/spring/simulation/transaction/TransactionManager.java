@@ -1,225 +1,91 @@
 package com.spring.simulation.transaction;
 
-import java.util.Stack;
+import java.util.ArrayDeque;
+import java.util.Deque;
 
-/**
- * 事务管理器
- *
- * 支持事务传播行为和嵌套事务
- */
+/** 教学用状态模型：逻辑调用共享 owner，不绑定 JDBC 资源或真实保存点。 */
 public class TransactionManager {
-    // 使用 Stack 支持嵌套事务
-    private ThreadLocal<Stack<TransactionStatus>> transactionStack = new ThreadLocal<>();
+    private final ThreadLocal<Deque<TransactionStatus>> calls = ThreadLocal.withInitial(ArrayDeque::new);
 
-    /**
-     * 根据传播行为开始事务
-     */
     public TransactionStatus begin(Propagation propagation) {
-        Stack<TransactionStatus> stack = getTransactionStack();
-        TransactionStatus currentTx = stack.isEmpty() ? null : stack.peek();
-
-        switch (propagation) {
-            case REQUIRED:
-                if (currentTx != null && currentTx.isActive()) {
-                    System.out.println("   [TxManager] Joining existing transaction (REQUIRED)");
-                    return currentTx;
-                } else {
-                    return createNewTransaction("REQUIRED");
-                }
-
-            case REQUIRES_NEW:
-                if (currentTx != null && currentTx.isActive()) {
-                    System.out.println("   [TxManager] Suspending current transaction, creating new one (REQUIRES_NEW)");
-                    currentTx.setSuspended(true);
-                }
-                return createNewTransaction("REQUIRES_NEW");
-
-            case NESTED:
-                if (currentTx != null && currentTx.isActive()) {
-                    System.out.println("   [TxManager] Creating nested transaction (NESTED)");
-                    TransactionStatus nestedTx = new TransactionStatus();
-                    nestedTx.setActive(true);
-                    nestedTx.setNested(true);
-                    nestedTx.setParent(currentTx);
-                    stack.push(nestedTx);
-                    return nestedTx;
-                } else {
-                    return createNewTransaction("NESTED");
-                }
-
-            case SUPPORTS:
-                if (currentTx != null && currentTx.isActive()) {
-                    System.out.println("   [TxManager] Joining existing transaction (SUPPORTS)");
-                    return currentTx;
-                } else {
-                    System.out.println("   [TxManager] No transaction, executing without transaction (SUPPORTS)");
-                    return null;
-                }
-
-            case NOT_SUPPORTED:
-                if (currentTx != null && currentTx.isActive()) {
-                    System.out.println("   [TxManager] Suspending current transaction (NOT_SUPPORTED)");
-                    currentTx.setSuspended(true);
-                }
-                System.out.println("   [TxManager] Executing without transaction (NOT_SUPPORTED)");
-                return null;
-
-            case MANDATORY:
-                if (currentTx != null && currentTx.isActive()) {
-                    System.out.println("   [TxManager] Joining existing transaction (MANDATORY)");
-                    return currentTx;
-                } else {
-                    throw new IllegalStateException("No existing transaction found (MANDATORY)");
-                }
-
-            case NEVER:
-                if (currentTx != null && currentTx.isActive()) {
-                    throw new IllegalStateException("Existing transaction found (NEVER)");
-                }
-                System.out.println("   [TxManager] Executing without transaction (NEVER)");
-                return null;
-
-            default:
-                return createNewTransaction("REQUIRED");
-        }
-    }
-
-    /**
-     * 创建新事务
-     */
-    private TransactionStatus createNewTransaction(String propagation) {
+        TransactionStatus current = getCurrentTransaction();
+        if (propagation == Propagation.MANDATORY && current == null)
+            throw new IllegalStateException("No existing transaction found (MANDATORY)");
+        if (propagation == Propagation.NEVER && current != null)
+            throw new IllegalStateException("Existing transaction found (NEVER)");
         TransactionStatus status = new TransactionStatus();
-        status.setActive(true);
-        status.setNewTransaction(true);
-        getTransactionStack().push(status);
-        System.out.println("   [TxManager] Transaction started (" + propagation + ")");
+        switch (propagation) {
+            case NOT_SUPPORTED:
+                status.suspendedTransaction = current;
+                break;
+            case NEVER:
+                break;
+            case SUPPORTS:
+            case MANDATORY:
+                status.owner = current;
+                break;
+            case REQUIRES_NEW:
+                status.suspendedTransaction = current;
+                status.owner = status;
+                status.newTransaction = true;
+                break;
+            case NESTED:
+                status.owner = status;
+                status.nested = current != null;
+                status.parent = current;
+                status.newTransaction = current == null;
+                break;
+            case REQUIRED:
+                status.owner = current == null ? status : current;
+                status.newTransaction = current == null;
+                break;
+            default: throw new IllegalArgumentException("Unknown propagation: " + propagation);
+        }
+        if (status.owner == status) status.active = true;
+        if (status.suspendedTransaction != null) status.suspendedTransaction.suspended = true;
+        calls.get().push(status);
         return status;
     }
+    public void commit(TransactionStatus status) { complete(status, false); }
+    public void rollback(TransactionStatus status) { complete(status, true); }
 
-    /**
-     * 提交事务
-     */
-    public void commit(TransactionStatus status) {
-        if (status == null) {
-            return; // 无事务
-        }
-
-        Stack<TransactionStatus> stack = getTransactionStack();
-
-        if (status.isNested()) {
-            // 嵌套事务提交
-            System.out.println("   [TxManager] Nested transaction committed");
-            stack.pop();
-        } else if (status.isNewTransaction()) {
-            // 新事务提交
-            status.setActive(false);
-            System.out.println("   [TxManager] Transaction committed");
-            stack.pop();
-
-            // 恢复被挂起的事务
-            if (!stack.isEmpty()) {
-                TransactionStatus suspendedTx = stack.peek();
-                if (suspendedTx.isSuspended()) {
-                    suspendedTx.setSuspended(false);
-                    System.out.println("   [TxManager] Resumed suspended transaction");
-                }
-            }
-        }
+    /** 供资源管理器在底层资源失败时阻止相关事务提交。 */
+    protected void markRollbackOnly(TransactionStatus status) {
+        if (status != null && status.owner != null) status.owner.rollbackOnly = true;
     }
 
-    /**
-     * 回滚事务
-     */
-    public void rollback(TransactionStatus status) {
-        if (status == null) {
-            return; // 无事务
-        }
-
-        Stack<TransactionStatus> stack = getTransactionStack();
-
-        if (status.isNested()) {
-            // 嵌套事务回滚（不影响外部事务）
-            System.out.println("   [TxManager] Nested transaction rolled back");
+    private void complete(TransactionStatus status, boolean rollback) {
+        if (status == null) return;
+        Deque<TransactionStatus> stack = calls.get();
+        if (status.completed || stack.peek() != status)
+            throw new IllegalStateException("Transaction calls must complete once in reverse begin order");
+        boolean unexpectedRollback = !rollback && status.owner == status && status.rollbackOnly;
+        try {
+            if (status.owner == status) status.active = false;
+            else if (rollback && status.owner != null) status.owner.rollbackOnly = true;
+            status.completed = true;
+        } finally {
             stack.pop();
-        } else if (status.isNewTransaction()) {
-            // 新事务回滚
-            status.setActive(false);
-            System.out.println("   [TxManager] Transaction rolled back");
-            stack.pop();
-
-            // 恢复被挂起的事务
-            if (!stack.isEmpty()) {
-                TransactionStatus suspendedTx = stack.peek();
-                if (suspendedTx.isSuspended()) {
-                    suspendedTx.setSuspended(false);
-                    System.out.println("   [TxManager] Resumed suspended transaction");
-                }
-            }
+            if (status.suspendedTransaction != null) status.suspendedTransaction.suspended = false;
+            if (stack.isEmpty()) calls.remove();
         }
+        if (unexpectedRollback) throw new IllegalStateException("Transaction rolled back because it was marked rollback-only");
     }
-
     public TransactionStatus getCurrentTransaction() {
-        Stack<TransactionStatus> stack = transactionStack.get();
-        return (stack == null || stack.isEmpty()) ? null : stack.peek();
+        Deque<TransactionStatus> stack = calls.get();
+        if (stack.isEmpty()) { calls.remove(); return null; }
+        TransactionStatus owner = stack.peek().owner;
+        return owner != null && owner.active && !owner.suspended ? owner : null;
     }
-
-    private Stack<TransactionStatus> getTransactionStack() {
-        Stack<TransactionStatus> stack = transactionStack.get();
-        if (stack == null) {
-            stack = new Stack<>();
-            transactionStack.set(stack);
-        }
-        return stack;
-    }
-
-    /**
-     * 事务状态
-     */
     public static class TransactionStatus {
-        private boolean active;
-        private boolean newTransaction;
-        private boolean nested;
-        private boolean suspended;
-        private TransactionStatus parent;
-
-        public boolean isActive() {
-            return active;
-        }
-
-        public void setActive(boolean active) {
-            this.active = active;
-        }
-
-        public boolean isNewTransaction() {
-            return newTransaction;
-        }
-
-        public void setNewTransaction(boolean newTransaction) {
-            this.newTransaction = newTransaction;
-        }
-
-        public boolean isNested() {
-            return nested;
-        }
-
-        public void setNested(boolean nested) {
-            this.nested = nested;
-        }
-
-        public boolean isSuspended() {
-            return suspended;
-        }
-
-        public void setSuspended(boolean suspended) {
-            this.suspended = suspended;
-        }
-
-        public TransactionStatus getParent() {
-            return parent;
-        }
-
-        public void setParent(TransactionStatus parent) {
-            this.parent = parent;
-        }
+        private TransactionStatus owner, suspendedTransaction, parent;
+        private boolean active, newTransaction, nested, suspended, rollbackOnly, completed;
+        public boolean isActive() { return !completed && owner != null && owner.active && !owner.suspended; }
+        public boolean isNewTransaction() { return newTransaction; }
+        public boolean isNested() { return nested; }
+        public boolean isSuspended() { return owner != null && owner.suspended; }
+        public TransactionStatus getParent() { return parent; }
+        public boolean isCompleted() { return completed; }
+        public boolean isRollbackOnly() { return owner != null && owner.rollbackOnly; }
     }
 }

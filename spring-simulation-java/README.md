@@ -1,5 +1,17 @@
 # Spring 模拟框架 - 完整版
 
+## 回归验证与运行边界
+
+真实 JDBC/H2 实验：运行 `sh scripts/test-h2.sh` 验证 32 组回归（18 组传播/保存点 + 14 组回滚规则），或运行 `sh scripts/test-h2.sh --demo` 展示订单/审计结果；`sh scripts/test.sh --h2` 可一起验证。首次运行需要下载固定版本 H2，也可通过 `H2_JAR` 指定本地 JAR。详见 [H2 真实事务实验](docs/transaction/H2_TRANSACTION_EXPERIMENT.md)。
+
+运行 `sh scripts/test.sh`：在临时目录干净编译，执行 14 组行为回归、4 组事务传播实验与 6 个主要示例，退出时删除构建产物；不依赖现有 bin。
+
+- Context 保留 refresh 前注册的定义，每个实例只允许一次 refresh；启动失败会清理已创建单例，关闭后禁止通过 Context 获取 Bean。
+- 单例创建用工厂级可重入锁串行化。字段循环依赖可以复用早期代理；构造器/原型循环依赖明确报错。初始化代码不要等待另一线程回调同一工厂。
+- 自动代理共享容器级 TransactionManager。默认事务传播是状态模拟，不连接数据库；NESTED 只模拟嵌套状态，不提供真实保存点。NOT_SUPPORTED 等无事务调用也返回需完成的逻辑状态，按 begin 的逆序 commit/rollback。
+- 此轮回归覆盖注册保留、配置扫描、代理身份、并发单例、事务传播、失败清理/重试、代理目标销毁、BFPP 新增定义、BPP 排序及手动单例解析。继承字段注入和跨上下文 session 隔离等先前审查边界不在本轮修复范围。
+
+
 这个项目深度模拟了 Spring 框架的核心底层机制，包括 IoC 容器、AOP 代理、Bean 生命周期、循环依赖解决、事务管理等。
 
 ## 项目结构
@@ -117,8 +129,9 @@ spring-simulation-java/
 ### 4. 事务管理
 - **@Transactional**: 声明式事务注解
 - **TransactionInterceptor**: 事务拦截器（AOP 实现）
-- **TransactionManager**: 事务管理器
-- **完整的事务传播机制**:
+- **TransactionManager**: 默认事务状态模拟器
+- **JdbcTransactionManager**: 真实 JDBC 实验扩展，支持 REQUIRED / REQUIRES_NEW / NESTED 的连接共享、挂起恢复、保存点及提交/回滚
+- **事务传播状态模拟（不绑定数据库资源）**:
   - REQUIRED: 加入现有事务或创建新事务（默认）
   - REQUIRES_NEW: 总是创建新事务，挂起当前事务
   - NESTED: 嵌套事务，可独立回滚
@@ -127,7 +140,9 @@ spring-simulation-java/
   - MANDATORY: 必须在事务中执行
   - NEVER: 不能在事务中执行
 - 支持事务隔离级别、只读等属性
-- 自动提交和回滚机制
+- 自动提交和回滚机制；支持 `rollbackFor` / `noRollbackFor`，最具体的异常类型优先。默认受检异常不回滚，详见 [回滚规则实验](docs/transaction/ROLLBACK_RULE_EXPERIMENT.md)。
+
+事务实验覆盖内层 `REQUIRED` 返回后外层回滚、`REQUIRES_NEW` 独立完成与挂起恢复，以及捕获内层异常后的提交差异。运行步骤和断言说明见 [事务回归实验](docs/transaction/TRANSACTION_REGRESSION.md)。
 
 ### 5. Bean 作用域
 - **Singleton**: 单例（默认），容器中只有一个实例
@@ -171,7 +186,7 @@ spring-simulation-java/
 - 支持对没有接口的类进行代理
 - 通过继承目标类实现代理
 - 简化实现（真实 Spring 使用 ASM 字节码生成）
-- 自动提交和回滚机制
+- 自动提交和回滚机制；支持 `rollbackFor` / `noRollbackFor`，最具体的异常类型优先。默认受检异常不回滚，详见 [回滚规则实验](docs/transaction/ROLLBACK_RULE_EXPERIMENT.md)。
 
 ### 10. 事件发布机制
 - **ApplicationEvent**: 事件基类
@@ -337,7 +352,7 @@ ServiceB 依赖 ServiceA
 1. 通过 AOP 拦截 @Transactional 方法
 2. 方法执行前开启事务
 3. 方法正常执行则提交事务
-4. 方法抛出异常则回滚事务
+4. 方法抛出异常时按回滚规则完成事务：默认 RuntimeException / Error 回滚，受检异常提交后继续抛出
 5. 使用 ThreadLocal 保证事务隔离
 
 ## 技术要点
@@ -371,7 +386,7 @@ ServiceB 依赖 ServiceA
 ✅ CGLIB 代理支持  
 ✅ 方法拦截器链  
 ✅ 声明式事务管理  
-✅ 完整的事务传播机制（7 种传播行为）  
+✅ 事务传播状态模拟（7 种传播行为，不含真实保存点）
 ✅ 事件发布与监听  
 ✅ 组件扫描和自动注册  
 ✅ @Configuration 和 @Bean 注解  

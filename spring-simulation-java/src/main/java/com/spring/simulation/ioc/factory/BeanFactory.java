@@ -3,10 +3,12 @@ package com.spring.simulation.ioc.factory;
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.HashSet;
+import com.spring.simulation.transaction.TransactionManager;
 import java.util.function.Supplier;
 
 import com.spring.simulation.ioc.annotation.Qualifier;
@@ -21,16 +23,16 @@ import com.spring.simulation.spel.SpelExpressionParser;
 
 public class BeanFactory {
     // Bean 定义注册表：存储所有 Bean 的元数据（类信息、作用域等）
-    private Map<String, BeanDefinition> beanDefinitions = new HashMap<>();
+    private Map<String, BeanDefinition> beanDefinitions = new LinkedHashMap<>();
 
     // 一级缓存（singletonObjects）：存储完全初始化完成的单例 Bean
     // 设计原因：单例模式的核心，保证同一个 Bean 在容器中只有一个实例
-    private Map<String, Object> singletonObjects = new HashMap<>();
+    private Map<String, Object> singletonObjects = new LinkedHashMap<>();
 
     // 二级缓存（earlySingletonObjects）：存储早期暴露的 Bean 引用（已实例化，未完成初始化）
     // 设计原因：缓存从三级缓存中获取的早期 Bean 引用，避免重复调用工厂方法
     // 当循环依赖发生时，从三级缓存获取 Bean 后会放入二级缓存
-    private Map<String, Object> earlySingletonObjects = new HashMap<>();
+    private Map<String, Object> earlySingletonObjects = new LinkedHashMap<>();
 
     // 三级缓存（singletonFactories）：存储 Bean 工厂（ObjectFactory）
     // 设计原因：这是解决循环依赖的关键！
@@ -49,10 +51,10 @@ public class BeanFactory {
     // 6. 将 A 的早期引用放入二级缓存，从三级缓存移除
     // 7. B 完成初始化，放入一级缓存
     // 8. A 继续完成初始化，放入一级缓存
-    private Map<String, Supplier<Object>> singletonFactories = new HashMap<>();
+    private Map<String, Supplier<Object>> singletonFactories = new LinkedHashMap<>();
 
     // 正在创建的 Bean 集合：用于检测循环依赖
-    private Map<String, Boolean> singletonsCurrentlyInCreation = new HashMap<>();
+    private Map<String, Boolean> singletonsCurrentlyInCreation = new LinkedHashMap<>();
 
     // BeanPostProcessor 列表：Bean 初始化前后的扩展点
     // 设计原因：提供统一的扩展机制，AOP 代理就是在这里创建的
@@ -65,6 +67,10 @@ public class BeanFactory {
     // 标志位：是否正在创建 BeanPostProcessor
     // 设计原因：BeanPostProcessor 的创建不应该被其他 BeanPostProcessor 处理，避免循环依赖
     private boolean creatingBeanPostProcessor = false;
+    private final Set<String> prototypesInCreation = new HashSet<>();
+    private final TransactionManager transactionManager =
+            new TransactionManager();
+    public TransactionManager getTransactionManager() { return transactionManager; }
 
     // BeanFactory 动态加载 Bean 类、代理类或扩展类时使用的默认类加载器。
     private ClassLoader beanClassLoader = BeanFactory.class.getClassLoader();
@@ -73,12 +79,12 @@ public class BeanFactory {
     private SpelExpressionParser expressionParser;
 
     // 容器基础设施的按类型注入映射，不需要对应的 BeanDefinition。
-    private final Map<Class<?>, Object> resolvableDependencies = new HashMap<>();
+    private final Map<Class<?>, Object> resolvableDependencies = new LinkedHashMap<>();
 
     // 非 singleton/prototype 作用域的运行时处理策略。
-    private final Map<String, BeanScopeHandler> scopeHandlers = new HashMap<>();
+    private final Map<String, BeanScopeHandler> scopeHandlers = new LinkedHashMap<>();
 
-    public void registerBeanDefinition(String beanName, BeanDefinition beanDefinition) {
+    public synchronized void registerBeanDefinition(String beanName, BeanDefinition beanDefinition) {
         if (beanDefinitions.containsKey(beanName)) {
             throw new IllegalStateException(
                     "Bean definition already exists: " + beanName);
@@ -92,7 +98,7 @@ public class BeanFactory {
      *
      * 该对象不需要 BeanDefinition，也不会再次经历实例化和初始化流程。
      */
-    public void registerSingleton(String beanName, Object singletonObject) {
+    public synchronized void registerSingleton(String beanName, Object singletonObject) {
         if (beanDefinitions.containsKey(beanName) || singletonObjects.containsKey(beanName)) {
             throw new IllegalStateException("Bean already exists: " + beanName);
         }
@@ -185,7 +191,8 @@ public class BeanFactory {
         return expressionParser.parseExpression(value);
     }
 
-    public Object getBean(String beanName) throws Exception {
+    // 教学实现使用工厂级可重入锁：同线程递归可见早期引用，其他线程等待完整初始化。
+    public synchronized Object getBean(String beanName) throws Exception {
         Object singleton = getSingleton(beanName);
         if (singleton != null) {
             return singleton;
@@ -223,7 +230,9 @@ public class BeanFactory {
         } else if (beanDefinition.isPrototype()) {
             // Prototype 作用域：每次都创建新实例
             System.out.println("[IoC] Creating new prototype instance: " + beanName);
-            return createBean(beanName, beanDefinition);
+            if (!prototypesInCreation.add(beanName)) throw new IllegalStateException("Circular prototype dependency: " + beanName);
+            try { return createBean(beanName, beanDefinition); }
+            finally { prototypesInCreation.remove(beanName); }
         } else {
             BeanScopeHandler scopeHandler = scopeHandlers.get(beanDefinition.getScope());
             if (scopeHandler == null) {
@@ -292,6 +301,10 @@ public class BeanFactory {
      */
     private Object getSingleton(String beanName, Supplier<Object> singletonFactory) {
         // 标记 Bean 正在创建中
+        if (singletonsCurrentlyInCreation.containsKey(beanName)) {
+            throw new IllegalStateException("Unresolvable circular dependency: " + singletonsCurrentlyInCreation.keySet() + " -> " + beanName);
+        }
+        Set<String> existing = new HashSet<>(singletonObjects.keySet());
         singletonsCurrentlyInCreation.put(beanName, true);
 
         try {
@@ -305,6 +318,26 @@ public class BeanFactory {
             singletonFactories.remove(beanName);
 
             return singletonObject;
+        } catch (RuntimeException | Error failure) {
+            // Roll back beans created by this attempt, including circular dependents.
+            List<String> createdNames = new ArrayList<>(singletonObjects.keySet());
+            java.util.Collections.reverse(createdNames);
+            for (String created : createdNames) {
+                if (!existing.contains(created)) {
+                    DisposableBeanAdapter adapter = disposableBeans.remove(created);
+                    try { if (adapter != null) adapter.destroy(); }
+                    catch (Exception cleanup) { failure.addSuppressed(cleanup); }
+                    singletonObjects.remove(created);
+                }
+            }
+            earlySingletonObjects.remove(beanName);
+            singletonFactories.remove(beanName);
+            for (BeanPostProcessor processor : beanPostProcessors) {
+                if (processor instanceof SmartInstantiationAwareBeanPostProcessor) {
+                    ((SmartInstantiationAwareBeanPostProcessor) processor).clearEarlyReference(beanName);
+                }
+            }
+            throw failure;
         } finally {
             // 移除创建中标记
             singletonsCurrentlyInCreation.remove(beanName);
@@ -338,6 +371,8 @@ public class BeanFactory {
             // 通过构造器创建对象（支持构造注入）
             bean = instantiateBean(beanDefinition);
         }
+
+        Object rawBean = bean;
 
         // 关键设计：实例化后立即将 Bean 工厂放入三级缓存（早期暴露）
         // 设计原因：允许其他 Bean 在循环依赖时获取到这个半成品 Bean
@@ -377,7 +412,11 @@ public class BeanFactory {
 
         // ========== 步骤 7: 注册销毁回调 ==========
         // 设计原因：容器关闭时不应再临时扫描所有单例 Bean，而是在创建完成时登记需要销毁的 Bean
-        registerDisposableBeanIfNecessary(beanName, beanDefinition, bean);
+        Object earlyReference = earlySingletonObjects.get(beanName);
+        if (earlyReference != null && earlyReference != bean) {
+            throw new IllegalStateException("Early and final bean references differ: " + beanName);
+        }
+        registerDisposableBeanIfNecessary(beanName, beanDefinition, rawBean);
 
         System.out.println("[Bean Lifecycle] Bean creation completed: " + beanName + "\n");
 
@@ -454,7 +493,7 @@ public class BeanFactory {
      * 解析构造器参数（递归获取依赖）
      *
      * 注意：构造注入无法解决循环依赖！
-     * 如果 A 的构造器需要 B，B 的构造器需要 A，会导致死锁
+     * 如果 A 的构造器需要 B，B 的构造器需要 A，会在没有早期实例时形成递归，应快速拒绝
      *
      * 解决方案：
      * 1. 使用字段注入代替构造注入
@@ -499,11 +538,12 @@ public class BeanFactory {
     private Object getEarlyBeanReference(String beanName, BeanDefinition beanDefinition, Object bean) {
         Object exposedObject = bean;
 
-        // 这里可以应用 BeanPostProcessor 来创建代理对象
-        // 例如：如果 Bean 有 @Transactional 注解，这里会创建事务代理
-        // 简化实现：直接返回原始对象
-        // 真实 Spring 会调用
-        // SmartInstantiationAwareBeanPostProcessor.getEarlyBeanReference()
+        for (BeanPostProcessor processor : beanPostProcessors) {
+            if (processor instanceof SmartInstantiationAwareBeanPostProcessor) {
+                try { exposedObject = ((SmartInstantiationAwareBeanPostProcessor) processor).getEarlyBeanReference(exposedObject, beanName); }
+                catch (Exception e) { throw new IllegalStateException("Cannot expose early reference: " + beanName, e); }
+            }
+        }
 
         System.out.println("   [Early Reference] Exposing early reference for: " + beanName);
         return exposedObject;
@@ -518,7 +558,7 @@ public class BeanFactory {
      * 3. 构造器注入：@Autowired 标注在构造器上（在实例化阶段处理）
      *
      * 为什么使用字段注入而不是构造器注入？
-     * 1. 构造器注入无法解决循环依赖（A 的构造器需要 B，B 的构造器需要 A，死锁）
+     * 1. 构造器注入无法解决循环依赖（A 的构造器需要 B，B 的构造器需要 A，应拒绝）
      * 2. 字段注入允许先创建对象，再填充属性，配合三级缓存可以解决循环依赖
      *
      * 注入流程：
@@ -539,9 +579,12 @@ public class BeanFactory {
      * 1. 优先按类型查找唯一候选（支持接口注入）
      * 2. 回退到约定 beanName（兼容现有示例）
      */
-    public Object resolveDependency(Class<?> dependencyType, String qualifier) throws Exception {
+    public synchronized Object resolveDependency(Class<?> dependencyType, String qualifier) throws Exception {
         if (qualifier != null && !qualifier.trim().isEmpty()) {
             BeanDefinition qualifiedBean = beanDefinitions.get(qualifier);
+            if (qualifiedBean == null && dependencyType.isInstance(singletonObjects.get(qualifier))) {
+                return singletonObjects.get(qualifier);
+            }
             if (qualifiedBean == null) {
                 throw new IllegalStateException("No bean named '" + qualifier + "' for @Qualifier on type "
                         + dependencyType.getName());
@@ -569,6 +612,7 @@ public class BeanFactory {
 
     private Object resolveBeanReference(String beanName, Class<?> dependencyType) throws Exception {
         BeanDefinition beanDefinition = beanDefinitions.get(beanName);
+        if (beanDefinition == null) return getBean(beanName);
         if (!beanDefinition.isSingleton() && !beanDefinition.isPrototype()) {
             // 不能将某次请求/会话的真实对象直接保存到 singleton 中；改为注入代理，
             // 每次调用再回到当前 scope 获取目标。
@@ -660,7 +704,7 @@ public class BeanFactory {
      *
      * 为什么在这里创建代理而不是实例化时？
      * 1. 代理需要拦截业务方法，而业务方法可能依赖注入的对象，必须等依赖注入完成
-     * 2. 如果在实例化时创建代理，二级缓存中存的是代理对象，可能导致循环依赖问题
+     * 2. 循环依赖时通过早期引用扩展点提前创建代理，最终必须复用相同引用
      *
      * 应用场景：
      * 1. AOP 代理创建（@Transactional、@Async 等）
@@ -697,10 +741,9 @@ public class BeanFactory {
         }
     }
 
-    public void destroySingletons() throws Exception {
+    public synchronized void destroySingletons() throws Exception {
         System.out.println("\n[Bean Lifecycle] ========== Destroying Singleton Beans ==========");
-        destroyDisposableBeans();
-        clearSingletonBeans();
+        try { destroyDisposableBeans(); } finally { clearSingletonBeans(); }
     }
 
     /**
@@ -709,15 +752,18 @@ public class BeanFactory {
     private void destroyDisposableBeans() throws Exception {
         // 按注册逆序销毁更贴近真实容器行为：后创建的对象通常更先销毁
         List<Map.Entry<String, DisposableBeanAdapter>> entries = new ArrayList<>(disposableBeans.entrySet());
+        Exception failure = null;
         for (int i = entries.size() - 1; i >= 0; i--) {
             Map.Entry<String, DisposableBeanAdapter> entry = entries.get(i);
             System.out.println("[DisposableBean] Destroying: " + entry.getKey());
-            entry.getValue().destroy();
+            try { entry.getValue().destroy(); }
+            catch (Exception e) { if (failure == null) failure = e; else failure.addSuppressed(e); }
         }
+        if (failure != null) throw failure;
     }
 
     /**
-     * 清理单例 Bean 相关缓存，避免旧 refresh 的状态污染下一轮容器启动。
+     * 清理单例 Bean 相关缓存和处理器；Context 关闭后不可再次使用。
      */
     private void clearSingletonBeans() {
         disposableBeans.clear();
@@ -743,7 +789,7 @@ public class BeanFactory {
      * @param type 要查找的 Bean 类型
      * @return 匹配的 Bean 实例，如果找不到或找到多个则返回 null
      */
-    public <T> T getBeanByType(Class<T> type) throws Exception {
+    public synchronized <T> T getBeanByType(Class<T> type) throws Exception {
         Object resolvableDependency = resolvableDependencies.get(type);
         if (resolvableDependency != null) {
             if (resolvableDependency instanceof Supplier<?>) {
@@ -783,6 +829,9 @@ public class BeanFactory {
             if (entry.getValue().isPrimary()) {
                 primaryCandidates.add(entry.getKey());
             }
+        }
+        for (Map.Entry<String, Object> entry : singletonObjects.entrySet()) {
+            if (!beanDefinitions.containsKey(entry.getKey()) && type.isInstance(entry.getValue())) candidates.add(entry.getKey());
         }
         if (candidates.isEmpty()) {
             return null;
