@@ -12,7 +12,7 @@ import java.time.LocalDateTime;
  * 用户配额
  */
 @Data
-@Builder
+@Builder(toBuilder = true)
 @NoArgsConstructor
 @AllArgsConstructor
 public class UserQuota {

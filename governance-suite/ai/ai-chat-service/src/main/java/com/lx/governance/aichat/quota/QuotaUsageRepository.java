@@ -3,7 +3,7 @@ package com.lx.governance.aichat.quota;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
+import java.util.Objects;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
@@ -18,6 +18,13 @@ public class QuotaUsageRepository {
 
     private final ConcurrentHashMap<Long, QuotaUsageRecord> recordStore = new ConcurrentHashMap<>();
     private final AtomicLong idGenerator = new AtomicLong(1);
+
+    public boolean containsMessage(String customerId, String conversationId, String messageId) {
+        return messageId != null && !messageId.isBlank() && recordStore.values().stream().anyMatch(record ->
+                Objects.equals(customerId, record.getCustomerId())
+                        && Objects.equals(conversationId, record.getConversationId())
+                        && Objects.equals(messageId, record.getMessageId()));
+    }
 
     public void save(QuotaUsageRecord record) {
         record.setId(idGenerator.getAndIncrement());

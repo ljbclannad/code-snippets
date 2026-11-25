@@ -11,7 +11,6 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 
 /**
  * 配额服务
@@ -27,7 +26,6 @@ public class QuotaService {
     private final TransactionTemplate transactionTemplate;
 
     private static final String QUOTA_CACHE_PREFIX = "quota:";
-    private static final long CACHE_TTL_MINUTES = 5;
 
     @Value("${ai-chat.quota.enabled:true}")
     private boolean quotaEnabled;
@@ -42,33 +40,26 @@ public class QuotaService {
      * 获取用户配额
      */
     public UserQuota getUserQuota(String customerId) {
-        if (!quotaEnabled) {
-            return buildDisabledQuota(customerId);
+        synchronized (quotaRepository) {
+            if (!quotaEnabled) {
+                return buildDisabledQuota(customerId);
+            }
+
+            // 账户存储是结算事实来源，缓存快照不参与读改写。
+            // 从当前账户存储获取
+            UserQuota quota = quotaRepository.findByCustomerId(customerId);
+            if (quota == null) {
+                // 使用默认配额
+                quota = createDefaultQuota(customerId);
+            }
+
+            // 检查是否需要重置
+            if (quota.needsReset()) {
+                quota = resetQuota(quota);
+            }
+
+            return quota;
         }
-
-        // 先从缓存获取
-        String cacheKey = QUOTA_CACHE_PREFIX + customerId;
-        UserQuota cached = (UserQuota) redisTemplate.opsForValue().get(cacheKey);
-        if (cached != null) {
-            return cached;
-        }
-
-        // 从数据库获取
-        UserQuota quota = quotaRepository.findByCustomerId(customerId);
-        if (quota == null) {
-            // 使用默认配额
-            quota = createDefaultQuota(customerId);
-        }
-
-        // 检查是否需要重置
-        if (quota.needsReset()) {
-            quota = resetQuota(quota);
-        }
-
-        // 缓存
-        redisTemplate.opsForValue().set(cacheKey, quota, CACHE_TTL_MINUTES, TimeUnit.MINUTES);
-
-        return quota;
     }
 
     /**
@@ -100,89 +91,108 @@ public class QuotaService {
     @Transactional
     public void consumeQuota(String customerId, String conversationId, String messageId,
                              int promptTokens, int completionTokens) {
-        if (!quotaEnabled) {
-            log.debug("全局配额开关关闭，跳过消费 - customerId: {}", customerId);
-            return;
+        synchronized (quotaRepository) {
+            if (!quotaEnabled) {
+                log.debug("全局配额开关关闭，跳过消费 - customerId: {}", customerId);
+                return;
+            }
+
+            UserQuota quota = getUserQuota(customerId);
+
+            if (!quota.getEnabled()) {
+                log.debug("用户配额未启用，跳过消费 - customerId: {}", customerId);
+                return;
+            }
+
+            if (promptTokens < 0 || completionTokens < 0) {
+                throw new IllegalArgumentException("Token 用量不能为负数");
+            }
+            if (quotaUsageRepository.containsMessage(customerId, conversationId, messageId)) {
+                return;
+            }
+            int totalTokens = Math.addExact(promptTokens, completionTokens);
+
+            // 更新配额使用量
+            quota.setQuotaUsed(Math.addExact(quota.getQuotaUsed(), totalTokens));
+            quota.setUpdateTime(LocalDateTime.now());
+            // 记录使用历史
+            QuotaUsageRecord record = QuotaUsageRecord.builder()
+                    .customerId(customerId)
+                    .conversationId(conversationId)
+                    .messageId(messageId)
+                    .promptTokens(promptTokens)
+                    .completionTokens(completionTokens)
+                    .totalTokens(totalTokens)
+                    .usageTime(LocalDateTime.now())
+                    .quotaType(quota.getQuotaType().getCode())
+                    .build();
+            quotaUsageRepository.save(record);
+            quotaRepository.update(quota);
+
+            // 清除缓存
+            String cacheKey = QUOTA_CACHE_PREFIX + customerId;
+            invalidateCache(cacheKey);
+
+            log.info("配额已消费 - customerId: {}, tokens: {}, remaining: {}/{}",
+                    customerId, totalTokens, quota.getRemaining(), quota.getQuotaLimit());
         }
-
-        UserQuota quota = getUserQuota(customerId);
-
-        if (!quota.getEnabled()) {
-            log.debug("用户配额未启用，跳过消费 - customerId: {}", customerId);
-            return;
-        }
-
-        int totalTokens = promptTokens + completionTokens;
-
-        // 更新配额使用量
-        quota.setQuotaUsed(quota.getQuotaUsed() + totalTokens);
-        quota.setUpdateTime(LocalDateTime.now());
-        quotaRepository.update(quota);
-
-        // 记录使用历史
-        QuotaUsageRecord record = QuotaUsageRecord.builder()
-                .customerId(customerId)
-                .conversationId(conversationId)
-                .messageId(messageId)
-                .promptTokens(promptTokens)
-                .completionTokens(completionTokens)
-                .totalTokens(totalTokens)
-                .usageTime(LocalDateTime.now())
-                .quotaType(quota.getQuotaType().getCode())
-                .build();
-        quotaUsageRepository.save(record);
-
-        // 清除缓存
-        String cacheKey = QUOTA_CACHE_PREFIX + customerId;
-        redisTemplate.delete(cacheKey);
-
-        log.info("配额已消费 - customerId: {}, tokens: {}, remaining: {}/{}",
-                customerId, totalTokens, quota.getRemaining(), quota.getQuotaLimit());
     }
 
     /**
      * 创建默认配额
      */
     public UserQuota createDefaultQuota(String customerId) {
-        return transactionTemplate.execute(status -> {
-            QuotaType quotaType = parseDefaultQuotaType();
-            UserQuota quota = UserQuota.builder()
-                    .customerId(customerId)
-                    .quotaType(quotaType)
-                    .quotaLimit(defaultQuotaLimit)
-                    .quotaUsed(0)
-                    .resetTime(calculateNextResetTime(quotaType))
-                    .createTime(LocalDateTime.now())
-                    .updateTime(LocalDateTime.now())
-                    .enabled(true)
-                    .build();
+        synchronized (quotaRepository) {
+            UserQuota existing = quotaRepository.findByCustomerId(customerId);
+            if (existing != null) {
+                return existing;
+            }
+            return transactionTemplate.execute(status -> {
+                QuotaType quotaType = parseDefaultQuotaType();
+                UserQuota quota = UserQuota.builder()
+                        .customerId(customerId)
+                        .quotaType(quotaType)
+                        .quotaLimit(defaultQuotaLimit)
+                        .quotaUsed(0)
+                        .resetTime(calculateNextResetTime(quotaType))
+                        .createTime(LocalDateTime.now())
+                        .updateTime(LocalDateTime.now())
+                        .enabled(true)
+                        .build();
 
-            quotaRepository.save(quota);
-            log.info("创建默认配额 - customerId: {}, type: {}, limit: {}",
-                    customerId, quota.getQuotaType(), quota.getQuotaLimit());
+                quotaRepository.save(quota);
+                log.info("创建默认配额 - customerId: {}, type: {}, limit: {}",
+                        customerId, quota.getQuotaType(), quota.getQuotaLimit());
 
-            return quota;
-        });
+                return quota;
+            });
+        }
     }
 
     /**
      * 重置配额
      */
     public UserQuota resetQuota(UserQuota quota) {
-        return transactionTemplate.execute(status -> {
-            log.info("重置配额 - customerId: {}, oldUsed: {}", quota.getCustomerId(), quota.getQuotaUsed());
+        synchronized (quotaRepository) {
+            UserQuota current = quotaRepository.findByCustomerId(quota.getCustomerId());
+            if (current == null) {
+                return createDefaultQuota(quota.getCustomerId());
+            }
+            return transactionTemplate.execute(status -> {
+                log.info("重置配额 - customerId: {}, oldUsed: {}", quota.getCustomerId(), quota.getQuotaUsed());
 
-            quota.setQuotaUsed(0);
-            quota.setResetTime(quota.calculateNextResetTime());
-            quota.setUpdateTime(LocalDateTime.now());
-            quotaRepository.update(quota);
+                current.setQuotaUsed(0);
+                current.setResetTime(current.calculateNextResetTime());
+                current.setUpdateTime(LocalDateTime.now());
+                quotaRepository.update(current);
 
-            // 清除缓存
-            String cacheKey = QUOTA_CACHE_PREFIX + quota.getCustomerId();
-            redisTemplate.delete(cacheKey);
+                // 清除缓存
+                String cacheKey = QUOTA_CACHE_PREFIX + quota.getCustomerId();
+                invalidateCache(cacheKey);
 
-            return quota;
-        });
+                return current;
+            });
+        }
     }
 
     /**
@@ -190,18 +200,20 @@ public class QuotaService {
      */
     @Transactional
     public void updateQuota(String customerId, QuotaType quotaType, int quotaLimit) {
-        UserQuota quota = getUserQuota(customerId);
-        quota.setQuotaType(quotaType);
-        quota.setQuotaLimit(quotaLimit);
-        quota.setResetTime(calculateNextResetTime(quotaType));
-        quota.setUpdateTime(LocalDateTime.now());
-        quotaRepository.update(quota);
+        synchronized (quotaRepository) {
+            UserQuota quota = getUserQuota(customerId);
+            quota.setQuotaType(quotaType);
+            quota.setQuotaLimit(quotaLimit);
+            quota.setResetTime(calculateNextResetTime(quotaType));
+            quota.setUpdateTime(LocalDateTime.now());
+            quotaRepository.update(quota);
 
-        // 清除缓存
-        String cacheKey = QUOTA_CACHE_PREFIX + customerId;
-        redisTemplate.delete(cacheKey);
+            // 清除缓存
+            String cacheKey = QUOTA_CACHE_PREFIX + customerId;
+            invalidateCache(cacheKey);
 
-        log.info("更新配额 - customerId: {}, type: {}, limit: {}", customerId, quotaType, quotaLimit);
+            log.info("更新配额 - customerId: {}, type: {}, limit: {}", customerId, quotaType, quotaLimit);
+        }
     }
 
     /**
@@ -238,6 +250,14 @@ public class QuotaService {
                 .totalCompletionTokens(totalCompletionTokens)
                 .requestCount(records.size())
                 .build();
+    }
+
+    private void invalidateCache(String cacheKey) {
+        try {
+            redisTemplate.delete(cacheKey);
+        } catch (RuntimeException ex) {
+            log.warn("清理配额旧缓存失败，账户存储中的结算结果仍然有效", ex);
+        }
     }
 
     private LocalDateTime calculateNextResetTime(QuotaType quotaType) {

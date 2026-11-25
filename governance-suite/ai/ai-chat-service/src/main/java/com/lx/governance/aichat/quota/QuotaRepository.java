@@ -12,15 +12,16 @@ public class QuotaRepository {
     private final java.util.Map<String, UserQuota> quotaStore = new java.util.concurrent.ConcurrentHashMap<>();
 
     public UserQuota findByCustomerId(String customerId) {
-        return quotaStore.get(customerId);
+        UserQuota quota = quotaStore.get(customerId);
+        return quota == null ? null : quota.toBuilder().build();
     }
 
     public void save(UserQuota quota) {
-        quotaStore.put(quota.getCustomerId(), quota);
+        quotaStore.put(quota.getCustomerId(), quota.toBuilder().build());
     }
 
     public void update(UserQuota quota) {
-        quotaStore.put(quota.getCustomerId(), quota);
+        quotaStore.put(quota.getCustomerId(), quota.toBuilder().build());
     }
 
     public void delete(String customerId) {

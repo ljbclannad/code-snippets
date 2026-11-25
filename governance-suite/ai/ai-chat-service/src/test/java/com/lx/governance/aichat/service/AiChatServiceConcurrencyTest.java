@@ -207,6 +207,35 @@ class AiChatServiceConcurrencyTest {
     }
 
     @Test
+    void postProcessingRejectionPreservesReplyHistoryAndQuota() throws Exception {
+        var history = Mockito.mock(com.lx.governance.aichat.mapper.AiChatHistoryMapper.class);
+        var memory = Mockito.mock(MemoryService.class);
+        var post = new ChatAsyncProcessingService(history,
+                Mockito.mock(org.springframework.amqp.rabbit.core.RabbitTemplate.class), memory,
+                task -> { throw new RejectedExecutionException("模拟后处理线程池满"); }, visitorIdentityService);
+        ReflectionTestUtils.setField(aiChatService, "chatAsyncProcessingService", post);
+        when(sessionContextService.getOrCreateContext(any(), any(), any(), any(), any(), any()))
+                .thenReturn(SessionContext.builder().conversationId("c").userIntent("fact_query").build());
+        var generated = new ChatGenerationResult();
+        generated.setAnswer("已生成回复");
+        generated.setConversationId("c");
+        var metadata = new ChatGenerationResult.Metadata();
+        metadata.setUsage("prompt_tokens=10, completion_tokens=5, total_tokens=15");
+        generated.setMetadata(metadata);
+        when(deepSeekClient.chat(any(), any(), any(), any(LayeredMemories.class))).thenReturn(generated);
+        var request = buildRequest("c");
+        request.setRequestId("request-1");
+        request.setMessageTimestamp(Long.MAX_VALUE);
+        var response = aiChatService.handleChatRequest(request).get(3, TimeUnit.SECONDS);
+        assertTrue(response.getSuccess());
+        assertEquals("已生成回复", response.getMessage());
+        assertTrue(request.getMessageTimestamp() < Long.MAX_VALUE);
+        verify(history).insert(any(com.lx.governance.aichat.entity.AiChatHistory.class));
+        verify(quotaService).consumeQuota(request.getCustomerId(), "c", "request-1", 10, 5);
+        Mockito.verifyNoInteractions(memory);
+    }
+
+    @Test
     void pendingReviewSkipsMemoryRetrieval() throws Exception {
         var request = new ChatRequest();
         request.setConversationId("pending-conversation");
@@ -468,7 +497,7 @@ class AiChatServiceConcurrencyTest {
                 eq("请帮我分析一下最近一周的体重变化"),
                 eq("建议继续观察并补充近一周血糖记录。"),
                 isNull(),
-                isNull());
+                eq(request.getMessageTimestamp()));
         verify(chatAsyncProcessingService).handleChatCompleted(eq(request), any(ChatGenerationResult.class), anyString());
     }
 

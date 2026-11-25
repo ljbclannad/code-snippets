@@ -39,7 +39,7 @@ public class ChatRequest {
 
     /**
      * 客户端消息时间戳（毫秒）。
-     * 用于上下文乱序保护；为空时回退到服务端接收时间。
+     * 对话入口会替换为服务端单调接收时间，供本轮所有回调进行乱序校验。
      */
     private Long messageTimestamp;
 

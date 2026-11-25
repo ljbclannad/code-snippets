@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.RejectedExecutionException;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -109,6 +110,38 @@ class AiChatStreamServiceTest {
         when(visitorIdentityService.ensureCustomerId(any())).thenAnswer(invocation ->
                 invocation.<ChatRequest>getArgument(0).getCustomerId());
         when(visitorIdentityService.isVisitor(any())).thenReturn(false);
+    }
+
+    @Test
+    void rejectedPostProcessingStillCompletesStreamAndPersistsHistory() {
+        var history = Mockito.mock(com.lx.governance.aichat.mapper.AiChatHistoryMapper.class);
+        var memory = Mockito.mock(MemoryService.class);
+        var post = new ChatAsyncProcessingService(history,
+                Mockito.mock(org.springframework.amqp.rabbit.core.RabbitTemplate.class), memory,
+                task -> { throw new RejectedExecutionException("模拟队列满"); }, visitorIdentityService);
+        ReflectionTestUtils.setField(aiChatStreamService, "chatAsyncProcessingService", post);
+        when(visitorIdentityService.isVisitor(any())).thenReturn(true);
+        when(sessionContextService.getOrCreateContext(any(), any(), any(), any(), any(), any()))
+                .thenReturn(SessionContext.builder().conversationId("c").build());
+        when(layeredMemoryOrchestrator.loadMemories(any(), any(), any(), any(), any(), eq(false), eq(0)))
+                .thenReturn(CompletableFuture.completedFuture(LayeredMemories.builder().build()));
+        when(deepSeekClient.chatStream(any(), any(), any(), any(LayeredMemories.class)))
+                .thenReturn(Flux.just(StreamEvent.start("c"), StreamEvent.content("回复"),
+                        StreamEvent.done("c", new StreamEvent.TokenUsage(10, 5, 15))));
+        var request = new ChatRequest();
+        request.setConversationId("c");
+        request.setCustomerId("u");
+        request.setGroupId("g");
+        request.setMessage("测试");
+        request.setRequestId("r");
+        request.setMessageTimestamp(Long.MAX_VALUE);
+        var events = aiChatStreamService.handleChatStreamRequest(request).collectList().block(Duration.ofSeconds(3));
+        assertEquals(StreamEvent.EventType.DONE, events.get(events.size() - 1).getType());
+        assertTrue(request.getMessageTimestamp() < Long.MAX_VALUE);
+        verify(quotaService).consumeQuota("u", "c", "r", 10, 5);
+        verify(history, Mockito.timeout(1000)).insert(any(com.lx.governance.aichat.entity.AiChatHistory.class));
+        Mockito.verifyNoInteractions(memory);
+        verify(sessionContextService).updateContext("c", "测试", "回复", "r", request.getMessageTimestamp());
     }
 
     @Test
@@ -289,7 +322,7 @@ class AiChatStreamServiceTest {
 
         verify(userProfileClient).requestUserProfile("customer-1");
         verify(layeredMemoryOrchestrator).loadMemories(eq("group-1"), eq("customer-1"), eq("那我这种情况晚饭怎么吃？"), eq(sessionContext), any(UserProfileDTO.class), eq(true), eq(5));
-        verify(sessionContextService).updateContext("conv-1", "那我这种情况晚饭怎么吃？", "建议清淡饮食", null, null);
+        verify(sessionContextService).updateContext("conv-1", "那我这种情况晚饭怎么吃？", "建议清淡饮食", null, request.getMessageTimestamp());
     }
 
     @Test
@@ -325,7 +358,7 @@ class AiChatStreamServiceTest {
 
         verify(layeredMemoryOrchestrator).loadMemories(eq("group-2"), eq("customer-2"), eq("最近睡不好怎么办"),
                 eq(sessionContext), any(UserProfileDTO.class), eq(true), eq(5));
-        verify(sessionContextService).updateContext("conv-2", "最近睡不好怎么办", "先规律作息", null, null);
+        verify(sessionContextService).updateContext("conv-2", "最近睡不好怎么办", "先规律作息", null, request.getMessageTimestamp());
         verify(chatAsyncProcessingService, Mockito.timeout(1000)).handleChatCompleted(any(), any(), anyString());
     }
 

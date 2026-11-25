@@ -64,6 +64,7 @@ public class AiChatStreamService {
      * 处理流式聊天请求
      */
     public Flux<StreamEvent> handleChatStreamRequest(ChatRequest request) {
+        ChatTurnOrder.begin(request);
         return Flux.defer(() -> {
             ensureConversationId(request);
             return idempotencyService.executeStreamOrReplay(request, () -> executeChatStreamRequest(request));
@@ -234,7 +235,8 @@ public class AiChatStreamService {
             quotaService.consumeQuota(
                     request.getCustomerId(),
                     conversationId,
-                    "msg-" + UUID.randomUUID().toString(),
+                    request.getRequestId() == null || request.getRequestId().isBlank()
+                            ? "msg-" + UUID.randomUUID() : request.getRequestId().trim(),
                     tokenUsage.getPromptTokens(),
                     tokenUsage.getCompletionTokens()
             );

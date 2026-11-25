@@ -103,6 +103,7 @@ public class AiChatService {
 
 
     public CompletableFuture<ChatResponse> handleChatRequest(ChatRequest request) {
+        ChatTurnOrder.begin(request);
         captureSafely(() -> evaluationCollector.begin(request));
         try {
             return handleChatRequestInternal(request).whenComplete((response, error) ->
@@ -635,7 +636,8 @@ public class AiChatService {
                     quotaService.consumeQuota(
                             request.getCustomerId(),
                             chatResult.getConversationId(),
-                            chatResult.getMessageId(),
+                            request.getRequestId() == null || request.getRequestId().isBlank()
+                                    ? chatResult.getMessageId() : request.getRequestId().trim(),
                             promptTokens,
                             completionTokens);
                 }

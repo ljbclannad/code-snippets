@@ -5,6 +5,7 @@ import com.lx.governance.aichat.dto.DoctorAssistantTaskResponse;
 import com.lx.governance.aichat.dto.DoctorAssistantTaskStatus;
 import com.lx.governance.aichat.dto.MessageSummary;
 import com.lx.governance.aichat.dto.SessionContext;
+import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.TaskTriggerContext;
 import com.lx.governance.aichat.dto.TaskTriggerDecision;
 import com.lx.governance.aichat.dto.TaskTriggerReason;
@@ -22,6 +23,8 @@ import org.springframework.data.redis.core.ValueOperations;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.Executors;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -48,6 +51,77 @@ class SessionContextServiceTest {
     @BeforeEach
     void setUp() {
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+    }
+
+    @Test
+    void concurrentWritesPreserveRoutingAndAgentOutcome() throws Exception {
+        var existing = SessionContext.builder().conversationId("c").customerId("u")
+                .lastProcessedRequestId("same").lastMessageAt(100L).contextVersion(1L).build();
+        var stored = mockStoredContext("c", existing);
+        var pool = Executors.newFixedThreadPool(2);
+        var start = new CountDownLatch(1);
+        try {
+            var route = pool.submit(() -> {
+                start.await();
+                sessionContextService.recordTaskTriggerDecision("c", TaskTriggerDecision.builder()
+                        .route(TaskTriggerRoute.DOCTOR_ASSISTANT_AGENT).taskType(TaskType.PATIENT_FOLLOW_UP_ANALYSIS)
+                        .reasons(List.of()).build(), "same", 100L);
+                return null;
+            });
+            var outcome = pool.submit(() -> {
+                start.await();
+                sessionContextService.recordAgentOutcome("c", DoctorAssistantTaskResponse.builder()
+                        .status(DoctorAssistantTaskStatus.PENDING_APPROVAL).build(), "same", 100L);
+                return null;
+            });
+            start.countDown();
+            route.get(3, TimeUnit.SECONDS);
+            outcome.get(3, TimeUnit.SECONDS);
+        } finally {
+            pool.shutdownNow();
+        }
+        var result = objectMapper.readValue(stored.get(), SessionContext.class);
+        assertEquals(TaskTriggerRoute.DOCTOR_ASSISTANT_AGENT, result.getLastTaskTriggerRoute());
+        assertEquals("PENDING_APPROVAL", result.getLastAgentReviewStatus());
+        assertEquals(3L, result.getContextVersion());
+    }
+
+    @Test
+    void olderTurnCannotOverwriteNewReviewOrSummary() throws Exception {
+        var oldRequest = new ChatRequest();
+        oldRequest.setMessageTimestamp(Long.MAX_VALUE);
+        ChatTurnOrder.begin(oldRequest);
+        var newer = new ChatRequest();
+        ChatTurnOrder.begin(newer);
+        assertTrue(newer.getMessageTimestamp() > oldRequest.getMessageTimestamp());
+        var existing = SessionContext.builder().conversationId("c").customerId("u")
+                .lastProcessedRequestId("new").lastMessageAt(newer.getMessageTimestamp())
+                .lastAgentReviewStatus("PENDING_APPROVAL").lastAgentPendingTaskId(123L)
+                .messageCount(2).recentSummaries(new ArrayList<>()).build();
+        var stored = mockStoredContext("c", existing);
+        sessionContextService.recordAgentOutcome("c", DoctorAssistantTaskResponse.builder()
+                .status(DoctorAssistantTaskStatus.SUCCESS).build(), "old", oldRequest.getMessageTimestamp());
+        sessionContextService.updateContext("c", "旧问题", "旧回复", "old", oldRequest.getMessageTimestamp());
+        sessionContextService.recordAgentOutcome("c", DoctorAssistantTaskResponse.builder()
+                .status(DoctorAssistantTaskStatus.SUCCESS).build(), "old", null);
+        var result = objectMapper.readValue(stored.get(), SessionContext.class);
+        assertEquals("PENDING_APPROVAL", result.getLastAgentReviewStatus());
+        assertEquals(123L, result.getLastAgentPendingTaskId());
+        assertEquals(2, result.getMessageCount());
+    }
+
+    @Test
+    void enteringNewTurnRegistersOrderEvenWhenIntentIsReused() throws Exception {
+        var existing = SessionContext.builder().conversationId("c").customerId("u")
+                .userIntent("general_health_consultation").currentTopic("健康咨询")
+                .messageCount(2).lastMessageAt(100L).lastProcessedRequestId("old")
+                .lastUpdateTime(System.currentTimeMillis()).build();
+        var stored = mockStoredContext("c", existing);
+        sessionContextService.getOrCreateContext("c", "u", "g", "继续咨询", "new", 200L);
+        sessionContextService.recordAgentOutcome("c", DoctorAssistantTaskResponse.builder()
+                .status(DoctorAssistantTaskStatus.SUCCESS).build(), "old", 100L);
+        assertEquals("new", objectMapper.readValue(stored.get(), SessionContext.class).getLastProcessedRequestId());
+        verifyNoInteractions(intentAnalyzer);
     }
 
     @Test
@@ -212,7 +286,7 @@ class SessionContextServiceTest {
         AtomicReference<String> stored = new AtomicReference<>(
                 initial != null ? objectMapper.writeValueAsString(initial) : null);
         when(valueOperations.get(key)).thenAnswer(invocation -> stored.get());
-        doAnswer(invocation -> {
+        lenient().doAnswer(invocation -> {
             stored.set(invocation.getArgument(1));
             return null;
         }).when(valueOperations).set(eq(key), anyString(), anyLong(), any(TimeUnit.class));

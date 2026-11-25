@@ -3,6 +3,7 @@ package com.lx.governance.aichat.service;
 import java.time.LocalDateTime;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -45,18 +46,28 @@ public class ChatAsyncProcessingService {
     }
 
     public void handleChatCompleted(ChatRequest request, ChatGenerationResult response, String correlationId) {
-        CompletableFuture.runAsync(() -> {
-            try {
-                AiChatHistory history = saveConversationHistory(request, response);
-                if (history != null && syncEnabled) {
-                    syncToElasticsearch(history);
+        try {
+            CompletableFuture.runAsync(() -> {
+                try {
+                    persistHistory(request, response);
+                    triggerMemoryExtraction(request, response, correlationId);
+                } catch (Exception e) {
+                    log.error("异步处理聊天结果失败 - customerId: {}, correlationId: {}",
+                            request.getCustomerId(), correlationId, e);
                 }
-                triggerMemoryExtraction(request, response, correlationId);
-            } catch (Exception e) {
-                log.error("异步处理聊天结果失败 - customerId: {}, correlationId: {}",
-                        request.getCustomerId(), correlationId, e);
-            }
-        }, memoryExtractExecutor);
+            }, memoryExtractExecutor);
+        } catch (RejectedExecutionException ex) {
+            log.warn("后处理线程池已满，直接保存历史 - conversationId: {}, correlationId: {}",
+                    response.getConversationId(), correlationId);
+            persistHistory(request, response);
+        }
+    }
+
+    private void persistHistory(ChatRequest request, ChatGenerationResult response) {
+        AiChatHistory history = saveConversationHistory(request, response);
+        if (history != null && syncEnabled) {
+            syncToElasticsearch(history);
+        }
     }
 
     private AiChatHistory saveConversationHistory(ChatRequest request, ChatGenerationResult response) {
