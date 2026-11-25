@@ -4,7 +4,9 @@ import java.util.Properties;
 import java.util.function.ToDoubleFunction;
 
 import org.springframework.amqp.core.AmqpAdmin;
+import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.rabbit.core.RabbitAdmin;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 import com.lx.governance.aichat.client.UserProfileClientFixed;
@@ -23,15 +25,17 @@ public class AiAsyncBacklogMetrics {
             MeterRegistry meterRegistry,
             AmqpAdmin amqpAdmin,
             UserProfileClientFixed userProfileClient,
-            VectorMemoryClientFixed vectorMemoryClient) {
+            VectorMemoryClientFixed vectorMemoryClient,
+            @Qualifier("userProfileReplyQueue") Queue userProfileReplyQueue,
+            @Qualifier("vectorMemoryReplyQueue") Queue vectorMemoryReplyQueue) {
         this.amqpAdmin = amqpAdmin;
 
         bindQueueGauge(meterRegistry, "chat_history_sync", RabbitMQConfig.CHAT_HISTORY_SYNC_QUEUE, "ready");
         bindQueueGauge(meterRegistry, "chat_history_sync", RabbitMQConfig.CHAT_HISTORY_SYNC_QUEUE, "consumers");
         bindQueueGauge(meterRegistry, "memory_extraction", "memory.extraction.queue", "ready");
         bindQueueGauge(meterRegistry, "memory_extraction", "memory.extraction.queue", "consumers");
-        bindQueueGauge(meterRegistry, "user_profile_reply", "ai.chat.user.profile.reply", "ready");
-        bindQueueGauge(meterRegistry, "vector_memory_reply", "ai.chat.vector.memory.reply", "ready");
+        bindQueueGauge(meterRegistry, "user_profile_reply", userProfileReplyQueue.getName(), "ready");
+        bindQueueGauge(meterRegistry, "vector_memory_reply", vectorMemoryReplyQueue.getName(), "ready");
 
         Gauge.builder("ai.rpc.pending.requests", userProfileClient, UserProfileClientFixed::getPendingRequestCount)
                 .description("Pending user profile RPC requests")

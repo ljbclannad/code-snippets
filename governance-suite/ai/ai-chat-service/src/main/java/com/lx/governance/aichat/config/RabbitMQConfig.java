@@ -1,6 +1,8 @@
 package com.lx.governance.aichat.config;
 
 import org.springframework.amqp.core.DirectExchange;
+import org.springframework.amqp.core.AnonymousQueue;
+import org.springframework.amqp.core.Base64UrlNamingStrategy;
 import org.springframework.amqp.core.Queue;
 import org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
@@ -87,19 +89,19 @@ public class RabbitMQConfig {
     }
 
     /**
-     * 固定的用户画像响应队列
+     * 实例独占的用户画像响应队列，连接关闭后自动清理。
      */
     @Bean
     public Queue userProfileReplyQueue() {
-        return new Queue("ai.chat.user.profile.reply", true);
+        return new AnonymousQueue(new Base64UrlNamingStrategy("ai.chat.user.profile.reply."));
     }
 
     /**
-     * 固定的向量记忆响应队列
+     * 实例独占的向量记忆响应队列，连接关闭后自动清理。
      */
     @Bean
     public Queue vectorMemoryReplyQueue() {
-        return new Queue("ai.chat.vector.memory.reply", true);
+        return new AnonymousQueue(new Base64UrlNamingStrategy("ai.chat.vector.memory.reply."));
     }
 
     /**

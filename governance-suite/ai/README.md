@@ -141,6 +141,23 @@ done < <(ssh ubuntu@175.27.242.127 "grep -E '^(GOVERNANCE_DB_PASSWORD|DOCTOR_DB_
 
 本地实例与服务器实例会访问同一套数据和消息队列；启动同一队列的消费者后，两边都有可能收到消息。外部集成测试请使用独立的 `AI_TEST_*` 配置。
 
+画像与向量记忆 RPC 的回复队列由每个聊天实例独立创建，名称分别为 `ai.chat.user.profile.reply.<随机后缀>` 和 `ai.chat.vector.memory.reply.<随机后缀>`。队列非持久化、连接独占并自动清理；请求的 `replyTo` 与本实例监听队列保持一致，避免多实例竞争消费回复。画像和记忆服务继续按 `replyTo` 回传，无需同时升级。连接中断时在途请求仍受原有 5 秒超时约束，重新连接后由 RabbitAdmin 重新声明队列；不保证跨进程重启恢复在途 RPC。
+
+RabbitMQ 账号需要具备这些动态队列的声明、读取及回复写入权限。积压监控查询本实例真实队列，指标仍使用 `user_profile_reply`、`vector_memory_reply` 两个稳定标签。滚动升级期间旧实例继续使用原固定队列；旧实例之间的竞争问题会持续到全部升级完成。旧固定队列不自动删除。该改动只隔离 RPC 回复，共享请求及异步队列仍需通过不同 vhost 等方式实现环境隔离。
+
+双实例 Broker 回归测试使用临时独占请求队列和合成响应，不读取患者数据、不调用模型、不消费现有业务队列。在 `governance-suite` 目录执行：
+
+```bash
+# 先通过环境变量注入测试 Broker 凭据，勿将密码写入文件。
+export AI_TEST_RABBITMQ_HOST=175.27.242.127
+export AI_TEST_RABBITMQ_USERNAME=governance_app
+export AI_TEST_RABBITMQ_PASSWORD="$RABBITMQ_PASSWORD"
+# 可选：AI_TEST_RABBITMQ_PORT（默认 5672）、AI_TEST_RABBITMQ_VHOST（默认 /）
+mvn -f ai/ai-chat-service/pom.xml -Dtest=RpcReplyIsolationTest,RpcReplyBrokerIntegrationTest,AiAsyncBacklogMetricsTest test
+```
+
+未配置 `AI_TEST_RABBITMQ_HOST` 时仅跳过真实 Broker 测试；无需外部依赖的双实例乱序回复回归测试照常运行。
+
 ### 快速启动
 
 在 IntelliJ IDEA 中打开 `governance-suite`，从右上角运行配置选择 **AI 服务（全部启动）**，点击 ▶。脚本在 IDEA 终端中运行，需要能找到 `mvn` 和下文的两个模型密钥。需要 SSH 密码时，直接在该终端输入。启动脚本完成健康检查后退出，六个服务在后台运行；结束开发时运行 **AI 服务（全部停止）**。

@@ -6,6 +6,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 import org.springframework.amqp.core.Message;
+import org.springframework.amqp.core.Queue;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.stereotype.Component;
@@ -15,21 +17,25 @@ import com.lx.governance.aichat.dto.UserProfileRequestMessage;
 import com.lx.governance.aichat.dto.UserProfileResponseMessage;
 import com.lx.governance.common.trace.Trace;
 
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * 用户画像客户端 - 使用固定响应队列
+ * 用户画像客户端 - 使用实例独占响应队列
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class UserProfileClientFixed {
 
     private final RabbitTemplate rabbitTemplate;
+    private final Queue replyQueue;
+
+    public UserProfileClientFixed(RabbitTemplate rabbitTemplate,
+            @Qualifier("userProfileReplyQueue") Queue replyQueue) {
+        this.rabbitTemplate = rabbitTemplate;
+        this.replyQueue = replyQueue;
+    }
 
     private static final String REQUEST_QUEUE = "user.profile.request";
-    private static final String REPLY_QUEUE = "ai.chat.user.profile.reply";
     private static final long TIMEOUT_MS = 5000;
 
     // 存储待处理的请求
@@ -70,7 +76,7 @@ public class UserProfileClientFixed {
      *
      * 关键点：
      * - correlationId：匹配异步请求和响应
-     * - replyTo：指定响应队列（固定队列，所有请求共用）
+     * - replyTo：指定本实例独占的响应队列，避免其他实例消费响应
      * - CompletableFuture：实现异步等待，支持超时控制
      * </pre>
      */
@@ -89,9 +95,9 @@ public class UserProfileClientFixed {
         CompletableFuture<UserProfileResponseMessage> future = new CompletableFuture<>();
         pendingRequests.put(correlationId, future);
 
-        // 发送请求，指定固定的 replyTo 队列
+        // 发送和监听使用同一个队列 Bean，响应只能回到发起实例。
         rabbitTemplate.convertAndSend(REQUEST_QUEUE, request, message -> {
-            message.getMessageProperties().setReplyTo(REPLY_QUEUE);
+            message.getMessageProperties().setReplyTo(replyQueue.getName());
             message.getMessageProperties().setCorrelationId(correlationId);
             return message;
         });
@@ -120,9 +126,9 @@ public class UserProfileClientFixed {
     }
 
     /**
-     * 监听固定的响应队列
+     * 监听本实例的响应队列
      */
-    @RabbitListener(queues = REPLY_QUEUE)
+    @RabbitListener(queues = "#{@userProfileReplyQueue.name}")
     public void handleResponse(UserProfileResponseMessage response, Message message) {
         String correlationId = message.getMessageProperties().getCorrelationId();
         log.info("Received user profile response: correlationId={}, success={}", correlationId, response.getSuccess());

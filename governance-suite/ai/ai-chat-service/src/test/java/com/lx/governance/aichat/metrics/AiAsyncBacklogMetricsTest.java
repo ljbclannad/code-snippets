@@ -24,6 +24,9 @@ class AiAsyncBacklogMetricsTest {
         AmqpAdmin amqpAdmin = mock(AmqpAdmin.class);
         UserProfileClientFixed userProfileClient = mock(UserProfileClientFixed.class);
         VectorMemoryClientFixed vectorMemoryClient = mock(VectorMemoryClientFixed.class);
+        var config = new RabbitMQConfig();
+        var profileReplyQueue = config.userProfileReplyQueue();
+        var memoryReplyQueue = config.vectorMemoryReplyQueue();
 
         Properties chatHistoryProperties = new Properties();
         chatHistoryProperties.put(RabbitAdmin.QUEUE_MESSAGE_COUNT, 7);
@@ -37,16 +40,22 @@ class AiAsyncBacklogMetricsTest {
 
         Properties userProfileReplyProperties = new Properties();
         userProfileReplyProperties.put(RabbitAdmin.QUEUE_MESSAGE_COUNT, 1);
-        when(amqpAdmin.getQueueProperties("ai.chat.user.profile.reply")).thenReturn(userProfileReplyProperties);
+        when(amqpAdmin.getQueueProperties(profileReplyQueue.getName())).thenReturn(userProfileReplyProperties);
 
         Properties vectorMemoryReplyProperties = new Properties();
         vectorMemoryReplyProperties.put(RabbitAdmin.QUEUE_MESSAGE_COUNT, 3);
-        when(amqpAdmin.getQueueProperties("ai.chat.vector.memory.reply")).thenReturn(vectorMemoryReplyProperties);
+        when(amqpAdmin.getQueueProperties(memoryReplyQueue.getName())).thenReturn(vectorMemoryReplyProperties);
 
         when(userProfileClient.getPendingRequestCount()).thenReturn(4);
         when(vectorMemoryClient.getPendingRequestCount()).thenReturn(6);
 
-        new AiAsyncBacklogMetrics(registry, amqpAdmin, userProfileClient, vectorMemoryClient);
+        new AiAsyncBacklogMetrics(registry, amqpAdmin, userProfileClient, vectorMemoryClient,
+                profileReplyQueue, memoryReplyQueue);
+
+        assertEquals(1.0, registry.get("ai.async.queue.backlog")
+                .tag("queue", "user_profile_reply").tag("metric_type", "ready").gauge().value());
+        assertEquals(3.0, registry.get("ai.async.queue.backlog")
+                .tag("queue", "vector_memory_reply").tag("metric_type", "ready").gauge().value());
 
         assertEquals(7.0, registry.get("ai.async.queue.backlog")
                 .tag("queue", "chat_history_sync")
