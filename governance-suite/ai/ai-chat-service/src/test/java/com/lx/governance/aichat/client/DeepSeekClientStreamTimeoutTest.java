@@ -30,6 +30,8 @@ import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.LayeredMemories;
 import com.lx.governance.aichat.dto.StreamEvent;
 import com.lx.governance.aichat.monitor.TokenMonitor;
+import com.lx.governance.aichat.metrics.AiChatMetrics;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 import reactor.core.publisher.Flux;
 
@@ -50,9 +52,12 @@ class DeepSeekClientStreamTimeoutTest {
                 mock(TokenMonitor.class), new ContextBudgetProperties());
         var analyzer = new DeepSeekIntentAnalyzer();
         ReflectionTestUtils.setField(analyzer, "deepSeekClient", client);
+        var registry = new SimpleMeterRegistry();
+        ReflectionTestUtils.setField(analyzer, "metrics", new AiChatMetrics(registry));
         var result = assertTimeoutPreemptively(Duration.ofSeconds(2),
                 () -> analyzer.analyzeIntentWithTimeout("测试", List.of(), 100));
-        assertEquals("general_health_consultation", result.getUserIntent());
+        assertEquals("unknown", result.getUserIntent());
+        assertEquals(1.0, registry.get("ai.intent.analysis.fallbacks").counter().count());
         assertTrue(cancelled.get());
     }
 
@@ -69,6 +74,7 @@ class DeepSeekClientStreamTimeoutTest {
                 mock(TokenMonitor.class), new ContextBudgetProperties());
         var analyzer = new DeepSeekIntentAnalyzer();
         ReflectionTestUtils.setField(analyzer, "deepSeekClient", client);
+        ReflectionTestUtils.setField(analyzer, "metrics", mock(AiChatMetrics.class));
         var result = analyzer.analyzeIntentWithTimeout("测试", List.of(), 1000);
         assertEquals("测试话题", result.getCurrentTopic());
         assertEquals("fact_query", result.getUserIntent());

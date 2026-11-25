@@ -208,7 +208,7 @@ public class AiChatStreamService {
             StreamEvent.TokenUsage tokenUsage = accumulator.getTokenUsage();
             if (tokenUsage != null) {
                 ChatGenerationResult.Metadata metadata = new ChatGenerationResult.Metadata();
-                metadata.setUsage(String.format("prompt_tokens=%d, completion_tokens=%d, total_tokens=%d",
+                metadata.recordTokenUsage(ChatGenerationResult.TokenUsage.fromCounts(
                         tokenUsage.getPromptTokens(),
                         tokenUsage.getCompletionTokens(),
                         tokenUsage.getTotalTokens()));

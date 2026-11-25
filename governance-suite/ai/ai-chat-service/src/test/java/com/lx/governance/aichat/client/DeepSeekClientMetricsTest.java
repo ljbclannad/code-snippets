@@ -74,7 +74,11 @@ class DeepSeekClientMetricsTest {
         request.setConversationId("conv-1");
         request.setMessage("hello");
 
-        deepSeekClient.chat(request, null, null, LayeredMemories.builder().build());
+        var result = deepSeekClient.chat(request, null, null, LayeredMemories.builder().build());
+        assertEquals(100, result.getMetadata().getTokenUsage().promptTokens());
+        assertEquals(50, result.getMetadata().getTokenUsage().completionTokens());
+        assertEquals(150, result.getMetadata().getTokenUsage().totalTokens());
+        assertEquals("prompt_tokens=100, completion_tokens=50, total_tokens=150", result.getMetadata().getUsage());
 
         assertEquals(150.0, meterRegistry.get("platform.tokens.total")
                 .tag("scope", "DIRECT_CHAT")

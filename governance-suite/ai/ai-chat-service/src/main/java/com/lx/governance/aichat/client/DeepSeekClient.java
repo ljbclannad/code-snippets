@@ -478,10 +478,8 @@ public class DeepSeekClient {
         // Set metadata
         ChatGenerationResult.Metadata metadata = new ChatGenerationResult.Metadata();
         if (usage != null) {
-            metadata.setUsage(String.format("prompt_tokens=%d, completion_tokens=%d, total_tokens=%d",
-                    usage.getPromptTokens().intValue(),
-                    usage.getGenerationTokens().intValue(),
-                    usage.getTotalTokens().intValue()));
+            metadata.recordTokenUsage(ChatGenerationResult.TokenUsage.fromCounts(
+                    usage.getPromptTokens(), usage.getGenerationTokens(), usage.getTotalTokens()));
         }
         chatResult.setMetadata(metadata);
 

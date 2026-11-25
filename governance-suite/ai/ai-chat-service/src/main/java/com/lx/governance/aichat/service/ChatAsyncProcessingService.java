@@ -77,9 +77,12 @@ public class ChatAsyncProcessingService {
             history.setConversationId(response.getConversationId());
             history.setUserMessage(request.getMessage());
             history.setAiResponse(response.getAnswer());
-            history.setPromptTokens(null);
-            history.setCompletionTokens(null);
-            history.setTotalTokens(null);
+            if (response.getMetadata() != null) {
+                var usage = response.getMetadata().resolveTokenUsage();
+                history.setPromptTokens(usage.promptTokens());
+                history.setCompletionTokens(usage.completionTokens());
+                history.setTotalTokens(usage.totalTokens());
+            }
             history.setCreateTime(LocalDateTime.now());
             history.setIsDeleted(0);
 

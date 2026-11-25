@@ -30,6 +30,7 @@ import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
@@ -53,6 +54,7 @@ import com.lx.governance.aichat.dto.TaskTriggerRoute;
 import com.lx.governance.aichat.dto.TaskType;
 import com.lx.governance.aichat.dto.UserProfileDTO;
 import com.lx.governance.aichat.metrics.AiChatMetrics;
+import com.lx.governance.aichat.entity.AiChatHistory;
 import com.lx.governance.aichat.quota.QuotaService;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -230,7 +232,11 @@ class AiChatServiceConcurrencyTest {
         assertTrue(response.getSuccess());
         assertEquals("已生成回复", response.getMessage());
         assertTrue(request.getMessageTimestamp() < Long.MAX_VALUE);
-        verify(history).insert(any(com.lx.governance.aichat.entity.AiChatHistory.class));
+        var saved = ArgumentCaptor.forClass(AiChatHistory.class);
+        verify(history).insert(saved.capture());
+        assertEquals(10, saved.getValue().getPromptTokens());
+        assertEquals(5, saved.getValue().getCompletionTokens());
+        assertEquals(15, saved.getValue().getTotalTokens());
         verify(quotaService).consumeQuota(request.getCustomerId(), "c", "request-1", 10, 5);
         Mockito.verifyNoInteractions(memory);
     }

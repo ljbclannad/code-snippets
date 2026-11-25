@@ -15,6 +15,7 @@ import java.util.concurrent.RejectedExecutionException;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
@@ -36,6 +37,7 @@ import com.lx.governance.aichat.dto.TaskTriggerRoute;
 import com.lx.governance.aichat.dto.TaskType;
 import com.lx.governance.aichat.dto.UserProfileDTO;
 import com.lx.governance.aichat.metrics.AiChatMetrics;
+import com.lx.governance.aichat.entity.AiChatHistory;
 import com.lx.governance.aichat.quota.QuotaRepository;
 import com.lx.governance.aichat.quota.QuotaService;
 import com.lx.governance.aichat.quota.QuotaType;
@@ -139,7 +141,11 @@ class AiChatStreamServiceTest {
         assertEquals(StreamEvent.EventType.DONE, events.get(events.size() - 1).getType());
         assertTrue(request.getMessageTimestamp() < Long.MAX_VALUE);
         verify(quotaService).consumeQuota("u", "c", "r", 10, 5);
-        verify(history, Mockito.timeout(1000)).insert(any(com.lx.governance.aichat.entity.AiChatHistory.class));
+        var saved = ArgumentCaptor.forClass(AiChatHistory.class);
+        verify(history, Mockito.timeout(1000)).insert(saved.capture());
+        assertEquals(10, saved.getValue().getPromptTokens());
+        assertEquals(5, saved.getValue().getCompletionTokens());
+        assertEquals(15, saved.getValue().getTotalTokens());
         Mockito.verifyNoInteractions(memory);
         verify(sessionContextService).updateContext("c", "测试", "回复", "r", request.getMessageTimestamp());
     }
