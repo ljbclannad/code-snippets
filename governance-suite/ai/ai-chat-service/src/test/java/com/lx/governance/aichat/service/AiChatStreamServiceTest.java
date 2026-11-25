@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
@@ -16,6 +17,10 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import com.lx.governance.aichat.client.DeepSeekClient;
 import com.lx.governance.aichat.dto.DoctorAssistantTaskRequest;
@@ -30,7 +35,11 @@ import com.lx.governance.aichat.dto.TaskTriggerRoute;
 import com.lx.governance.aichat.dto.TaskType;
 import com.lx.governance.aichat.dto.UserProfileDTO;
 import com.lx.governance.aichat.metrics.AiChatMetrics;
+import com.lx.governance.aichat.quota.QuotaRepository;
 import com.lx.governance.aichat.quota.QuotaService;
+import com.lx.governance.aichat.quota.QuotaType;
+import com.lx.governance.aichat.quota.QuotaUsageRepository;
+import com.lx.governance.aichat.quota.UserQuota;
 
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import reactor.core.publisher.Flux;
@@ -88,7 +97,8 @@ class AiChatStreamServiceTest {
                 doctorAssistantTaskRequestFactory,
                 doctorAssistantAgentGateway,
                 runtime,
-                visitorIdentityService, highRiskFollowUp);
+                visitorIdentityService, highRiskFollowUp, new ChatRequestIdempotencyService(
+                        Mockito.mock(RedisTemplate.class), new com.fasterxml.jackson.databind.ObjectMapper()));
         when(taskTriggerRouter.route(org.mockito.ArgumentMatchers.any(com.lx.governance.aichat.dto.TaskTriggerContext.class)))
                 .thenReturn(TaskTriggerDecision.builder()
                 .route(TaskTriggerRoute.DIRECT_CHAT)
@@ -113,6 +123,50 @@ class AiChatStreamServiceTest {
                 events.stream().map(StreamEvent::getType).toList());
         assertEquals("请及时就医。", events.get(1).getContent());
         Mockito.verifyNoInteractions(deepSeekClient, userProfileClient, doctorAssistantAgentGateway);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void completedDirectStreamDeductsActualUsageBeforeDone() {
+        RedisTemplate<String, Object> redis = Mockito.mock(RedisTemplate.class);
+        ValueOperations<String, Object> values = Mockito.mock(ValueOperations.class);
+        when(redis.opsForValue()).thenReturn(values);
+        var accounts = new QuotaRepository();
+        var records = new QuotaUsageRepository();
+        accounts.save(UserQuota.builder().customerId("customer").quotaType(QuotaType.DAILY)
+                .quotaLimit(100_000).quotaUsed(10).enabled(true).build());
+        var realQuotaService = new QuotaService(redis, accounts, records, Mockito.mock(TransactionTemplate.class));
+        ReflectionTestUtils.setField(realQuotaService, "quotaEnabled", true);
+        ReflectionTestUtils.setField(aiChatStreamService, "quotaService", realQuotaService);
+        when(visitorIdentityService.isVisitor("customer")).thenReturn(true);
+        when(sessionContextService.getOrCreateContext(any(), any(), any(), any(), any(), any()))
+                .thenReturn(SessionContext.builder().conversationId("conversation").build());
+        when(layeredMemoryOrchestrator.loadMemories(any(), any(), any(), any(), any(), eq(false), eq(0)))
+                .thenReturn(CompletableFuture.completedFuture(LayeredMemories.builder().build()));
+        when(deepSeekClient.chatStream(any(), any(), any(), org.mockito.ArgumentMatchers.<LayeredMemories>any()))
+                .thenReturn(Flux.just(StreamEvent.start("conversation"), StreamEvent.content("测试回复"),
+                        StreamEvent.done("conversation", new StreamEvent.TokenUsage(120, 45, 165))));
+
+        var request = new ChatRequest();
+        request.setCustomerId("customer");
+        request.setConversationId("conversation");
+        request.setGroupId("test-group");
+        request.setMessage("测试问题");
+        request.setRequestId("same-request");
+        var done = aiChatStreamService.handleChatStreamRequest(request)
+                .filter(event -> event.getType() == StreamEvent.EventType.DONE)
+                .map(event -> {
+                    assertEquals(175, realQuotaService.getUserQuota("customer").getQuotaUsed());
+                    return event;
+                }).next().block(Duration.ofSeconds(3));
+
+        aiChatStreamService.handleChatStreamRequest(request).collectList().block(Duration.ofSeconds(3));
+        verify(deepSeekClient).chatStream(any(), any(), any(), org.mockito.ArgumentMatchers.<LayeredMemories>any());
+        verify(chatAsyncProcessingService, Mockito.timeout(1000)).handleChatCompleted(any(), any(), any());
+        assertEquals(175, realQuotaService.getUserQuota("customer").getQuotaUsed());
+        assertEquals(165, done.getTokenUsage().getTotalTokens());
+        assertEquals(1, records.findByCustomerId("customer").size());
+        assertEquals(165, records.findByCustomerId("customer").get(0).getTotalTokens());
     }
 
     @Test

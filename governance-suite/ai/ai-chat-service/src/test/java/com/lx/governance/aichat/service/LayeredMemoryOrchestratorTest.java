@@ -300,7 +300,8 @@ class LayeredMemoryOrchestratorTest {
         preferredHigh.setSource("DIET");
 
         MemoryItemDTO keywordHigherSimilarity = new MemoryItemDTO();
-        keywordHigherSimilarity.setContent("关键词记忆".repeat(220));
+        // 让第三个候选在默认预算提高后仍能触发裁剪。
+        keywordHigherSimilarity.setContent("关键词记忆".repeat(360));
         keywordHigherSimilarity.setSimilarity(0.99);
         keywordHigherSimilarity.setConfidenceScore(0.95);
         keywordHigherSimilarity.setSource("KEYWORD");

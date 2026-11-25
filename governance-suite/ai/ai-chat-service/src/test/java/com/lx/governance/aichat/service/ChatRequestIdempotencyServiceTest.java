@@ -5,6 +5,11 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 import java.time.Duration;
+import java.util.List;
+import java.util.HashMap;
+import com.lx.governance.aichat.dto.StreamEvent;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Sinks;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -34,6 +39,59 @@ class ChatRequestIdempotencyServiceTest {
         service = new ChatRequestIdempotencyService(redis, mapper);
         ReflectionTestUtils.setField(service, "responseTtlMinutes", 10L);
         request.setRequestId("request-1");
+    }
+
+    @Test
+    void streamReconnectSharesExecutionAndReplaysCompletedEvents() {
+        var stored = new HashMap<String, String>();
+        when(values.get(anyString())).thenAnswer(call -> stored.get(call.getArgument(0)));
+        doAnswer(call -> { stored.put(call.getArgument(0), call.getArgument(1)); return null; })
+                .when(values).set(anyString(), anyString(), any(Duration.class));
+        request.setConversationId("conversation");
+        var source = Sinks.many().replay().<StreamEvent>all();
+        var calls = new AtomicInteger();
+        var stream = service.executeStreamOrReplay(request, () -> {
+            calls.incrementAndGet();
+            return source.asFlux();
+        });
+        var first = stream.collectList().toFuture();
+        var second = stream.collectList().toFuture();
+        source.tryEmitNext(StreamEvent.start("conversation"));
+        source.tryEmitNext(StreamEvent.content("回复"));
+        first.cancel(true);
+        source.tryEmitNext(StreamEvent.done("conversation", new StreamEvent.TokenUsage(10, 5, 15)));
+        source.tryEmitComplete();
+        var events = second.join();
+        assertEquals(3, events.size());
+        assertEquals(events, stream.collectList().block(Duration.ofSeconds(2)));
+        assertEquals(1, calls.get());
+
+        RedisTemplate<String, String> redis = mock(RedisTemplate.class);
+        when(redis.opsForValue()).thenReturn(values);
+        var freshService = new ChatRequestIdempotencyService(redis, mapper);
+        assertEquals(events, freshService.executeStreamOrReplay(request, () -> {
+            fail("完成结果应从 Redis 回放");
+            return Flux.empty();
+        }).collectList().block(Duration.ofSeconds(2)));
+    }
+
+    @Test
+    void failedStreamAllowsRetryAndMissingRequestIdPreservesCancellation() {
+        request.setConversationId("conversation");
+        var calls = new AtomicInteger();
+        for (int i = 0; i < 2; i++) {
+            service.executeStreamOrReplay(request, () -> {
+                calls.incrementAndGet();
+                return Flux.just(StreamEvent.error("失败", 1000));
+            }).collectList().block(Duration.ofSeconds(2));
+        }
+        assertEquals(2, calls.get());
+        request.setRequestId(null);
+        var cancelled = new CompletableFuture<Boolean>();
+        service.executeStreamOrReplay(request, () -> Flux.just(StreamEvent.content("部分"))
+                        .concatWith(Flux.never()).doOnCancel(() -> cancelled.complete(true)))
+                .take(1).collectList().block(Duration.ofSeconds(2));
+        assertTrue(cancelled.join());
     }
 
     @Test

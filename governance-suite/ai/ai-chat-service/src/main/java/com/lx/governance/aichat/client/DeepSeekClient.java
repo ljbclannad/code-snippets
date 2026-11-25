@@ -1,12 +1,15 @@
 package com.lx.governance.aichat.client;
 
 import java.net.SocketTimeoutException;
+import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.StreamingChatModel;
@@ -54,6 +57,9 @@ public class DeepSeekClient {
 
     @Value("${spring.ai.openai.chat.options.model:deepseek-chat}")
     private String model;
+
+    @Value("${spring.ai.openai.read-timeout:60s}")
+    private Duration streamReadTimeout = Duration.ofSeconds(60);
 
     @Value("${ai-chat.metrics.cost.prompt-price-per-1k-tokens:0}")
     private double promptPricePer1kTokens;
@@ -207,52 +213,8 @@ public class DeepSeekClient {
                 log.info("Calling DeepSeek API (streaming) for customer: {}, conversationId: {}",
                         request.getCustomerId(), request.getConversationId());
 
-                // Build system prompt
                 String systemPrompt = buildSystemPrompt(request, userProfile, sessionContext, memories);
-                String userMessage = request.getMessage();
-
-                // Construct Prompt
-                Prompt prompt = new Prompt(
-                        List.of(
-                                new SystemMessage(systemPrompt),
-                                new UserMessage(userMessage)),
-                        OpenAiChatOptions.builder()
-                                .withModel(model)
-                                .withTemperature(0.7)
-                                .withMaxTokens(2000)
-                                .build());
-
-                // 发送开始事件
-                String conversationId = request.getConversationId();
-                MarkdownStreamNormalizer markdownNormalizer = new MarkdownStreamNormalizer();
-
-                // Call StreamingChatModel
-                return Flux.concat(
-                        Flux.just(StreamEvent.start(conversationId)),
-                        streamingChatModel.stream(prompt)
-                                .map(response -> {
-                                    String content = response.getResult().getOutput().getContent();
-                                    return content == null ? "" : content;
-                                })
-                                .<StreamEvent>handle((content, sink) -> {
-                                    String normalized = markdownNormalizer.onChunk(content);
-                                    if (!normalized.isEmpty()) {
-                                        sink.next(StreamEvent.content(normalized));
-                                    }
-                                })
-                                .concatWith(Flux.defer(() -> {
-                                    String finalized = markdownNormalizer.finish();
-                                    if (finalized.isEmpty()) {
-                                        return Flux.<StreamEvent>empty();
-                                    }
-                                    return Flux.just(StreamEvent.content(finalized));
-                                }))
-                                .doOnComplete(() -> {
-                                    long duration = System.currentTimeMillis() - startTime;
-                                    log.info("DeepSeek API streaming completed in {}ms", duration);
-                                }),
-                        Flux.just(StreamEvent.done(conversationId, null))
-                );
+                return streamReply(request, systemPrompt, startTime);
 
             } catch (Exception e) {
                 long duration = System.currentTimeMillis() - startTime;
@@ -288,47 +250,7 @@ public class DeepSeekClient {
                         request.getCustomerId(),
                         request.getConversationId(),
                         request.getMessage());
-                String userMessage = request.getMessage();
-
-                Prompt prompt = new Prompt(
-                        List.of(
-                                new SystemMessage(systemPrompt),
-                                new UserMessage(userMessage)),
-                        OpenAiChatOptions.builder()
-                                .withModel(model)
-                                .withTemperature(0.7)
-                                .withMaxTokens(2000)
-                                .build());
-
-                String conversationId = request.getConversationId();
-                MarkdownStreamNormalizer markdownNormalizer = new MarkdownStreamNormalizer();
-
-                return Flux.concat(
-                        Flux.just(StreamEvent.start(conversationId)),
-                        streamingChatModel.stream(prompt)
-                                .map(response -> {
-                                    String content = response.getResult().getOutput().getContent();
-                                    return content == null ? "" : content;
-                                })
-                                .<StreamEvent>handle((content, sink) -> {
-                                    String normalized = markdownNormalizer.onChunk(content);
-                                    if (!normalized.isEmpty()) {
-                                        sink.next(StreamEvent.content(normalized));
-                                    }
-                                })
-                                .concatWith(Flux.defer(() -> {
-                                    String finalized = markdownNormalizer.finish();
-                                    if (finalized.isEmpty()) {
-                                        return Flux.<StreamEvent>empty();
-                                    }
-                                    return Flux.just(StreamEvent.content(finalized));
-                                }))
-                                .doOnComplete(() -> {
-                                    long duration = System.currentTimeMillis() - startTime;
-                                    log.info("DeepSeek API streaming completed in {}ms", duration);
-                                }),
-                        Flux.just(StreamEvent.done(conversationId, null))
-                );
+                return streamReply(request, systemPrompt, startTime);
 
             } catch (Exception e) {
                 long duration = System.currentTimeMillis() - startTime;
@@ -346,6 +268,98 @@ public class DeepSeekClient {
                     3001
             ));
         });
+    }
+
+    /**
+     * 内部意图分析使用整次调用时限，持续输出也不会延长截止时间。
+     * 超时由 Reactor 取消模型订阅，并交由调用方执行默认意图降级。
+     */
+    public ChatGenerationResult chatWithTimeout(ChatRequest request, long timeoutMs) {
+        if (timeoutMs <= 0) {
+            throw AiServiceException.timeout("意图分析时限已耗尽");
+        }
+        long startTime = System.currentTimeMillis();
+        Prompt prompt = new Prompt(
+                List.of(new SystemMessage(buildSystemPrompt(request, null, null, List.of())),
+                        new UserMessage(request.getMessage())),
+                OpenAiChatOptions.builder().withModel(model).withTemperature(0.7)
+                        .withMaxTokens(2000).withStreamUsage(true).build());
+        var responses = Flux.defer(() -> streamingChatModel.stream(prompt))
+                .collectList()
+                .timeout(Duration.ofMillis(timeoutMs))
+                .block();
+        StringBuilder answer = new StringBuilder();
+        Usage usage = null;
+        for (ChatResponse response : responses) {
+            if (response.getResult() != null && response.getResult().getOutput().getContent() != null) {
+                answer.append(response.getResult().getOutput().getContent());
+            }
+            if (response.getMetadata() != null && toStreamTokenUsage(response.getMetadata().getUsage()) != null) {
+                usage = response.getMetadata().getUsage();
+            }
+        }
+        recordTokenUsage(usage, System.currentTimeMillis() - startTime);
+        recordPlatformTokenCost(usage);
+        return buildChatGenerationResult(answer.toString(), usage, request.getConversationId());
+    }
+
+    private Flux<StreamEvent> streamReply(ChatRequest request, String systemPrompt, long startTime) {
+        Prompt prompt = new Prompt(
+                List.of(new SystemMessage(systemPrompt), new UserMessage(request.getMessage())),
+                OpenAiChatOptions.builder()
+                        .withModel(model)
+                        .withTemperature(0.7)
+                        .withMaxTokens(2000)
+                        .withStreamUsage(true)
+                        .build());
+        String conversationId = request.getConversationId();
+        var normalizer = new MarkdownStreamNormalizer();
+        var finalUsage = new AtomicReference<StreamEvent.TokenUsage>();
+
+        return streamingChatModel.stream(prompt).timeout(streamReadTimeout)
+                .<StreamEvent>handle((response, sink) -> {
+                    // 最后一帧可以只有用量。用量是本轮累计值，每次保留最新有效值。
+                    var metadata = response.getMetadata();
+                    StreamEvent.TokenUsage usage = metadata == null ? null : toStreamTokenUsage(metadata.getUsage());
+                    if (usage != null) {
+                        finalUsage.set(usage);
+                    }
+                    var generation = response.getResult();
+                    if (generation != null) {
+                        String content = normalizer.onChunk(generation.getOutput().getContent());
+                        if (!content.isEmpty()) {
+                            sink.next(StreamEvent.content(content));
+                        }
+                    }
+                })
+                .concatWith(Flux.defer(() -> {
+                    String content = normalizer.finish();
+                    StreamEvent.TokenUsage usage = finalUsage.get();
+                    if (usage == null) {
+                        log.warn("DeepSeek 流式响应未返回有效 Token 用量 - conversationId: {}", conversationId);
+                    }
+                    StreamEvent done = StreamEvent.done(conversationId, usage);
+                    log.info("DeepSeek API streaming completed in {}ms", System.currentTimeMillis() - startTime);
+                    return content.isEmpty() ? Flux.just(done) : Flux.just(StreamEvent.content(content), done);
+                }))
+                .startWith(StreamEvent.start(conversationId));
+    }
+
+    private StreamEvent.TokenUsage toStreamTokenUsage(Usage usage) {
+        if (usage == null) {
+            return null;
+        }
+        Long prompt = usage.getPromptTokens();
+        Long completion = usage.getGenerationTokens();
+        if (prompt == null || completion == null || prompt < 0 || completion < 0
+                || prompt > Integer.MAX_VALUE || completion > Integer.MAX_VALUE) {
+            return null;
+        }
+        long total = prompt + completion;
+        if (total == 0 || total > Integer.MAX_VALUE) {
+            return null;
+        }
+        return new StreamEvent.TokenUsage(prompt.intValue(), completion.intValue(), (int) total);
     }
 
     /**

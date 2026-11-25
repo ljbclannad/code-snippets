@@ -102,18 +102,18 @@ logging:
 ai:
   context:
     # Token 预算配置（基础配置，会根据对话复杂度动态调整）
-    total-budget: 4000 # 总预算
-    user-message-reserve: 500 # 为用户消息预留
+    total-budget: 8192 # 单轮上下文总预算
+    user-message-reserve: 1024 # 为用户消息预留
 
     # 各部分预算分配（按优先级）
     # 注意：这些是基础预算，实际使用时会根据 SessionContext.complexity 动态调整
     # - simple: 各部分预算 * 0.5-0.75（简单对话，减少上下文）
     # - medium: 使用基础预算（默认）
     # - complex: 各部分预算 * 1.25-1.5（复杂对话，增加上下文）
-    core-profile-budget: 800 # 核心画像（必须）
-    relevant-memories-budget: 1200 # 相关记忆（重要）
-    conversation-history-budget: 600 # 对话历史（重要）
-    extended-profile-budget: 400 # 扩展画像（可选）
+    core-profile-budget: 1200 # 核心画像（必须）
+    relevant-memories-budget: 3000 # 相关记忆（重要）
+    conversation-history-budget: 2000 # 对话历史（重要）
+    extended-profile-budget: 600 # 扩展画像（可选）
 
     # 记忆检索配置
     memory:

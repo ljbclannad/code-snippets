@@ -1,21 +1,30 @@
 package com.lx.governance.aichat.service;
 
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.ChatResponse;
+import com.lx.governance.aichat.dto.StreamEvent;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import reactor.core.publisher.Flux;
+import reactor.core.scheduler.Schedulers;
 
 @Service
 @Slf4j
@@ -29,8 +38,67 @@ public class ChatRequestIdempotencyService {
 
     private final Map<String, CompletableFuture<ChatResponse>> inFlightResponses = new ConcurrentHashMap<>();
 
+    private final Map<String, Flux<StreamEvent>> streamResponses = new ConcurrentHashMap<>();
+
     @Value("${ai-chat.idempotency.response-ttl-minutes:10}")
-    private long responseTtlMinutes;
+    private long responseTtlMinutes = 10;
+
+    /**
+     * 同一实例内共享流式执行，断连后继续完成结算，重试从 START 回放。
+     * 成功事件同时写入 Redis，缓存 TTL 内保留本地回放以容忍 Redis 写入失败。
+     */
+    public Flux<StreamEvent> executeStreamOrReplay(ChatRequest request, Supplier<Flux<StreamEvent>> supplier) {
+        return Flux.defer(() -> {
+            String requestId = normalizeRequestId(request);
+            if (requestId == null) {
+                return supplier.get();
+            }
+            String key = "stream:" + buildCacheKey(request.getConversationId(), requestId);
+            return streamResponses.computeIfAbsent(key, ignored -> createSharedStream(key, supplier));
+        }).subscribeOn(Schedulers.boundedElastic());
+    }
+
+    private Flux<StreamEvent> createSharedStream(String key, Supplier<Flux<StreamEvent>> supplier) {
+        AtomicReference<Flux<StreamEvent>> shared = new AtomicReference<>();
+        Flux<StreamEvent> source = Flux.defer(() -> {
+            List<StreamEvent> events = new ArrayList<>();
+            return readStreamCache(key).switchIfEmpty(Flux.defer(supplier))
+                    .doOnNext(events::add)
+                    .doOnComplete(() -> {
+                        boolean completed = events.stream().anyMatch(event -> event.getType() == StreamEvent.EventType.DONE)
+                                && events.stream().noneMatch(event -> event.getType() == StreamEvent.EventType.ERROR);
+                        if (completed) {
+                            try {
+                                redisTemplate.opsForValue().set(key, objectMapper.writeValueAsString(events),
+                                        Duration.ofMinutes(responseTtlMinutes));
+                            } catch (Exception ex) {
+                                log.warn("写入流式请求缓存失败，保留本地回放", ex);
+                            }
+                            Schedulers.parallel().schedule(() -> streamResponses.remove(key, shared.get()),
+                                    responseTtlMinutes, TimeUnit.MINUTES);
+                        } else {
+                            streamResponses.remove(key, shared.get());
+                        }
+                    })
+                    .doOnError(ex -> streamResponses.remove(key, shared.get()));
+        });
+        // cache 保持唯一上游订阅，单个客户端取消不会中断其他客户端或重复启动模型。
+        shared.set(source.cache());
+        return shared.get();
+    }
+
+    private Flux<StreamEvent> readStreamCache(String key) {
+        try {
+            String json = redisTemplate.opsForValue().get(key);
+            if (json != null && !json.isBlank()) {
+                List<StreamEvent> events = objectMapper.readValue(json, new TypeReference<List<StreamEvent>>() {});
+                return Flux.fromIterable(events);
+            }
+        } catch (Exception ex) {
+            log.warn("读取流式请求缓存失败", ex);
+        }
+        return Flux.empty();
+    }
 
     public CompletableFuture<ChatResponse> executeOrReplay(
             String conversationId,

@@ -13,22 +13,22 @@ import org.springframework.stereotype.Component;
 public class ContextBudgetProperties {
 
     /** 总预算（tokens） */
-    private int totalBudget = 4000;
+    private int totalBudget = 8192;
 
     /** 为用户消息预留的 tokens */
-    private int userMessageReserve = 500;
+    private int userMessageReserve = 1024;
 
     /** 核心画像预算 */
-    private int coreProfileBudget = 800;
+    private int coreProfileBudget = 1200;
 
     /** 相关记忆预算 */
-    private int relevantMemoriesBudget = 1200;
+    private int relevantMemoriesBudget = 3000;
 
     /** 对话历史预算 */
-    private int conversationHistoryBudget = 600;
+    private int conversationHistoryBudget = 2000;
 
     /** 扩展画像预算 */
-    private int extendedProfileBudget = 400;
+    private int extendedProfileBudget = 600;
 
     /** 记忆配置 */
     private MemoryConfig memory = new MemoryConfig();

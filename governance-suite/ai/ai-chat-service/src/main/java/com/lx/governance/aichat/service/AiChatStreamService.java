@@ -58,11 +58,19 @@ public class AiChatStreamService {
     private final AgentConversationRouteRuntime agentConversationRouteRuntime;
     private final VisitorIdentityService visitorIdentityService;
     private final HighRiskFollowUpChat highRiskFollowUp;
+    private final ChatRequestIdempotencyService idempotencyService;
 
     /**
      * 处理流式聊天请求
      */
     public Flux<StreamEvent> handleChatStreamRequest(ChatRequest request) {
+        return Flux.defer(() -> {
+            ensureConversationId(request);
+            return idempotencyService.executeStreamOrReplay(request, () -> executeChatStreamRequest(request));
+        });
+    }
+
+    private Flux<StreamEvent> executeChatStreamRequest(ChatRequest request) {
         return Flux.defer(() -> {
             // 每次订阅独立保存采集状态，避免重复订阅覆盖同一请求的轨迹。
             ChatRequest subscriptionRequest = new ChatRequest();
@@ -118,6 +126,17 @@ public class AiChatStreamService {
 
         // 直接处理流式请求
         return processStreamRequest(request, sessionId, correlationId, startTime)
+                .concatMap(event -> {
+                    if (event.getType() != StreamEvent.EventType.DONE || event.getTokenUsage() == null
+                            || accumulator.isCompleted()) {
+                        return Mono.just(event);
+                    }
+                    // 配额服务包含阻塞 I/O，先结算再发送 DONE，避免快速续聊读到旧余额。
+                    return Mono.fromRunnable(() -> updateQuotaFromStream(
+                                    request, sessionId, event.getTokenUsage(), correlationId))
+                            .thenReturn(event)
+                            .subscribeOn(Schedulers.boundedElastic());
+                })
                 .doOnNext(event -> {
                     // 累积每个事件
                     accumulator.accumulate(event);
@@ -147,8 +166,6 @@ public class AiChatStreamService {
                     // 如果流式响应完成且无错误，保存完整内容到历史
                     if (accumulator.isCompleted() && !accumulator.hasError()) {
                         saveStreamResponseToHistory(request, accumulator, correlationId);
-                        // 更新配额
-                        updateQuotaFromStream(request, accumulator, correlationId);
                     }
                 })
                 .onErrorResume(ex -> {
@@ -210,26 +227,17 @@ public class AiChatStreamService {
      */
     private void updateQuotaFromStream(
             ChatRequest request,
-            StreamResponseAccumulator accumulator,
+            String conversationId,
+            StreamEvent.TokenUsage tokenUsage,
             String correlationId) {
         try {
-            StreamEvent.TokenUsage tokenUsage = accumulator.getTokenUsage();
-            if (tokenUsage == null) {
-                log.warn("流式响应无 token 使用信息，跳过配额更新 - correlationId: {}", correlationId);
-                return;
-            }
-
             quotaService.consumeQuota(
                     request.getCustomerId(),
-                    accumulator.getConversationId(),
+                    conversationId,
                     "msg-" + UUID.randomUUID().toString(),
                     tokenUsage.getPromptTokens(),
                     tokenUsage.getCompletionTokens()
             );
-
-            log.info("流式响应配额已更新 - customerId: {}, totalTokens: {}, correlationId: {}",
-                    request.getCustomerId(), tokenUsage.getTotalTokens(), correlationId);
-
         } catch (Exception e) {
             log.error("更新流式响应配额失败 - correlationId: {}", correlationId, e);
         }

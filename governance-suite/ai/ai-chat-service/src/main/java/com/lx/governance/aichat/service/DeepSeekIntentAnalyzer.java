@@ -49,6 +49,10 @@ public class DeepSeekIntentAnalyzer {
      * 分析用户意图并创建SessionContext
      */
     public SessionContext analyzeIntent(String currentMessage, List<MessageSummary> recentMessages) {
+        return analyzeIntent(currentMessage, recentMessages, null);
+    }
+
+    private SessionContext analyzeIntent(String currentMessage, List<MessageSummary> recentMessages, Long timeoutMs) {
         try {
             String prompt = buildAnalysisPrompt(currentMessage, recentMessages);
 
@@ -58,11 +62,9 @@ public class DeepSeekIntentAnalyzer {
             chatRequest.setCustomerId("system");
             chatRequest.setConversationId("intent-analysis-" + System.currentTimeMillis());
 
-            ChatGenerationResult response = deepSeekClient.chat(
-                    chatRequest,
-                    null,
-                    null,
-                    Collections.<MemoryItemDTO>emptyList());
+            ChatGenerationResult response = timeoutMs != null
+                    ? deepSeekClient.chatWithTimeout(chatRequest, timeoutMs)
+                    : deepSeekClient.chat(chatRequest, null, null, Collections.<MemoryItemDTO>emptyList());
 
             return parseAnalysisResult(response.getAnswer());
 
@@ -78,8 +80,7 @@ public class DeepSeekIntentAnalyzer {
     public SessionContext analyzeIntentWithTimeout(String currentMessage,
             List<MessageSummary> recentMessages,
             long timeoutMs) {
-        // 简化版：直接调用（实际应使用CompletableFuture.orTimeout）
-        return analyzeIntent(currentMessage, recentMessages);
+        return analyzeIntent(currentMessage, recentMessages, timeoutMs);
     }
 
     /**

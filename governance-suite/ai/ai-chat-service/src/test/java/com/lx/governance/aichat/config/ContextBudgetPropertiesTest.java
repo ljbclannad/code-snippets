@@ -73,7 +73,10 @@ class ContextBudgetPropertiesTest {
     @Test
     void shouldUseDefaultValues() {
         ContextBudgetProperties defaultProps = new ContextBudgetProperties();
-        assertThat(defaultProps.getTotalBudget()).isEqualTo(4000);
+        assertThat(defaultProps.getTotalBudget()).isEqualTo(8192);
+        assertThat(defaultProps.getUserMessageReserve()).isEqualTo(1024);
+        assertThat(defaultProps.getRelevantMemoriesBudget()).isEqualTo(3000);
+        assertThat(defaultProps.getConversationHistoryBudget()).isEqualTo(2000);
         assertThat(defaultProps.getMemory().getMaxCount()).isEqualTo(10);
         assertThat(defaultProps.getConversation().getMaxRounds()).isEqualTo(5);
         assertThat(defaultProps.getAlert().isEnabled()).isTrue();
