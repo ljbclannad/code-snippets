@@ -45,21 +45,25 @@ class HighRiskFollowUpChatTest {
                 .andExpect(header("X-Follow-Up-Token", "test-token"))
                 .andExpect(jsonPath("$.requestId").value("r1"))
                 .andRespond(withSuccess("{\"taskId\":7,\"status\":\"PENDING\"}", MediaType.APPLICATION_JSON));
-        assertTrue(chat.reply(request).contains("等待责任医生处理"));
+        var result = chat.reply(request);
+        assertTrue(result.message().contains("等待责任医生处理"));
+        assertEquals("PENDING", result.followUp().status());
         server.verify();
     }
 
     @Test void timeoutOrUnverifiedIdentityCannotConfirmRegistration() throws Exception {
         var forged = new ObjectMapper().readValue("{\"verifiedPatient\":true,\"customerId\":\"p1\"}", ChatRequest.class);
         assertFalse(forged.isVerifiedPatient());
-        assertTrue(chat.reply(forged).contains("无法确认"));
+        var guestReply = chat.reply(forged);
+        assertTrue(guestReply.message().contains("无法确认"));
+        assertNull(guestReply.followUp());
         var request = request();
         chat.conversationId(request);
         when(dispatch.evaluate(eq(request), isNull(), any())).thenReturn(new AgentDispatchPolicy.Decision(false, "circuit_open"));
-        assertTrue(chat.reply(request).contains("无法确认"));
+        assertTrue(chat.reply(request).message().contains("无法确认"));
         when(dispatch.evaluate(eq(request), isNull(), any())).thenReturn(new AgentDispatchPolicy.Decision(true, "ok"));
         server.expect(requestTo("http://127.0.0.1:8088/internal/patient-tasks/high-risk-follow-up")).andRespond(withGatewayTimeout());
-        assertTrue(chat.reply(request).contains("无法确认"));
+        assertEquals("UNCONFIRMED", chat.reply(request).followUp().status());
         server.verify();
     }
 
@@ -74,7 +78,7 @@ class HighRiskFollowUpChatTest {
                 .andExpect(method(org.springframework.http.HttpMethod.GET))
                 .andExpect(header("X-Follow-Up-Token", "test-token"))
                 .andRespond(withSuccess("{\"status\":\"APPROVED\",\"delivered\":false}", MediaType.APPLICATION_JSON));
-        assertEquals("医生已批准本次复核任务。", chat.reply(request));
+        assertEquals("医生已批准本次复核任务。", chat.reply(request).message());
         verifyNoInteractions(dispatch);
         server.verify();
     }

@@ -84,6 +84,9 @@ public class HighRiskFollowUpService {
         if (!TaskStatus.PENDING.name().equals(task.getStatus())) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "此提醒已有审批决定");
         }
+        if (!approve && (comment == null || comment.isBlank())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "请填写拒绝理由");
+        }
         // 这是工作台的站内投递。只写真实审批和投递审计，避免生成模型运行的结果与归因。
         int changed = jdbc.update("""
                 UPDATE agent_pending_task SET status = ?, review_comment = ?, reviewed_at = CURRENT_TIMESTAMP
@@ -121,8 +124,22 @@ public class HighRiskFollowUpService {
         return jdbc.query("""
                 SELECT pending_task_id, body, delivered_at FROM agent_follow_up_reminder
                 WHERE customer_id = ? AND delivered_at IS NOT NULL AND pending_task_id < ?
+                  AND CAST(customer_id AS BINARY(256)) = CAST(? AS BINARY(256))
                 ORDER BY pending_task_id DESC LIMIT 50
                 """, (rs, row) -> new InboxMessage(rs.getLong(1), rs.getString(2), rs.getTimestamp(3).toLocalDateTime()),
-                customerId, beforeId);
+                customerId, beforeId, customerId);
+    }
+
+    public ReviewProgress latestFollowUp(String customerId, String conversationId) {
+        return jdbc.query("""
+                SELECT t.status, r.delivered_at FROM agent_follow_up_reminder r
+                JOIN agent_pending_task t ON t.id = r.pending_task_id
+                WHERE r.customer_id = ? AND r.conversation_id = ? AND t.tool_name = ?
+                  AND CAST(r.customer_id AS BINARY(256)) = CAST(? AS BINARY(256))
+                  AND CAST(r.conversation_id AS BINARY(512)) = CAST(? AS BINARY(512))
+                ORDER BY t.id DESC LIMIT 1
+                """, (rs, row) -> new ReviewProgress(rs.getString(1), rs.getTimestamp(2) != null),
+                customerId, conversationId, TOOL, customerId, conversationId)
+                .stream().findFirst().orElse(new ReviewProgress("NONE", false));
     }
 }

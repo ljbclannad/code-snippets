@@ -1,5 +1,6 @@
 package com.lx.governance.aichat.dto;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -24,6 +25,8 @@ public class ChatResponse {
     private Long timestamp;
     private List<SimilarConversation> recommendations;
     private List<PatientVisibleEvidence> patientVisibleEvidence;
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private PatientFollowUpStatus followUp;
 
     /**
      * Create a success response

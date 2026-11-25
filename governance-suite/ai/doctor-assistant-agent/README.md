@@ -88,6 +88,10 @@ mvn -f pom.xml spring-boot:run
 
 收件箱中的一条记录即站内投递回执，不能据此推断患者已阅读。工作台与患者端沿用同一个任务编号对账。聊天服务通过 `ai.agent.fallbacks` 的 `reason=high_risk_follow_up_unconfirmed` 统计无法确认登记的次数。
 
+独立医生页 `/doctor.html` 使用 `GET /api/doctor/follow-up-tasks` 查询待办，使用 `GET /api/doctor/follow-up-tasks/{id}` 查询详情。提交到 `POST /api/doctor/follow-up-tasks/{id}/approve` 或 `/reject`，请求体为 `{"comment":"复核意见"}`。服务端从登录身份确认责任医生，拒绝待办时要求提供理由。
+
+患者页面从聊天服务同源调用 `GET /api/patient/follow-up-progress?conversationId=…` 和 `GET /api/patient/follow-up-reminders`。聊天服务核对患者身份和会话归属后，使用服务间令牌查询医生服务的内部随访进度和收件箱。随访进度从该会话最近一条高风险随访读取，审批状态和投递标记分别返回。
+
 ### 验证
 
 从 `governance-suite` 根目录运行以下命令，使用当前源码中的平台依赖构建两个模块。

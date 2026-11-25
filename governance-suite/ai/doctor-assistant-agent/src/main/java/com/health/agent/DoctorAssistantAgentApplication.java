@@ -1,14 +1,17 @@
 package com.health.agent;
 
+import com.lx.governance.agentplatform.demo.FollowUpDemoIdentityConfiguration;
 import org.apache.ibatis.annotations.Mapper;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.context.annotation.Import;
 
 /**
  * 医生助手 ReAct Agent 应用启动类
  */
 @SpringBootApplication
+@Import(FollowUpDemoIdentityConfiguration.class)
 @MapperScan(basePackages = "com.health.agent", annotationClass = Mapper.class)
 public class DoctorAssistantAgentApplication {
 

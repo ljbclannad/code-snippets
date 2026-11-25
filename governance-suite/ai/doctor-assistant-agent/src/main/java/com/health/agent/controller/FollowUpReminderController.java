@@ -10,6 +10,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @RestController
@@ -55,6 +56,24 @@ public class FollowUpReminderController {
     public List<HighRiskFollowUpService.InboxMessage> inbox(HttpServletRequest request,
             @RequestParam(defaultValue = "9223372036854775807") long beforeId) {
         return reminders.inbox(identity(request, "PATIENT"), beforeId);
+    }
+
+    @GetMapping("/internal/patient-tasks/follow-up-status")
+    public HighRiskFollowUpService.ReviewProgress followUpStatus(@RequestParam String customerId,
+            @RequestParam String conversationId, @RequestHeader(value = "X-Follow-Up-Token", defaultValue = "") String token) {
+        auth.require(token);
+        return reminders.latestFollowUp(customerId, conversationId);
+    }
+
+    public record InternalReminder(String receiptId, String message, LocalDateTime deliveredAt) {}
+
+    @GetMapping("/internal/patient-tasks/follow-up-inbox")
+    public List<InternalReminder> followUpInbox(@RequestParam String customerId, @RequestParam long beforeId,
+            @RequestHeader(value = "X-Follow-Up-Token", defaultValue = "") String token) {
+        auth.require(token);
+        return reminders.inbox(customerId, beforeId).stream()
+                .map(message -> new InternalReminder(Long.toString(message.receiptId()), message.message(), message.deliveredAt()))
+                .toList();
     }
 
     static String identity(HttpServletRequest request, String role) {

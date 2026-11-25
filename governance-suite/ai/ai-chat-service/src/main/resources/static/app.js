@@ -15,15 +15,42 @@ const state = {
     abortController: null,
     activeAssistantMessage: null,
     activeAssistantMarkdown: "",
+    activeFollowUp: null,
     assistantRenderFrame: null,
     activeConversationId: "",
     connectionStatus: "idle",
     isBusy: false,
     tokenUsage: null,
-    conversations: []
+    conversations: [],
+    visitorConversations: new Map(),
+    historySelection: 0,
+    patientId: "",
+    followUpRetries: new Map(),
+    progressQuery: 0,
+    inboxQuery: 0,
+    inboxCursor: ""
 };
 
 const elements = {
+    topbar: document.getElementById("topbar"),
+    workspace: document.getElementById("workspace"),
+    expandChatBtn: document.getElementById("expandChatBtn"),
+    expandChatText: document.getElementById("expandChatText"),
+    historySlot: document.getElementById("historySlot"),
+    historyPanel: document.getElementById("historyPanel"),
+    historyDialog: document.getElementById("historyDialog"),
+    historySettingsBtn: document.getElementById("historySettingsBtn"),
+    inboxBtn: document.getElementById("inboxBtn"),
+    inboxDialog: document.getElementById("inboxDialog"),
+    inboxStatus: document.getElementById("inboxStatus"),
+    inboxList: document.getElementById("inboxList"),
+    refreshInboxBtn: document.getElementById("refreshInboxBtn"),
+    moreInboxBtn: document.getElementById("moreInboxBtn"),
+    followUpCard: document.getElementById("followUpCard"),
+    followUpStatus: document.getElementById("followUpStatus"),
+    refreshFollowUpBtn: document.getElementById("refreshFollowUpBtn"),
+    followUpInboxBtn: document.getElementById("followUpInboxBtn"),
+    newChatBtn: document.getElementById("newChatBtn"),
     customerId: document.getElementById("customerId"),
     conversationId: document.getElementById("conversationId"),
     streamMode: document.getElementById("streamMode"),
@@ -60,11 +87,28 @@ function init() {
     updateAgentStatus("未触发", "空闲");
     pingHealth();
     maybeLoadConversations();
+    loadPatientSession();
     appendTrace("系统", "页面已加载，等待发送请求。");
 }
 
 function bindEvents() {
+    elements.expandChatBtn.addEventListener("click", toggleChatExpanded);
+    elements.workspace.addEventListener("keydown", event => {
+        if (event.key === "Escape" && !event.isComposing && elements.topbar.hidden) {
+            toggleChatExpanded();
+            elements.expandChatBtn.focus();
+        }
+    });
+    elements.historyDialog.addEventListener("close", () => {
+        if (!elements.historyDialog.open) {
+            elements.historySlot.appendChild(elements.historyPanel);
+        }
+    });
+    document.querySelectorAll("[data-open-dialog]").forEach(button => {
+        button.addEventListener("click", () => openWorkspaceDialog(button.dataset.openDialog));
+    });
     elements.sendBtn.addEventListener("click", handleSend);
+    elements.newChatBtn.addEventListener("click", startNewChat);
     elements.stopBtn.addEventListener("click", stopStreaming);
     elements.clearChatBtn.addEventListener("click", clearChat);
     elements.clearTraceBtn.addEventListener("click", () => {
@@ -72,8 +116,12 @@ function bindEvents() {
         appendTrace("系统", "调试日志已清空。");
     });
     elements.refreshHistoryBtn.addEventListener("click", maybeLoadConversations);
+    elements.refreshFollowUpBtn.addEventListener("click", refreshFollowUpProgress);
+    elements.refreshInboxBtn.addEventListener("click", () => loadInbox());
+    elements.moreInboxBtn.addEventListener("click", () => loadInbox(state.inboxCursor));
     elements.streamMode.addEventListener("change", updateModeText);
     elements.conversationId.addEventListener("input", updateConversationView);
+    elements.conversationId.addEventListener("change", refreshFollowUpProgress);
     elements.customerId.addEventListener("change", maybeLoadConversations);
     elements.messageInput.addEventListener("keydown", (event) => {
         if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && !event.isComposing) {
@@ -92,6 +140,30 @@ function bindEvents() {
     });
 }
 
+function openWorkspaceDialog(dialogId) {
+    const dialog = document.getElementById(dialogId);
+    if (dialog === elements.historyDialog) {
+        dialog.appendChild(elements.historyPanel);
+    } else if (elements.historyDialog.open) {
+        elements.historyDialog.close();
+    }
+    dialog.showModal();
+    if (dialog === elements.inboxDialog) {
+        void loadInbox();
+    }
+}
+
+function toggleChatExpanded() {
+    const list = elements.messageList;
+    const atEnd = list.scrollHeight - list.clientHeight - list.scrollTop < 2;
+    const expanded = elements.workspace.classList.toggle("is-expanded");
+    elements.topbar.hidden = expanded;
+    elements.expandChatText.textContent = expanded ? "退出放大" : "放大对话";
+    if (atEnd) {
+        maybeScroll();
+    }
+}
+
 function updateModeText() {
     elements.modeText.textContent = elements.streamMode.checked ? "SSE 流式" : "同步 JSON";
     updateLiveConnection();
@@ -99,9 +171,122 @@ function updateModeText() {
 
 function updateConversationView() {
     const value = elements.conversationId.value.trim();
+    if (state.activeConversationId !== value) {
+        state.progressQuery++;
+        elements.followUpCard.hidden = true;
+        elements.followUpInboxBtn.hidden = true;
+        elements.refreshFollowUpBtn.disabled = false;
+    }
     state.activeConversationId = value;
     elements.activeConversationText.textContent = value || "未创建";
     highlightActiveConversation();
+}
+
+async function loadPatientSession() {
+    try {
+        const response = await fetch("/api/patient/session");
+        if (!response.ok) {
+            return;
+        }
+        const { customerId } = await response.json();
+        if (customerId) {
+            state.patientId = customerId;
+            elements.customerId.value = customerId;
+            elements.customerId.readOnly = true;
+            elements.inboxBtn.hidden = false;
+            void maybeLoadConversations();
+            void refreshFollowUpProgress();
+        }
+    } catch (error) {
+        appendTrace("患者身份", error.message);
+    }
+}
+
+async function refreshFollowUpProgress() {
+    const conversation = state.activeConversationId;
+    if (!state.patientId || !conversation) {
+        return;
+    }
+    const query = ++state.progressQuery;
+    elements.refreshFollowUpBtn.disabled = true;
+    try {
+        const response = await fetch(`/api/patient/follow-up-progress?conversationId=${encodeURIComponent(conversation)}`);
+        if (!response.ok) {
+            throw await responseError(response, "暂时无法查询随访进度");
+        }
+        const progress = await response.json();
+        if (query === state.progressQuery) {
+            showFollowUpProgress(progress);
+        }
+    } catch (error) {
+        if (query === state.progressQuery) {
+            elements.followUpCard.hidden = false;
+            elements.followUpStatus.textContent = error.message;
+            elements.followUpInboxBtn.hidden = true;
+        }
+    } finally {
+        if (query === state.progressQuery) {
+            elements.refreshFollowUpBtn.disabled = false;
+        }
+    }
+}
+
+function showFollowUpProgress(progress) {
+    const delivered = progress.status === "APPROVED" && progress.delivered;
+    const labels = {
+        PENDING: "已登记，等待责任医生复核。",
+        APPROVED: delivered ? "医生已批准，提醒已投递至站内收件箱。" : "医生已批准，尚未查到投递记录。",
+        REJECTED: "医生已完成复核，本次未发送提醒。",
+        EXPIRED: "复核任务已过期。"
+    };
+    elements.followUpCard.hidden = progress.status === "NONE";
+    elements.followUpInboxBtn.hidden = !delivered;
+    elements.followUpStatus.textContent = labels[progress.status] || "暂时无法确认随访进度。";
+}
+
+async function loadInbox(beforeId = "") {
+    const query = ++state.inboxQuery;
+    if (!beforeId) {
+        elements.inboxList.innerHTML = "";
+        state.inboxCursor = "";
+        elements.moreInboxBtn.hidden = true;
+    }
+    elements.inboxStatus.textContent = "正在加载站内提醒…";
+    elements.refreshInboxBtn.disabled = true;
+    elements.moreInboxBtn.disabled = true;
+    try {
+        const queryString = beforeId ? `?beforeId=${encodeURIComponent(beforeId)}` : "";
+        const response = await fetch(`/api/patient/follow-up-reminders${queryString}`);
+        if (!response.ok) {
+            throw await responseError(response, "暂时无法加载站内提醒");
+        }
+        const reminders = await response.json();
+        if (query !== state.inboxQuery) {
+            return;
+        }
+        for (const reminder of reminders) {
+            const row = document.createElement("li");
+            const message = document.createElement("p");
+            message.textContent = reminder.message;
+            const time = document.createElement("time");
+            time.dateTime = reminder.deliveredAt;
+            time.textContent = formatDateTime(reminder.deliveredAt);
+            row.append(message, time);
+            elements.inboxList.appendChild(row);
+        }
+        state.inboxCursor = reminders.length === 50 ? reminders.at(-1).receiptId : "";
+        elements.moreInboxBtn.hidden = !state.inboxCursor;
+        elements.inboxStatus.textContent = elements.inboxList.childElementCount ? "" : "暂无已投递的站内提醒。";
+    } catch (error) {
+        if (query === state.inboxQuery) {
+            elements.inboxStatus.textContent = error.message;
+        }
+    } finally {
+        if (query === state.inboxQuery) {
+            elements.refreshInboxBtn.disabled = false;
+            elements.moreInboxBtn.disabled = false;
+        }
+    }
 }
 
 function updateTokenUsage(tokenUsage) {
@@ -131,10 +316,13 @@ async function pingHealth() {
 
 async function maybeLoadConversations() {
     const customerId = elements.customerId.value.trim();
+    elements.historySettingsBtn.hidden = Boolean(customerId);
     if (!customerId) {
-        state.conversations = [];
+        state.conversations = Array.from(state.visitorConversations.values()).reverse();
         renderConversationList();
-        setHistoryStatus("访客可直接开始对话。会话历史仅向登录患者开放。");
+        setHistoryStatus(state.conversations.length
+            ? "访客历史保留在当前页面。"
+            : "访客可直接开始对话。访客历史保留在当前页面。");
         return;
     }
 
@@ -198,6 +386,7 @@ async function handleSend() {
     }
 
     const isStream = elements.streamMode.checked;
+    state.historySelection++;
     setBusy(true);
     try {
         elements.messageInput.value = "";
@@ -234,7 +423,9 @@ async function sendRegularMessage(payload) {
         }
 
         applyConversationId(data.conversationId);
-        addMessage("assistant", "AI", data.message || "");
+        const assistant = addMessage("assistant", "AI", data.message || "");
+        handleFollowUpResponse(payload, data.followUp, assistant);
+        rememberVisitorRound(payload, data.message || "");
         renderRecommendations(data.recommendations || []);
         updateAgentStatus("已完成", "普通响应完成");
         updateLiveConnection("complete");
@@ -285,12 +476,15 @@ async function sendStreamMessage(payload) {
             cancelAnimationFrame(state.assistantRenderFrame);
             renderActiveAssistantContent();
         }
+        if (state.activeAssistantMarkdown || state.connectionStatus === "complete") {
+            rememberVisitorRound(payload, state.activeAssistantMarkdown);
+        }
+        handleFollowUpResponse(payload, state.activeFollowUp, state.activeAssistantMessage);
         state.abortController = null;
         state.activeAssistantMessage = null;
         state.activeAssistantMarkdown = "";
-        if (elements.customerId.value.trim()) {
-            void maybeLoadConversations();
-        }
+        state.activeFollowUp = null;
+        void maybeLoadConversations();
     }
 }
 
@@ -367,6 +561,9 @@ function handleStreamEvent(event) {
             appendTrace("SSE", `START · conversationId=${event.conversationId || "-"}`);
             break;
         case "CONTENT":
+            if (event.followUp) {
+                state.activeFollowUp = event.followUp;
+            }
             appendAssistantContent(event.content || "");
             break;
         case "STATUS":
@@ -432,6 +629,79 @@ function renderAssistantMarkdown(contentNode, source) {
         return;
     }
     contentNode.innerHTML = chatMarkdown.render(repairSplitBold(source));
+}
+
+function handleFollowUpResponse(payload, followUp, assistant) {
+    if (!followUp || !state.patientId) {
+        return;
+    }
+    if (followUp.status === "UNCONFIRMED" && followUp.turnKey && state.activeConversationId) {
+        const retry = {
+            turnKey: followUp.turnKey,
+            payload: { ...payload, customerId: state.patientId, conversationId: state.activeConversationId }
+        };
+        state.followUpRetries.set(retry.turnKey, retry);
+        attachFollowUpRetry(assistant, retry);
+    }
+    void refreshFollowUpProgress();
+}
+
+function attachFollowUpRetry(assistant, retry) {
+    const actions = document.createElement("div");
+    actions.className = "follow-up-actions";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "text-btn follow-up-retry";
+    button.textContent = "重试登记";
+    button.disabled = state.isBusy;
+    const feedback = document.createElement("span");
+    feedback.role = "status";
+    actions.append(button, feedback);
+    assistant.querySelector(".message-body").append(actions);
+    button.addEventListener("click", () => retryFollowUpRegistration(retry, assistant, button, feedback));
+}
+
+async function retryFollowUpRegistration(retry, assistant, button, feedback) {
+    const { payload, turnKey } = retry;
+    if (state.isBusy || payload.customerId !== state.patientId || payload.conversationId !== state.activeConversationId) {
+        return;
+    }
+    const previousStatus = state.connectionStatus;
+    setBusy(true);
+    elements.stopBtn.disabled = true;
+    elements.clearChatBtn.disabled = true;
+    updateLiveConnection("sync");
+    feedback.textContent = "正在重试登记…";
+    try {
+        const response = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        });
+        if (!response.ok) {
+            throw await responseError(response, "重试登记失败");
+        }
+        const data = await response.json();
+        if (!data.success || data.conversationId !== payload.conversationId || data.followUp?.turnKey !== turnKey) {
+            throw new Error("未能核实本轮登记结果，请稍后再试。");
+        }
+        if (data.followUp.status === "UNCONFIRMED") {
+            feedback.textContent = "仍未确认登记，可稍后再试。";
+        } else {
+            renderAssistantMarkdown(assistant.querySelector(".message-content"), data.message || "");
+            state.followUpRetries.delete(turnKey);
+            button.hidden = true;
+            feedback.textContent = "本轮登记结果已更新。";
+            void maybeLoadConversations();
+        }
+        void refreshFollowUpProgress();
+    } catch (error) {
+        feedback.textContent = error.message;
+    } finally {
+        state.connectionStatus = previousStatus;
+        elements.clearChatBtn.disabled = false;
+        setBusy(false);
+    }
 }
 
 function repairSplitBold(source) {
@@ -584,8 +854,33 @@ function renderRecommendations(recommendations) {
     maybeScroll();
 }
 
+function startNewChat() {
+    if (state.isBusy) {
+        return;
+    }
+    state.historySelection++;
+    elements.conversationId.value = "";
+    updateConversationView();
+    elements.messageInput.value = "";
+    resetChatView();
+    if (elements.historyDialog.open) {
+        elements.historyDialog.close();
+    }
+    elements.messageInput.focus();
+    appendTrace("系统", "已开始新对话，发送后创建会话。");
+    void maybeLoadConversations();
+}
+
 function clearChat() {
+    if (state.isBusy && !state.abortController) {
+        return;
+    }
     stopStreaming();
+    resetChatView();
+    appendTrace("系统", "对话区域已清空。");
+}
+
+function resetChatView() {
     elements.messageList.innerHTML = "";
     elements.messageList.hidden = true;
     elements.emptyState.hidden = false;
@@ -594,7 +889,28 @@ function clearChat() {
     updateAgentStatus("未触发", "空闲");
     syncMessageCount();
     updateLiveConnection("idle");
-    appendTrace("系统", "对话区域已清空。");
+}
+
+function rememberVisitorRound(payload, reply) {
+    const conversationId = state.activeConversationId;
+    if (payload.customerId || !conversationId) {
+        return;
+    }
+
+    const conversation = state.visitorConversations.get(conversationId) || {
+        conversationId,
+        messages: []
+    };
+    const timestamp = Date.now();
+    conversation.messages.push({ role: "user", content: payload.message, timestamp });
+    if (reply) {
+        conversation.messages.push({ role: "assistant", content: reply, timestamp });
+    }
+    conversation.latestUserMessage = payload.message;
+    conversation.latestAiResponse = reply;
+    conversation.latestMessageTime = timestamp;
+    state.visitorConversations.delete(conversationId);
+    state.visitorConversations.set(conversationId, conversation);
 }
 
 function renderConversationList() {
@@ -604,14 +920,15 @@ function renderConversationList() {
         const button = document.createElement("button");
         button.type = "button";
         button.className = "conversation-item";
+        button.disabled = state.isBusy;
         button.dataset.conversationId = conversation.conversationId || "";
         button.innerHTML = `
-            <div class="conversation-item-top">
-                <span>${escapeHtml(conversation.conversationId || "未命名会话")}</span>
-                <span>${escapeHtml(formatDateTime(conversation.latestMessageTime))}</span>
-            </div>
             <p class="conversation-item-title">${escapeHtml(conversation.latestUserMessage || "无用户消息")}</p>
-            <div class="conversation-item-preview">最近回复：${escapeHtml(conversation.latestAiResponse || "暂无 AI 回复")}</div>
+            <div class="conversation-item-preview">${escapeHtml(conversation.latestAiResponse || "暂无 AI 回复")}</div>
+            <div class="conversation-item-top">
+                <span>${escapeHtml(formatDateTime(conversation.latestMessageTime))}</span>
+                <span>${escapeHtml(conversation.conversationId || "未命名会话")}</span>
+            </div>
         `;
         button.addEventListener("click", () => loadConversationHistory(conversation.conversationId));
         elements.conversationList.appendChild(button);
@@ -623,44 +940,62 @@ function renderConversationList() {
 function highlightActiveConversation() {
     const activeId = state.activeConversationId;
     elements.conversationList.querySelectorAll(".conversation-item").forEach((item) => {
-        item.classList.toggle("active", !!activeId && item.dataset.conversationId === activeId);
+        const active = !!activeId && item.dataset.conversationId === activeId;
+        item.classList.toggle("active", active);
+        item.ariaCurrent = active ? "true" : null;
     });
 }
 
 async function loadConversationHistory(conversationId) {
     const customerId = elements.customerId.value.trim();
-    if (!customerId || !conversationId) {
+    if (state.isBusy || !conversationId) {
         return;
     }
 
+    const selection = ++state.historySelection;
+    const fromDrawer = elements.historyDialog.open;
     setHistoryStatus(`正在加载会话 ${conversationId} ...`);
     try {
-        const response = await fetch(
-            `/api/chat/conversations/${encodeURIComponent(conversationId)}/messages?customerId=${encodeURIComponent(customerId)}`
-        );
-        if (!response.ok) {
-            throw await responseError(response, "会话历史加载失败");
+        const data = customerId
+            ? await fetchConversationHistory(conversationId, customerId)
+            : state.visitorConversations.get(conversationId);
+        if (selection !== state.historySelection || customerId !== elements.customerId.value.trim()) {
+            return;
         }
-        const data = await response.json();
-        if (customerId !== elements.customerId.value.trim()) {
+        if (!data) {
+            setHistoryStatus("这条访客会话已不在当前页面的历史中。");
             return;
         }
 
         applyConversationId(data.conversationId);
         renderConversationMessages(data.messages || []);
-        setHistoryStatus(`已加载 ${data.rounds ?? 0} 轮历史会话。`);
+        void refreshFollowUpProgress();
+        setHistoryStatus(customerId
+            ? `已加载 ${data.rounds ?? 0} 轮历史会话。`
+            : "访客历史保留在当前页面。");
         appendTrace("历史", `会话已切换到 ${conversationId}`);
-        if (elements.autoScroll.checked) {
-            elements.chatTitle.focus();
+        if (fromDrawer && elements.historyDialog.open) {
+            elements.historyDialog.close();
+            elements.chatTitle.focus({ preventScroll: true });
         }
     } catch (error) {
-        if (customerId !== elements.customerId.value.trim()) {
+        if (selection !== state.historySelection || customerId !== elements.customerId.value.trim()) {
             return;
         }
         setHistoryStatus(`加载失败: ${error.message}`);
         addMessage("error", "系统", error.message);
         appendTrace("历史", `会话历史加载失败: ${error.message}`);
     }
+}
+
+async function fetchConversationHistory(conversationId, customerId) {
+    const response = await fetch(
+        `/api/chat/conversations/${encodeURIComponent(conversationId)}/messages?customerId=${encodeURIComponent(customerId)}`
+    );
+    if (!response.ok) {
+        throw await responseError(response, "会话历史加载失败");
+    }
+    return response.json();
 }
 
 function renderConversationMessages(messages) {
@@ -677,9 +1012,14 @@ function renderConversationMessages(messages) {
     messages.forEach((message) => {
         const kind = message.role === "USER" || message.role === "user" ? "user" : "assistant";
         const roleLabel = kind === "user" ? "你" : "AI";
-        addMessage(kind, roleLabel, message.content || "", {
+        const item = addMessage(kind, roleLabel, message.content || "", {
             meta: formatDateTime(message.timestamp)
         });
+        const retry = state.followUpRetries.get(message.followUpTurnKey);
+        if (kind === "assistant" && retry && !message.followUpConfirmed
+                && retry.payload.customerId === state.patientId && retry.payload.conversationId === state.activeConversationId) {
+            attachFollowUpRetry(item, retry);
+        }
     });
     syncMessageCount();
     maybeScroll();
@@ -688,10 +1028,18 @@ function renderConversationMessages(messages) {
 function setBusy(isBusy) {
     state.isBusy = isBusy;
     elements.sendBtn.disabled = isBusy;
+    elements.newChatBtn.disabled = isBusy;
+    elements.clearChatBtn.disabled = isBusy && !elements.streamMode.checked;
     elements.stopBtn.disabled = !isBusy || !elements.streamMode.checked;
     elements.customerId.disabled = isBusy;
     elements.conversationId.disabled = isBusy;
     elements.streamMode.disabled = isBusy;
+    elements.conversationList.querySelectorAll(".conversation-item").forEach(item => {
+        item.disabled = isBusy;
+    });
+    elements.messageList.querySelectorAll(".follow-up-retry").forEach(button => {
+        button.disabled = isBusy;
+    });
     updateLiveConnection();
 }
 

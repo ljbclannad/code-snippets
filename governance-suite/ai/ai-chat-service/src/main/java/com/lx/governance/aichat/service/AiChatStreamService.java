@@ -98,10 +98,10 @@ public class AiChatStreamService {
             String sessionId = highRiskFollowUp.conversationId(request);
             StreamResponseAccumulator accumulator = new StreamResponseAccumulator();
             return Flux.concat(Flux.just(StreamEvent.start(sessionId)),
-                    Mono.fromCallable(() -> StreamEvent.content(highRiskFollowUp.reply(request)))
+                    Mono.fromCallable(() -> followUpContent(highRiskFollowUp.reply(request)))
                             .subscribeOn(Schedulers.boundedElastic())
                             .onErrorResume(RejectedExecutionException.class,
-                                    ex -> Mono.just(StreamEvent.content(highRiskFollowUp.unavailable(request)))),
+                                    ex -> Mono.just(followUpContent(highRiskFollowUp.unavailable(request)))),
                     Flux.just(StreamEvent.done(sessionId, null)))
                     .doOnNext(event -> {
                         accumulator.accumulate(event);
@@ -180,6 +180,12 @@ public class AiChatStreamService {
                             1000
                     ));
                 });
+    }
+
+    private static StreamEvent followUpContent(HighRiskFollowUpChat.Result result) {
+        StreamEvent event = StreamEvent.content(result.message());
+        event.setFollowUp(result.followUp());
+        return event;
     }
 
     /**

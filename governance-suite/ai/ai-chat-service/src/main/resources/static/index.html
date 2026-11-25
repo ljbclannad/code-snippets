@@ -5,35 +5,53 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>医疗对话工作台</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="stylesheet" href="/app.css">
 </head>
 
 <body>
-    <header id="top" class="topbar">
+    <header id="topbar" class="topbar">
         <div class="topbar-inner">
-            <a class="brand" href="#top">
+            <h1 class="brand">
                 <span class="chat-mark" aria-hidden="true"><span></span></span>
-                医疗对话台
-            </a>
-            <nav class="topbar-nav" aria-label="工作台导航">
-                <a href="#chatTitle">对话</a>
-                <a href="#settings">会话参数</a>
-                <a href="#history">会话历史</a>
-                <a href="#debug">调试状态</a>
-            </nav>
+                医疗对话工作台
+            </h1>
             <span id="healthBadge" class="badge pending" role="status">检测中</span>
+            <div class="topbar-actions" role="group" aria-label="工作台工具">
+                <button class="toolbar-btn history-trigger" type="button" data-open-dialog="historyDialog" aria-haspopup="dialog">会话历史</button>
+                <button id="inboxBtn" class="toolbar-btn" type="button" data-open-dialog="inboxDialog" aria-haspopup="dialog" hidden>站内提醒</button>
+                <button class="toolbar-btn" type="button" data-open-dialog="settingsDialog" aria-haspopup="dialog">会话参数</button>
+                <button class="toolbar-btn" type="button" data-open-dialog="debugDialog" aria-haspopup="dialog">调试状态</button>
+            </div>
         </div>
     </header>
 
-    <main class="workspace">
-        <section class="hero" aria-labelledby="pageTitle">
-            <h1 id="pageTitle">医疗对话工作台</h1>
-            <p>体验连续问答，验证患者画像、长期记忆和 Agent 调用。</p>
-        </section>
+    <main id="workspace" class="workspace">
+        <div id="historySlot" class="history-slot">
+            <aside id="historyPanel" class="history-panel" aria-labelledby="historyTitle">
+                <header class="panel-header">
+                    <h2 id="historyTitle">会话历史</h2>
+                    <div class="action-group">
+                        <button id="refreshHistoryBtn" class="text-btn" type="button">刷新</button>
+                        <form class="history-close" method="dialog">
+                            <button class="text-btn" type="submit">关闭</button>
+                        </form>
+                    </div>
+                </header>
+                <button id="newChatBtn" class="primary-btn new-chat-btn" type="button">
+                    <span class="new-chat-icon" aria-hidden="true"></span>新建对话
+                </button>
+                <div class="history-summary">
+                    <p id="historyStatus" class="history-status" role="status">访客可直接开始对话。访客历史保留在当前页面。</p>
+                    <button id="historySettingsBtn" class="history-settings" type="button" data-open-dialog="settingsDialog" aria-haspopup="dialog">填写患者 ID</button>
+                </div>
+                <div id="conversationList" class="conversation-list"></div>
+            </aside>
+        </div>
 
         <section id="chatViewport" class="chat-viewport" aria-labelledby="chatTitle">
             <header class="viewport-head">
-                <div class="assistant">
+                <div class="assistant-heading">
                     <span class="chat-mark" aria-hidden="true"><span></span></span>
                     <div>
                         <h2 id="chatTitle" tabindex="-1">医疗助手</h2>
@@ -43,17 +61,32 @@
                     </div>
                 </div>
                 <div class="viewport-stats">
-                    <span>消息 <strong id="messageCountText">0</strong></span>
-                    <a href="#settings" id="modeText" class="mode-link">SSE 流式</a>
+                    <span class="message-count">消息 <strong id="messageCountText">0</strong></span>
+                    <button id="modeText" class="mode-link" type="button" data-open-dialog="settingsDialog" aria-haspopup="dialog">SSE 流式</button>
+                    <button id="expandChatBtn" class="toolbar-btn expand-btn" type="button">
+                        <span class="expand-icon" aria-hidden="true"></span>
+                        <span id="expandChatText">放大对话</span>
+                    </button>
                 </div>
             </header>
 
+            <section id="followUpCard" class="follow-up-card" aria-labelledby="followUpTitle" hidden>
+                <div>
+                    <h3 id="followUpTitle">本会话最近一条随访</h3>
+                    <p id="followUpStatus" role="status"></p>
+                </div>
+                <div class="action-group">
+                    <button id="refreshFollowUpBtn" class="text-btn" type="button">刷新进度</button>
+                    <button id="followUpInboxBtn" class="toolbar-btn" type="button" data-open-dialog="inboxDialog" aria-haspopup="dialog" hidden>查看提醒</button>
+                </div>
+            </section>
+
             <div class="chat-body">
                 <div id="emptyState" class="empty-state">
-                    <span class="chat-mark" aria-hidden="true"><span></span></span>
                     <div class="welcome">
-                        <h3>你好，想聊些什么？</h3>
-                        <p>输入你的问题，或选一个示例开始对话。</p>
+                        <span class="chat-mark" aria-hidden="true"><span></span></span>
+                        <h3>今天想聊些什么？</h3>
+                        <p>描述你的健康问题，或选一个示例开始对话。</p>
                         <div class="quick-prompts" role="group" aria-label="示例问题">
                             <button class="chip" type="button" data-prompt="我最近总是睡不好，应该怎么调整作息？">睡眠建议</button>
                             <button class="chip" type="button" data-prompt="结合我之前的情况，晚饭怎么吃比较合适？">饮食建议</button>
@@ -81,71 +114,87 @@
                 </div>
             </div>
         </section>
-
-        <div class="support-grid">
-            <section id="settings" class="tool-panel config-panel" aria-labelledby="settingsTitle" tabindex="-1">
-                <div class="panel-header">
-                    <h2 id="settingsTitle">会话参数</h2>
-                </div>
-                <label class="field">
-                    <span>患者 ID <small>选填</small></span>
-                    <input id="customerId" type="text" placeholder="访客请留空" autocomplete="off">
-                </label>
-                <label class="field">
-                    <span>会话 ID</span>
-                    <input id="conversationId" type="text" placeholder="留空则由服务端创建">
-                </label>
-                <div class="field-row">
-                    <label class="toggle">
-                        <input id="streamMode" type="checkbox" checked>
-                        <span>流式模式</span>
-                    </label>
-                    <label class="toggle">
-                        <input id="autoScroll" type="checkbox" checked>
-                        <span>自动滚动</span>
-                    </label>
-                </div>
-            </section>
-
-            <section id="history" class="tool-panel history-panel" aria-labelledby="historyTitle" tabindex="-1">
-                <div class="panel-header">
-                    <h2 id="historyTitle">会话历史</h2>
-                    <button id="refreshHistoryBtn" class="text-btn" type="button">刷新</button>
-                </div>
-                <p id="historyStatus" class="history-status" role="status">访客可直接开始对话。会话历史仅向登录患者开放。</p>
-                <div id="conversationList" class="conversation-list"></div>
-            </section>
-
-            <section id="debug" class="tool-panel trace-panel" aria-labelledby="debugTitle" tabindex="-1">
-                <div class="panel-header">
-                    <h2 id="debugTitle">调试状态</h2>
-                </div>
-                <dl class="status-list">
-                    <div>
-                        <dt>当前会话</dt>
-                        <dd id="activeConversationText">未创建</dd>
-                    </div>
-                    <div>
-                        <dt>Token 统计</dt>
-                        <dd id="tokenUsageText">暂无</dd>
-                    </div>
-                    <div>
-                        <dt>当前 Agent</dt>
-                        <dd id="activeAgentText">未触发</dd>
-                    </div>
-                    <div>
-                        <dt>当前阶段</dt>
-                        <dd id="activeStageText">空闲</dd>
-                    </div>
-                </dl>
-                <div class="trace-header">
-                    <h3>日志 <span id="traceCountText">0</span></h3>
-                    <button id="clearTraceBtn" class="text-btn" type="button">清空日志</button>
-                </div>
-                <div id="traceLog" class="trace-log" role="region" aria-label="调试日志" tabindex="0"></div>
-            </section>
-        </div>
     </main>
+
+    <dialog id="historyDialog" class="side-sheet history-sheet" aria-labelledby="historyTitle"></dialog>
+
+    <dialog id="inboxDialog" class="side-sheet" aria-labelledby="inboxTitle">
+        <header class="panel-header sheet-header">
+            <h2 id="inboxTitle">站内提醒</h2>
+            <form method="dialog"><button class="text-btn" type="submit">关闭</button></form>
+        </header>
+        <div class="sheet-body">
+            <p id="inboxStatus" class="history-status" role="status"></p>
+            <ul id="inboxList" class="inbox-list"></ul>
+            <div class="action-group">
+                <button id="refreshInboxBtn" class="text-btn" type="button">刷新提醒</button>
+                <button id="moreInboxBtn" class="toolbar-btn" type="button" hidden>加载更多</button>
+            </div>
+        </div>
+    </dialog>
+
+    <dialog id="settingsDialog" class="side-sheet" aria-labelledby="settingsTitle">
+        <header class="panel-header sheet-header">
+            <h2 id="settingsTitle" tabindex="-1" autofocus>会话参数</h2>
+            <form method="dialog">
+                <button class="text-btn" type="submit">关闭</button>
+            </form>
+        </header>
+        <div class="sheet-body">
+            <label class="field">
+                <span>患者 ID <small>选填</small></span>
+                <input id="customerId" type="text" placeholder="访客请留空" autocomplete="off">
+            </label>
+            <label class="field">
+                <span>会话 ID</span>
+                <input id="conversationId" type="text" placeholder="留空则由服务端创建">
+            </label>
+            <div class="field-row">
+                <label class="toggle">
+                    <input id="streamMode" type="checkbox" checked>
+                    <span>流式模式</span>
+                </label>
+                <label class="toggle">
+                    <input id="autoScroll" type="checkbox" checked>
+                    <span>自动滚动</span>
+                </label>
+            </div>
+        </div>
+    </dialog>
+
+    <dialog id="debugDialog" class="side-sheet" aria-labelledby="debugTitle">
+        <header class="panel-header sheet-header">
+            <h2 id="debugTitle">调试状态</h2>
+            <form method="dialog">
+                <button class="text-btn" type="submit">关闭</button>
+            </form>
+        </header>
+        <div class="sheet-body">
+            <dl class="status-list">
+                <div>
+                    <dt>当前会话</dt>
+                    <dd id="activeConversationText">未创建</dd>
+                </div>
+                <div>
+                    <dt>Token 统计</dt>
+                    <dd id="tokenUsageText">暂无</dd>
+                </div>
+                <div>
+                    <dt>当前 Agent</dt>
+                    <dd id="activeAgentText">未触发</dd>
+                </div>
+                <div>
+                    <dt>当前阶段</dt>
+                    <dd id="activeStageText">空闲</dd>
+                </div>
+            </dl>
+            <div class="trace-header">
+                <h3>日志 <span id="traceCountText">0</span></h3>
+                <button id="clearTraceBtn" class="text-btn" type="button">清空日志</button>
+            </div>
+            <div id="traceLog" class="trace-log" role="region" aria-label="调试日志" tabindex="0"></div>
+        </div>
+    </dialog>
 
     <script src="/vendor/markdown-it-15.0.3.min.js"></script>
     <script src="/app.js"></script>

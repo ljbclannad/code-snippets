@@ -17,7 +17,19 @@ class TestElement {
     textContent = "";
     value = "";
     children = [];
-    classList = { toggle() {} };
+    classList = {
+        toggle: (name, force) => {
+            const classes = new Set(this.className.split(/\s+/).filter(Boolean));
+            const active = force ?? !classes.has(name);
+            if (active) {
+                classes.add(name);
+            } else {
+                classes.delete(name);
+            }
+            this.className = [...classes].join(" ");
+            return active;
+        }
+    };
     dataset = {};
     listeners = {};
     markup = "";
@@ -34,6 +46,7 @@ class TestElement {
     appendChild(child) { this.append(child); }
     addEventListener(name, listener) { this.listeners[name] = listener; }
     fire(name, event) { return this.listeners[name](event); }
+    focus() { this.focused = true; }
     scrollIntoView() { assert.fail("自动滚动只能更新消息列表的滚动位置"); }
 
     querySelectorAll(selector) {
@@ -49,7 +62,7 @@ class TestElement {
     }
 }
 
-function openConsole(respond) {
+function openConsole(respond, patientId = "") {
     const controls = {};
     const requests = [];
     for (const [, tag, id] of html.matchAll(/<([^>]*\bid="([^"]+)"[^>]*)>/g)) {
@@ -73,6 +86,7 @@ function openConsole(respond) {
         cancelAnimationFrame: clearImmediate,
         fetch: async (path, options = {}) => {
             if (path === "/api/chat/health") return new Response("OK");
+            if (path === "/api/patient/session") return Response.json(patientId ? { customerId: patientId } : {});
             requests.push({ path, ...options });
             return respond(path, options);
         }
@@ -107,6 +121,39 @@ function chunkedStream(wire, { open = false, cancel } = {}) {
         },
         cancel
     }));
+}
+
+for (const fails of [false, true]) {
+    test(`同步请求${fails ? "失败" : "成功"}前禁止清空，结束后恢复清空`, async () => {
+        let settle;
+        const response = new Promise((resolve, reject) => {
+            settle = () => fails ? reject(new Error("模拟网络故障")) : resolve(Response.json({
+                success: true, message: "完整回复", conversationId: "pending-session"
+            }));
+        });
+        const page = openConsole(() => response);
+        page.controls.streamMode.checked = false;
+        const sending = page.send("等待中的提问");
+
+        assert.equal(page.controls.clearChatBtn.disabled, true);
+        // 即使直接触发处理函数，也不能清除仍在等待回复的提问。
+        page.controls.clearChatBtn.fire("click");
+        assert.equal(page.message("user").textContent, "等待中的提问");
+        settle();
+        await sending;
+
+        assert.equal(page.controls.messageList.childElementCount, 2);
+        assert.equal(page.controls.clearChatBtn.disabled, false);
+        assert.equal(page.controls.sendBtn.disabled, false);
+        if (fails) {
+            assert.match(page.message("error").textContent, /模拟网络故障/);
+        } else {
+            assert.equal(page.message("assistant").innerHTML, "<p>完整回复</p>\n");
+        }
+        page.controls.clearChatBtn.fire("click");
+        assert.equal(page.controls.messageList.childElementCount, 0);
+        assert.equal(page.controls.emptyState.hidden, false);
+    });
 }
 
 test("访客可使用普通与流式入口，后续消息沿用会话", async () => {
@@ -221,6 +268,27 @@ test("手动停止流式输出后可继续发送", { timeout: 3000 }, async () =
     assert.equal(page.message("assistant").innerHTML, "<p>下轮回复</p>\n");
 });
 
+test("流式等待期间仍可清空，并停止客户端接收", { timeout: 3000 }, async () => {
+    let requestSignal;
+    const page = openConsole((path, { signal }) => {
+        requestSignal = signal;
+        return new Response(new ReadableStream({
+            start(controller) {
+                signal.addEventListener("abort", () => controller.error(signal.reason), { once: true });
+            }
+        }));
+    });
+    const pending = page.send("流式清空测试");
+    await Promise.resolve();
+    assert.equal(page.controls.clearChatBtn.disabled, false);
+    page.controls.clearChatBtn.fire("click");
+    await pending;
+    assert.equal(requestSignal.aborted, true);
+    assert.equal(page.controls.messageList.childElementCount, 0);
+    assert.equal(page.controls.emptyState.hidden, false);
+    assert.equal(page.controls.sendBtn.disabled, false);
+});
+
 test("请求未结束时快捷键无法重复发送，也保留输入草稿", async () => {
     let complete;
     const page = openConsole(() => new Promise(resolve => { complete = resolve; }));
@@ -313,4 +381,169 @@ test("历史会话沿用助手 Markdown 渲染", async () => {
     await page.controls.conversationList.children[0].fire("click");
 
     assert.match(page.message("assistant").innerHTML, /<strong>历史<\/strong><\/p>\s*<ul>\s*<li>一项<\/li>/);
+});
+
+test("放大和退出放大保留对话、会话 ID 与输入草稿", async () => {
+    const page = openConsole(() => Response.json({ success: true, conversationId: "active", message: "已有回复" }));
+    const { workspace, topbar, expandChatBtn, expandChatText, streamMode, messageInput, conversationId } = page.controls;
+    streamMode.checked = false;
+    await page.send("第一轮");
+    messageInput.value = "下一条草稿";
+
+    expandChatBtn.fire("click");
+    assert.equal(topbar.hidden, true);
+    assert.match(workspace.className, /is-expanded/);
+    assert.equal(expandChatText.textContent, "退出放大");
+
+    workspace.fire("keydown", { key: "Escape" });
+    assert.equal(topbar.hidden, false);
+    assert.doesNotMatch(workspace.className, /is-expanded/);
+    assert.equal(expandChatBtn.focused, true);
+    assert.equal(messageInput.value, "下一条草稿");
+    assert.equal(conversationId.value, "active");
+    assert.equal(page.message("assistant").innerHTML, "<p>已有回复</p>\n");
+});
+
+test("回复期间会话历史保持可查看，暂缓切换当前会话", async () => {
+    let complete;
+    const page = openConsole(path => path === "/api/chat"
+        ? new Promise(resolve => { complete = resolve; })
+        : Response.json([{ conversationId: "history" }]));
+    const { customerId, conversationList, streamMode, newChatBtn } = page.controls;
+    customerId.value = "patient-demo";
+    await customerId.fire("change");
+    streamMode.checked = false;
+
+    const pending = page.send("当前消息");
+    const historyButton = conversationList.children[0];
+    assert.equal(historyButton.disabled, true);
+    assert.equal(newChatBtn.disabled, true);
+    await historyButton.fire("click");
+    assert.equal(page.requests.some(request => request.path.includes("/messages")), false);
+
+    complete(Response.json({ success: true, message: "完成" }));
+    await pending;
+    assert.equal(conversationList.children[0].disabled, false);
+    assert.equal(newChatBtn.disabled, false);
+});
+
+test("访客新建对话后获取新会话 ID，并可切回旧对话继续发送", async () => {
+    const page = openConsole((path, options) => {
+        const payload = JSON.parse(options.body);
+        if (path === "/api/chat/stream") {
+            return chunkedStream(sse({ type: "START", conversationId: "visitor-new" })
+                + sse({ type: "CONTENT", content: "**新回复**" })
+                + sse({ type: "DONE", conversationId: "visitor-new" }));
+        }
+        return Response.json({ success: true, conversationId: payload.conversationId || "visitor-old", message: "**旧回复**" });
+    });
+    const { conversationId, conversationList, emptyState, messageInput, messageCountText, newChatBtn, streamMode } = page.controls;
+    streamMode.checked = false;
+    await page.send("第一条");
+    assert.equal(conversationId.value, "visitor-old");
+    assert.equal(conversationList.children[0].ariaCurrent, "true");
+
+    messageInput.value = "上一轮的草稿";
+    newChatBtn.fire("click");
+    assert.equal(conversationId.value, "");
+    assert.equal(emptyState.hidden, false);
+    assert.equal(messageCountText.textContent, "0");
+    assert.equal(messageInput.value, "");
+    assert.equal(messageInput.focused, true);
+    assert.equal(conversationList.children[0].dataset.conversationId, "visitor-old");
+
+    streamMode.checked = true;
+    await page.send("第二条");
+    assert.equal(conversationId.value, "visitor-new");
+    assert.deepEqual(conversationList.children.map(item => item.dataset.conversationId), ["visitor-new", "visitor-old"]);
+
+    await conversationList.children[1].fire("click");
+    assert.equal(conversationId.value, "visitor-old");
+    assert.equal(page.message("assistant").innerHTML, "<p><strong>旧回复</strong></p>\n");
+    streamMode.checked = false;
+    await page.send("继续旧对话");
+
+    assert.deepEqual(page.requests.map(request => request.path), ["/api/chat", "/api/chat/stream", "/api/chat"]);
+    const [first, second, resumed] = page.requests.map(request => JSON.parse(request.body));
+    assert.equal(Object.hasOwn(first, "conversationId"), false);
+    assert.equal(Object.hasOwn(second, "conversationId"), false);
+    assert.equal(resumed.conversationId, "visitor-old");
+});
+
+test("新建对话后忽略之前的历史加载结果，仍可重新选择旧会话", async () => {
+    let resolveHistory;
+    const oldConversation = {
+        conversationId: "patient-old",
+        rounds: 1,
+        messages: [{ role: "assistant", content: "已保存的回复" }]
+    };
+    const page = openConsole(path => {
+        if (path.includes("/messages")) {
+            if (!resolveHistory) {
+                return new Promise(resolve => { resolveHistory = resolve; });
+            }
+            return Response.json(oldConversation);
+        }
+        return Response.json([{ conversationId: "patient-old" }]);
+    });
+    const { customerId, conversationId, conversationList, newChatBtn } = page.controls;
+    customerId.value = "patient-demo";
+    await customerId.fire("change");
+    const pendingHistory = conversationList.children[0].fire("click");
+
+    newChatBtn.fire("click");
+    resolveHistory(Response.json(oldConversation));
+    await pendingHistory;
+    assert.equal(conversationId.value, "");
+    assert.equal(page.message("assistant"), undefined);
+
+    await conversationList.children[0].fire("click");
+    assert.equal(conversationId.value, "patient-old");
+    assert.equal(page.message("assistant").innerHTML, "<p>已保存的回复</p>\n");
+});
+
+test("随访登记未确认在回放后仍可原轮重试，批准与投递由进度接口提供", async () => {
+    let approved = false;
+    const conversationId = "follow-up-conversation";
+    const turnKey = "stored-turn-key";
+    const page = openConsole((path, options) => {
+        if (path === "/api/chat/stream") {
+            return chunkedStream(sse({ type: "START", conversationId })
+                + sse({ type: "CONTENT", content: "未确认登记", followUp: { status: "UNCONFIRMED", turnKey } })
+                + sse({ type: "DONE", conversationId }));
+        }
+        if (path === "/api/chat") {
+            approved = true;
+            return Response.json({ success: true, conversationId, message: "登记结果已确认",
+                followUp: { status: "APPROVED", delivered: true, turnKey } });
+        }
+        if (path.includes("/follow-up-progress")) {
+            return Response.json({ status: approved ? "APPROVED" : "NONE", delivered: approved });
+        }
+        if (path.includes("/messages")) {
+            return Response.json({ conversationId, rounds: 1, messages: [
+                { role: "USER", content: "合成样本" },
+                { role: "ASSISTANT", content: "未确认登记", followUpTurnKey: turnKey, followUpConfirmed: false }
+            ] });
+        }
+        return Response.json([{ conversationId }]);
+    }, "demo-patient");
+    await nextFrame();
+    assert.equal(page.controls.inboxBtn.hidden, false);
+    await page.send("合成样本");
+    page.controls.newChatBtn.fire("click");
+    await nextFrame();
+    await page.controls.conversationList.children[0].fire("click");
+    const button = page.controls.messageList.querySelector(".follow-up-retry");
+    assert.equal(button.textContent, "重试登记");
+    await button.fire("click");
+    await nextFrame();
+
+    const [first, retry] = page.requests.filter(r => r.method === "POST").map(r => JSON.parse(r.body));
+    assert.deepEqual(retry, { ...first, conversationId });
+    assert.equal(page.controls.messageCountText.textContent, "2");
+    assert.equal(page.message("assistant").innerHTML, "<p>登记结果已确认</p>\n");
+    assert.equal(button.hidden, true);
+    assert.match(page.controls.followUpStatus.textContent, /已投递/);
+    assert.equal(page.controls.followUpInboxBtn.hidden, false);
 });

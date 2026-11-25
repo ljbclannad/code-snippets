@@ -1,6 +1,7 @@
 package com.lx.governance.aichat.service;
 
 import com.lx.governance.aichat.dto.ChatRequest;
+import com.lx.governance.aichat.dto.PatientFollowUpStatus;
 import com.lx.governance.aichat.dto.TaskTriggerDecision;
 import com.lx.governance.aichat.dto.TaskType;
 import com.lx.governance.aichat.metrics.AiChatMetrics;
@@ -72,12 +73,14 @@ public class HighRiskFollowUpChat {
 
     record Receipt(Long taskId, String status) {}
 
+    record Result(String message, PatientFollowUpStatus followUp) {}
+
     private record Reply(String message, boolean confirmed, Long taskId, String taskStatus) {
         static Reply known(String message) { return new Reply(message, true, null, null); }
         static Reply unknown(String message) { return new Reply(message, false, null, null); }
     }
 
-    public String reply(ChatRequest request) {
+    Result reply(ChatRequest request) {
         conversationId(request);
         return complete(request, resolveReply(request));
     }
@@ -147,13 +150,13 @@ public class HighRiskFollowUpChat {
         }
     }
 
-    String unavailable(ChatRequest request) {
+    Result unavailable(ChatRequest request) {
         conversationId(request);
         return complete(request, Reply.unknown(isStatusQuestion(request.getMessage())
                 ? "暂时无法查询复核进度，请稍后再试。" : unavailable()));
     }
 
-    private String complete(ChatRequest request, Reply result) {
+    private Result complete(ChatRequest request, Reply result) {
         long receivedAt = request.getMessageTimestamp() != null ? request.getMessageTimestamp() : System.currentTimeMillis();
         try {
             receivedAt = history.record(request, result.message(), result.confirmed());
@@ -165,7 +168,15 @@ public class HighRiskFollowUpChat {
         } catch (RuntimeException ex) {
             log.error("保存随访会话上下文失败 - conversationId: {}", request.getConversationId(), ex);
         }
-        return result.message();
+        PatientFollowUpStatus status = null;
+        if (enabled && request.isVerifiedPatient() && !isStatusQuestion(request.getMessage())) {
+            String taskStatus = result.taskStatus() == null ? PatientFollowUpStatus.UNCONFIRMED : result.taskStatus();
+            String requestId = request.getRequestId();
+            String turnKey = requestId == null || requestId.isBlank() ? null
+                    : HighRiskFollowUpHistoryService.turnKey(request.getCustomerId(), request.getConversationId(), requestId);
+            status = new PatientFollowUpStatus(taskStatus, "APPROVED".equals(taskStatus), turnKey);
+        }
+        return new Result(result.message(), status);
     }
 
     private String unavailable() {

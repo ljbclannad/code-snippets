@@ -198,7 +198,9 @@ class AiChatStreamServiceTest {
         request.setRequestId("same-risk-request");
         when(highRiskFollowUp.handles("胸痛")).thenReturn(true);
         when(highRiskFollowUp.conversationId(any())).thenReturn("risk-retry");
-        when(highRiskFollowUp.reply(any())).thenReturn("当前无法确认随访复核已登记", "已为你登记随访复核");
+        when(highRiskFollowUp.reply(any())).thenReturn(
+                new HighRiskFollowUpChat.Result("当前无法确认随访复核已登记", null),
+                new HighRiskFollowUpChat.Result("已为你登记随访复核", null));
 
         var first = aiChatStreamService.handleChatStreamRequest(request).collectList().block(Duration.ofSeconds(3));
         var retried = aiChatStreamService.handleChatStreamRequest(request).collectList().block(Duration.ofSeconds(3));
@@ -214,7 +216,7 @@ class AiChatStreamServiceTest {
         request.setMessage("胸痛");
         when(highRiskFollowUp.handles("胸痛")).thenReturn(true);
         when(highRiskFollowUp.conversationId(any())).thenReturn("c1");
-        when(highRiskFollowUp.reply(any())).thenReturn("请及时就医。");
+        when(highRiskFollowUp.reply(any())).thenReturn(new HighRiskFollowUpChat.Result("请及时就医。", null));
         var events = aiChatStreamService.handleChatStreamRequest(request).collectList().block();
         assertEquals(List.of(StreamEvent.EventType.START, StreamEvent.EventType.CONTENT, StreamEvent.EventType.DONE),
                 events.stream().map(StreamEvent::getType).toList());

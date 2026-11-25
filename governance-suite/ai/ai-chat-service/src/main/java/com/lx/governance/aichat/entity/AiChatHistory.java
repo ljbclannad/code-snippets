@@ -13,6 +13,8 @@ import java.time.LocalDateTime;
 @Data
 @TableName("t_ai_chat_history")
 public class AiChatHistory {
+    private String followUpKey;
+    private Integer followUpConfirmed;
 
     @TableId(type = IdType.AUTO)
     private Long id;

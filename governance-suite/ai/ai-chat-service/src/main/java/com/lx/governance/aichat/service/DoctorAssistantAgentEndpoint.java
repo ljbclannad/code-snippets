@@ -24,7 +24,7 @@ public class DoctorAssistantAgentEndpoint {
         this.explicitBaseUri = baseUrl.isBlank() ? null : URI.create(baseUrl);
     }
 
-    URI resolve(String path) {
+    public URI resolve(String path) {
         URI baseUri = explicitBaseUri != null ? explicitBaseUri : discoverBaseUri();
         return UriComponentsBuilder.fromUri(baseUri).path(path).build().toUri();
     }

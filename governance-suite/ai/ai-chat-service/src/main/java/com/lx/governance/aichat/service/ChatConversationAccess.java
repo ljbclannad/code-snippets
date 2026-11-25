@@ -64,6 +64,16 @@ public class ChatConversationAccess {
                 String.class, conversation);
     }
 
+    public void requireOwnedConversation(String conversation, String owner) {
+        if (conversation.isBlank() || conversation.length() > 128 || !conversation.equals(conversation.strip())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "会话编号格式无效");
+        }
+        var owners = owners(conversation);
+        if (owners.size() != 1 || !owner.equals(owners.get(0))) {
+            throw denied();
+        }
+    }
+
     private void checkLegacyContext(String conversation, String owner) {
         String json = redis.opsForValue().get("ai:session:context:" + conversation);
         if (json != null) {

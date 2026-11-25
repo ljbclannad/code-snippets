@@ -1,0 +1,143 @@
+:root {
+    color-scheme: light;
+    --page: #f6f6fa;
+    --rail: #f1f0f8;
+    --surface: #fff;
+    --text: #1b1d32;
+    --muted: #62667c;
+    --line: #e3e3ee;
+    --accent: #5145ca;
+    --accent-soft: #efedfc;
+    --danger: #9f354d;
+    font: 15px/1.6 system-ui, "PingFang SC", sans-serif;
+    color: var(--text);
+    background: var(--page);
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; }
+[hidden] { display: none !important; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+h1, h2, h3, p { margin: 0; }
+h2 { font-size: 17px; }
+h3 { font-size: 14px; }
+
+button, textarea { font: inherit; }
+
+button {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    color: inherit;
+    padding: 6px 12px;
+    min-height: 38px;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+button:hover:enabled { background: var(--accent-soft); }
+button:disabled { opacity: .58; cursor: not-allowed; }
+
+.app-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px clamp(12px, 3vw, 28px);
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+}
+
+.app-header h1 { font-size: 18px; display: flex; align-items: center; gap: 8px; }
+.brand-mark {
+    display: grid;
+    place-items: center;
+    width: 33px;
+    height: 33px;
+    border-radius: 9px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 23px;
+}
+
+.workspace { min-height: calc(100dvh - 63px); display: grid; grid-template-columns: minmax(235px, 27%) minmax(0, 1fr); }
+
+.queue { padding: 21px 18px; background: var(--rail); border-inline-end: 1px solid var(--line); }
+.muted { color: var(--muted); font-size: 13px; }
+.queue .muted, #detailStatus { margin-top: 8px; }
+.task-list { display: grid; gap: 8px; list-style: none; padding: 0; margin: 12px 0 0; }
+
+.task-list button {
+    width: 100%;
+    text-align: start;
+    overflow-wrap: anywhere;
+}
+
+.task-list button[aria-current="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.task-list span { display: block; }
+.task-list .sample {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    font-weight: 650;
+}
+
+.workspace-detail { padding: clamp(12px, 3vw, 28px); }
+
+.detail-shell {
+    width: min(100%, 860px);
+    margin-inline: auto;
+    padding: clamp(14px, 3vw, 26px);
+    border: 1px solid var(--line);
+    border-radius: 15px;
+    background: var(--surface);
+}
+
+.detail-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 15px;
+    padding-block: 12px;
+    border-block: 1px solid var(--line);
+    overflow-wrap: anywhere;
+}
+
+.patient { font-weight: 700; }
+.task-status {
+    flex: none;
+    border-radius: 6px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    padding: 3px 8px;
+    font-size: 13px;
+}
+
+.detail-section, .review-form { margin-top: 18px; }
+.message { margin-top: 7px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.reminder { padding: 10px 12px; background: var(--accent-soft); border-radius: 8px; }
+.review-form label { display: block; font-weight: 650; }
+.review-form textarea {
+    width: 100%;
+    margin-top: 6px;
+    padding: 8px 10px;
+    border: 1px solid #c9cadb;
+    border-radius: 8px;
+    color: inherit;
+    resize: vertical;
+}
+
+.form-status { color: var(--danger); font-size: 13px; }
+.actions { display: flex; justify-content: end; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.primary { color: #fff; background: var(--accent); border-color: var(--accent); }
+.primary:hover:enabled { color: #fff; background: #4235b3; }
+.reject { color: var(--danger); }
+.decision { padding-top: 10px; border-top: 1px solid var(--line); }
+
+@media (max-width: 640px) {
+    .workspace { grid-template-columns: minmax(0, 1fr); }
+    .queue { border-inline-end: 0; border-bottom: 1px solid var(--line); padding: 13px 12px; }
+    .task-list { max-height: 180px; overflow-y: auto; padding: 3px; }
+    .app-header h1 { font-size: 16px; }
+}

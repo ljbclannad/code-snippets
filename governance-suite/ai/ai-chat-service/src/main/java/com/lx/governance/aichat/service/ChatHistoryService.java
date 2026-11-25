@@ -101,6 +101,8 @@ public class ChatHistoryService {
             messages.add(ConversationHistoryMessageDTO.builder()
                     .role(ConversationMessage.Role.ASSISTANT)
                     .content(row.getAiResponse())
+                    .followUpTurnKey(row.getFollowUpKey())
+                    .followUpConfirmed(row.getFollowUpKey() == null ? null : Integer.valueOf(1).equals(row.getFollowUpConfirmed()))
                     .timestamp(row.getCreateTime())
                     .promptTokens(row.getPromptTokens())
                     .completionTokens(row.getCompletionTokens())

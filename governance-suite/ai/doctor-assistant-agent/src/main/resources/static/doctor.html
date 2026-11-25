@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>医生随访工作台</title>
+    <link rel="stylesheet" href="/doctor.css">
+    <script src="/doctor.js" defer></script>
+</head>
+<body>
+    <header class="app-header">
+        <h1><span class="brand-mark" aria-hidden="true">+</span> 医生随访工作台</h1>
+        <button id="refreshTasks" type="button">刷新待办</button>
+    </header>
+    <main class="workspace">
+        <aside class="queue" aria-labelledby="queueTitle">
+            <h2 id="queueTitle">待复核随访</h2>
+            <p id="queueStatus" class="muted" role="status">正在加载待办…</p>
+            <ul id="taskList" class="task-list"></ul>
+        </aside>
+        <section class="workspace-detail" aria-labelledby="detailTitle">
+            <div class="detail-shell">
+                <h2 id="detailTitle" tabindex="-1">随访详情</h2>
+                <p id="detailStatus" class="muted" role="status">选择左侧待办开始复核。</p>
+                <article id="detail" hidden>
+                    <header class="detail-header">
+                        <div>
+                            <p id="taskPatient" class="patient"></p>
+                            <p id="taskMeta" class="muted"></p>
+                        </div>
+                        <span id="taskStatus" class="task-status"></span>
+                    </header>
+                    <section class="detail-section">
+                        <h3>患者原文</h3>
+                        <p id="patientMessage" class="message"></p>
+                    </section>
+                    <section class="detail-section">
+                        <h3>拟发送的站内提醒</h3>
+                        <p id="reminder" class="message reminder"></p>
+                    </section>
+                    <form id="reviewForm" class="review-form" hidden>
+                        <label for="reviewComment">复核意见 <span class="muted">拒绝时必填</span></label>
+                        <textarea id="reviewComment" rows="3" maxlength="1000" aria-describedby="reviewStatus"></textarea>
+                        <p id="reviewStatus" class="form-status" role="status"></p>
+                        <div class="actions">
+                            <button type="submit" value="reject" class="reject">拒绝</button>
+                            <button type="submit" value="approve" class="primary">批准并发送</button>
+                        </div>
+                    </form>
+                    <section id="decision" class="detail-section decision" hidden>
+                        <h3>复核结果</h3>
+                        <p id="decisionStatus"></p>
+                        <p id="decisionComment" class="message" hidden></p>
+                    </section>
+                </article>
+            </div>
+        </section>
+    </main>
+</body>
+</html>

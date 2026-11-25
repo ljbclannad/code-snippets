@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.stream.Collectors;
 
@@ -22,6 +23,12 @@ import java.util.stream.Collectors;
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Void> handleMissingResource(NoResourceFoundException ex) {
+        log.debug("静态资源不存在: {}", ex.getResourcePath());
+        return ResponseEntity.notFound().build();
+    }
 
     @ExceptionHandler(ResponseStatusException.class)
     public ResponseEntity<Void> handleAccessError(ResponseStatusException ex) {

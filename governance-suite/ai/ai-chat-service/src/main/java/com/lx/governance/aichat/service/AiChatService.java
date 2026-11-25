@@ -122,9 +122,9 @@ public class AiChatService {
             String sessionId = highRiskFollowUp.conversationId(request);
             try {
                 return metrics.recordChatResponseAsync(() -> CompletableFuture.supplyAsync(
-                        () -> ChatResponse.success(highRiskFollowUp.reply(request), sessionId), chatExecutor));
+                        () -> followUpResponse(highRiskFollowUp.reply(request), sessionId), chatExecutor));
             } catch (RejectedExecutionException ex) {
-                return CompletableFuture.completedFuture(ChatResponse.success(highRiskFollowUp.unavailable(request), sessionId));
+                return CompletableFuture.completedFuture(followUpResponse(highRiskFollowUp.unavailable(request), sessionId));
             }
         }
         String sessionId = ensureConversationId(request);
@@ -713,6 +713,12 @@ public class AiChatService {
         ChatResponse response = ChatResponse.success(qaResult.answer(), sessionId, qaResult.patientVisibleEvidence());
         addDegradationNotice(response);
         cacheResponseIfNeeded(request, response);
+        return response;
+    }
+
+    private static ChatResponse followUpResponse(HighRiskFollowUpChat.Result result, String conversationId) {
+        ChatResponse response = ChatResponse.success(result.message(), conversationId);
+        response.setFollowUp(result.followUp());
         return response;
     }
 

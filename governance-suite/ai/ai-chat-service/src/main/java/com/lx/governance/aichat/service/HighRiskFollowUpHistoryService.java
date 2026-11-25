@@ -41,7 +41,7 @@ public class HighRiskFollowUpHistoryService {
                 Long.class, key);
     }
 
-    private String turnKey(String customerId, String conversationId, String requestId) {
+    static String turnKey(String customerId, String conversationId, String requestId) {
         String input = customerId.length() + ":" + customerId + conversationId.length() + ":" + conversationId
                 + requestId.length() + ":" + requestId;
         try {

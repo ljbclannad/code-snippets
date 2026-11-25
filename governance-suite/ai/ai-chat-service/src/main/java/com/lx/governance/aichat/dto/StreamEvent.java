@@ -3,6 +3,7 @@ package com.lx.governance.aichat.dto;
 import java.util.Map;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonInclude;
 
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -28,6 +29,9 @@ public class StreamEvent {
      * 内容片段（当 type=CONTENT 时）
      */
     private String content;
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    private PatientFollowUpStatus followUp;
 
     /**
      * 状态阶段（当 type=STATUS 时）

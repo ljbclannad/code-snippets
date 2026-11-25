@@ -310,7 +310,7 @@ class AiChatServiceConcurrencyTest {
         request.setMessage("胸痛");
         when(highRiskFollowUp.handles("胸痛")).thenReturn(true);
         when(highRiskFollowUp.conversationId(request)).thenReturn("c1");
-        when(highRiskFollowUp.reply(request)).thenReturn("请及时就医。");
+        when(highRiskFollowUp.reply(request)).thenReturn(new HighRiskFollowUpChat.Result("请及时就医。", null));
         assertEquals("请及时就医。", aiChatService.handleChatRequest(request).get(2, TimeUnit.SECONDS).getMessage());
         Mockito.verifyNoInteractions(deepSeekClient, userProfileClient, degradationStrategyExecutor);
     }

@@ -6,6 +6,7 @@ import com.health.agent.controller.AgentController;
 import com.health.agent.controller.AgentAccessGuard;
 import com.health.agent.controller.PatientTaskServiceAuth;
 import com.health.agent.controller.FollowUpReminderController;
+import com.health.agent.controller.DoctorFollowUpController;
 import com.health.agent.controller.GlobalExceptionHandler;
 import com.health.agent.mapper.PendingTaskMapper;
 import com.health.agent.learning.mapper.AgentRunOutcomeMapper;
@@ -96,8 +97,42 @@ class HighRiskFollowUpIntegrationTest {
         ReflectionTestUtils.setField(agent, "taskService", tasks);
         ReflectionTestUtils.setField(agent, "sessionService", sessions);
         ReflectionTestUtils.setField(agent, "reminders", service);
-        mvc = MockMvcBuilders.standaloneSetup(agent, new FollowUpReminderController(service, properties, accessGuard, new PatientTaskServiceAuth("test-token")))
+        mvc = MockMvcBuilders.standaloneSetup(agent, new FollowUpReminderController(service, properties, accessGuard, new PatientTaskServiceAuth("test-token")),
+                        new DoctorFollowUpController(tasks, service))
                 .setControllerAdvice(new GlobalExceptionHandler()).build();
+    }
+
+    @Test void demoPagesObserveApprovedAndRejectedFollowUpsWithRoleIsolation() throws Exception {
+        String queue = "/api/doctor/follow-up-tasks";
+        String progress = "/internal/patient-tasks/follow-up-status";
+        String inbox = "/internal/patient-tasks/follow-up-inbox";
+        long approved = open().taskId();
+        assertEquals(approved, open().taskId());
+        long rejected = service.open(patient, "r2", "c2", "第二个合成样本", "doctor-a").taskId();
+        mvc.perform(get(queue)).andExpect(status().isUnauthorized());
+        mvc.perform(get(queue).with(actor(patient, "PATIENT"))).andExpect(status().isForbidden());
+        mvc.perform(get(queue).with(actor("doctor-b", "DOCTOR"))).andExpect(jsonPath("$").isEmpty());
+        mvc.perform(get(queue + "/{id}", approved).with(actor("doctor-b", "DOCTOR"))).andExpect(status().isForbidden());
+        mvc.perform(get(queue).with(actor("doctor-a", "DOCTOR"))).andExpect(jsonPath("$.length()").value(2));
+        mvc.perform(post(queue + "/{id}/reject", rejected).with(actor("doctor-a", "DOCTOR"))
+                        .contentType("application/json").content("{\"comment\":\" \"}"))
+                .andExpect(status().isBadRequest());
+        for (int attempt = 0; attempt < 2; attempt++) {
+            mvc.perform(post(queue + "/{id}/approve", approved).with(actor("doctor-a", "DOCTOR"))
+                            .contentType("application/json").content("{}"))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("APPROVED"));
+        }
+        mvc.perform(post(queue + "/{id}/reject", rejected).with(actor("doctor-a", "DOCTOR"))
+                        .contentType("application/json").content("{\"comment\":\"合成样本无需投递\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("REJECTED"));
+        mvc.perform(get(queue).with(actor("doctor-a", "DOCTOR"))).andExpect(jsonPath("$").isEmpty());
+        mvc.perform(get(progress).header("X-Follow-Up-Token", "test-token").param("customerId", patient).param("conversationId", "c1"))
+                .andExpect(jsonPath("$.status").value("APPROVED")).andExpect(jsonPath("$.delivered").value(true));
+        mvc.perform(get(progress).header("X-Follow-Up-Token", "test-token").param("customerId", patient).param("conversationId", "c2"))
+                .andExpect(jsonPath("$.status").value("REJECTED")).andExpect(jsonPath("$.delivered").value(false));
+        mvc.perform(get(inbox).header("X-Follow-Up-Token", "test-token").param("customerId", patient).param("beforeId", Long.toString(Long.MAX_VALUE)))
+                .andExpect(jsonPath("$.length()").value(1)).andExpect(jsonPath("$[0].receiptId").value(Long.toString(approved)))
+                .andExpect(jsonPath("$[0].reviewComment").doesNotExist());
     }
 
     @Test void workbenchApprovalDeliversOnlyToOwner() throws Exception {
@@ -185,6 +220,7 @@ class HighRiskFollowUpIntegrationTest {
                 VALUES (?, ?, 'doctor-a', 'patient_follow_up_review', '{}', 'APPROVED')
                 """, ordinary.getId(), patient);
         assertEquals(new HighRiskFollowUpService.ReviewProgress("APPROVED", false), service.latestProgress(patient, "c1"));
+        assertEquals(new HighRiskFollowUpService.ReviewProgress("REJECTED", false), service.latestFollowUp(patient, "c1"));
     }
 
     private HighRiskFollowUpService.Receipt open() {

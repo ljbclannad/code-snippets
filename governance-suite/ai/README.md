@@ -30,13 +30,50 @@ ai/
 
 已有环境部署本次修复前，需要在 `governance` 库执行[随访问答历史迁移](ai-chat-service/sql/migrations/2026-11-25-follow-up-chat-history.sql)。新环境的 `init-databases.sql` 已包含这些字段与索引。此路径写入数据库历史供列表、详情和后续提示词读取，不触发长期记忆提取或 Elasticsearch 同步。
 
+### 双角色随访演示
+
+患者端在当前会话显示最近一条高风险随访。进入会话时查询，医生处理后可点「刷新进度」。有投递回执时可从进度卡打开站内提醒，收件箱也可从工作台顶部打开。「重试登记」沿用原请求编号、会话和消息，更新原回复。重试只在当前页面保留，切回同一个会话仍可操作。
+
+登记结果通过同步响应或 SSE `CONTENT` 帧的可选 `followUp` 对象返回，其中 `status` 和 `delivered` 分别表示登记返回的状态和投递情况。`turnKey` 是历史对齐键。历史助手消息可返回 `followUpTurnKey` 和 `followUpConfirmed`，用于恢复本页已经暂存的原轮重试操作。实时进度由独立查询获取。
+
+医生端在 `/doctor.html` 显示分配给当前医生的高风险待办。选中条目查看患者原文和拟发送的提醒。批准意见选填，拒绝理由必填。处理后移出待办，当前详情继续显示处理结果。
+
+启动本地演示前，准备回环地址上的 MySQL、Redis、RabbitMQ 和 Elasticsearch。新库使用 `ai/init-databases.sql` 的 `governance` 部分和 `ai/doctor-assistant-agent/sql/schema.sql` 初始化。已有测试库按[试点说明](doctor-assistant-agent/README.md#开启试点)应用迁移。演示 Profile 固定使用合成患者 `demo-patient` 和责任医生 `demo-doctor`，绑定 `127.0.0.1`，并关闭 Nacos 服务发现和配置拉取。为两个角色各设置至少 12 字符的测试密码，两服务共用同一个服务间令牌。
+
+```bash
+# 从 governance-suite 根目录构建两个服务及其依赖
+mvn -pl ai/ai-chat-service,ai/doctor-assistant-agent -am -DskipTests install
+
+# 在两个启动终端载入各自需要的密码，以及相同的服务间令牌
+export FOLLOW_UP_SERVICE_TOKEN=本次演示的服务间令牌
+export FOLLOW_UP_DEMO_PATIENT_PASSWORD=本次演示专用的患者密码
+export FOLLOW_UP_DEMO_DOCTOR_PASSWORD=本次演示专用的医生密码
+export HIGH_RISK_FOLLOW_UP_ENABLED=true
+
+# 在医生服务终端执行
+mvn -f ai/doctor-assistant-agent/pom.xml spring-boot:run -Dspring-boot.run.profiles=follow-up-demo
+
+# 在聊天服务终端执行
+mvn -f ai/ai-chat-service/pom.xml spring-boot:run -Dspring-boot.run.profiles=follow-up-demo
+```
+
+用两个独立浏览器会话分别打开 [患者演示登录](http://127.0.0.1:8100/demo-login) 和 [医生演示登录](http://127.0.0.1:8088/demo-login)。在患者端发送合成样本「演示样本 A，我现在胸痛」，从医生端批准，再回患者端刷新进度并打开站内提醒。另建会话发送「演示样本 B，我现在胸痛」，填写拒绝理由并提交，回患者端刷新进度。收件箱仍只包含批准分支的提醒。
+
 ### 患者聊天入口与会话归属
 
 `POST /api/chat` 和 `POST /api/chat/stream` 使用同一套决策。画像追问适用于需要补全信息的普通对话，知识问答转人工也经过 Agent 放行与待复核检查。两个入口均遵守 `ai-chat.agent.auto-fallback-to-direct-chat`。患者 SSE 每帧为单个 JSON 事件，普通聊天继续流式输出文本。医生助手路径仅输出固定进度、患者安全回复和患者可见证据，完成时返回原聊天会话编号。客户端收到 `ERROR` 即可结束本轮。
 
 患者身份取自可信 Servlet principal 的 `PATIENT` 角色和全局唯一业务 ID。客户端可省略 `customerId`，显式传入时必须与登录身份一致。未登录并声明患者 ID 返回 401，冒用其他患者或会话返回 403。历史列表、消息、搜索、推荐同样校验患者身份。匿名聊天请省略 `customerId`，继续对话携带服务端签发的会话 Cookie 和上一轮的 `conversationId`。多实例部署需支持共享 HTTP 会话或会话亲和。匿名客户端丢失 Cookie 后需新建对话。
 
-启动 `ai-chat-service` 后可访问 `http://localhost:8100/` 打开医疗对话工作台。聊天卡片提供示例问题、消息输入和流式状态。通过顶部导航可跳转到会话参数、会话历史和调试状态，查看会话 ID、Token 统计、Agent 阶段及日志。
+启动 `ai-chat-service` 后可访问 `http://localhost:8100/` 打开医疗对话工作台。桌面端左侧显示会话历史，窄屏可通过顶部「会话历史」打开。顶部「会话参数」和「调试状态」分别打开参数与调试抽屉，可查看会话 ID、Token 统计、Agent 阶段及日志。
+
+对话区占满工作台的剩余空间，输入框固定在对话区底部。「放大对话」可让对话区占满视窗，点击「退出放大」即可恢复工作台。
+
+会话列表顶部的「新建对话」会打开空白聊天，首条消息由服务端分配新会话 ID。点击历史条目可以回到旧会话。登录患者使用服务端历史，访客使用当前页面内的会话历史，刷新页面后清空。
+
+「清空对话」只清空当前消息视图，不删除服务端历史或取消已登记的随访。同步请求和登记重试等待期间禁用清空，成功或失败后恢复，避免迟到回复形成孤立消息。流式输出期间清空会同时停止客户端接收。
+
+页面使用服务内置的 `/favicon.svg` 图标。缺失静态资源返回 HTTP 404，不计为服务端未知异常；真正的未处理异常仍返回 HTTP 500。
 
 助手的同步回复、流式回复和历史回复都支持 Markdown，包括加粗、列表、引用、代码、表格及 HTTP/HTTPS 链接。解析器随聊天服务提供。原始 HTML 会按文本显示，图片只显示替代文字。
 
