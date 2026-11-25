@@ -1,5 +1,7 @@
 package com.lx.governance.aichat.context;
 
+import com.lx.governance.aichat.exception.ConversationException;
+import com.lx.governance.aichat.exception.ErrorCode;
 import java.util.Comparator;
 import java.util.List;
 
@@ -81,14 +83,20 @@ public class ContextBudgetManager {
         resetTokenCounters();
 
         StringBuilder prompt = new StringBuilder();
-        prompt.append("你是一个专业的健康顾问助手。请根据以下用户信息提供个性化的健康建议。\n\n");
+        String opening = "你是一个专业的健康顾问助手。请根据以下用户信息提供个性化的健康建议。\n\n";
+        String closing = "\n请基于以上信息，提供专业、个性化的健康建议。";
+        prompt.append(opening);
 
         String complexity = input.getSessionContext() != null && input.getSessionContext().getComplexity() != null
                 ? input.getSessionContext().getComplexity()
                 : "medium";
 
-        BudgetAllocation budgetAllocation = promptBudgetPolicy.resolve(complexity);
-        int remainingBudget = budgetAllocation.getSystemPromptBudget();
+        BudgetAllocation budgetAllocation = promptBudgetPolicy.resolve(complexity, PromptTokenBudget.estimate(input.getUserQuestion()));
+        int fixedTokens = PromptTokenBudget.estimate(opening) + PromptTokenBudget.estimate(closing);
+        int remainingBudget = budgetAllocation.getSystemPromptBudget() - fixedTokens;
+        if (remainingBudget < 0) {
+            throw new ConversationException(ErrorCode.MESSAGE_TOO_LONG, "消息内容超过本轮预算，请分段发送");
+        }
         StringBuilder sectionTrace = new StringBuilder();
 
         for (PromptSectionBuilder sectionBuilder : sectionBuilders) {
@@ -106,18 +114,23 @@ public class ContextBudgetManager {
                 continue;
             }
 
-            prompt.append(result.getTitle()).append("\n")
-                    .append(result.getContent()).append("\n");
-            remainingBudget -= result.getUsedTokens();
-            recordSectionUsage(result);
+            String heading = result.getTitle() + "\n";
+            int overhead = PromptTokenBudget.estimate(heading) + PromptTokenBudget.estimate("\n");
+            String content = PromptTokenBudget.fit(result.getContent(), remainingBudget - overhead);
+            if (content.isBlank()) {
+                continue;
+            }
+            prompt.append(heading).append(content).append("\n");
+            remainingBudget -= overhead + PromptTokenBudget.estimate(content);
+            recordSectionUsage(result, PromptTokenBudget.estimate(content));
             appendSectionTrace(sectionTrace, result);
             log.debug("Prompt section built - type: {}, tokens: {}, remaining: {}",
                     result.getType(), result.getUsedTokens(), remainingBudget);
         }
 
-        prompt.append("\n请基于以上信息，提供专业、个性化的健康建议。");
+        prompt.append(closing);
 
-        lastTotalTokens = budgetAllocation.getSystemPromptBudget() - remainingBudget;
+        lastTotalTokens = PromptTokenBudget.estimate(prompt.toString());
         long duration = System.currentTimeMillis() - startTime;
         log.info(
                 "上下文构建完成 - usedTokens: {}/{}, totalBudget: {}, userMessageReserve: {}, remainingBudget: {}, sections: [{}], 耗时: {}ms",
@@ -132,24 +145,24 @@ public class ContextBudgetManager {
         return prompt.toString();
     }
 
-    private void recordSectionUsage(PromptSectionResult result) {
+    private void recordSectionUsage(PromptSectionResult result, int usedTokens) {
         switch (result.getType()) {
             case CORE_PROFILE:
-                lastCoreProfileTokens = result.getUsedTokens();
+                lastCoreProfileTokens = usedTokens;
                 break;
             case SESSION_CONTEXT:
-                lastSessionContextTokens = result.getUsedTokens();
+                lastSessionContextTokens = usedTokens;
                 break;
             case SHORT_TERM_MEMORY:
             case LONG_TERM_MEMORY:
             case RELEVANT_MEMORY:
-                lastMemoriesTokens += result.getUsedTokens();
+                lastMemoriesTokens += usedTokens;
                 break;
             case CONVERSATION_HISTORY:
-                lastConversationTokens = result.getUsedTokens();
+                lastConversationTokens = usedTokens;
                 break;
             case EXTENDED_PROFILE:
-                lastExtendedProfileTokens = result.getUsedTokens();
+                lastExtendedProfileTokens = usedTokens;
                 break;
             default:
                 break;

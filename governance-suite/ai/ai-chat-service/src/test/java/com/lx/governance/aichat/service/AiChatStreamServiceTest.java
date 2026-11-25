@@ -112,6 +112,42 @@ class AiChatStreamServiceTest {
     }
 
     @Test
+    void pendingReviewSkipsMemoryRetrieval() throws Exception {
+        var request = new ChatRequest();
+        request.setConversationId("pending-conversation");
+        request.setCustomerId("customer-1");
+        request.setGroupId("group-1");
+        request.setMessage("合成复核请求");
+        when(sessionContextService.getOrCreateContext(any(), any(), any(), any(), any(), any()))
+                .thenReturn(SessionContext.builder().conversationId("pending-conversation").userIntent("fact_query")
+                        .lastAgentPendingTaskId(123L).lastAgentReviewStatus("PENDING_APPROVAL")
+                        .lastAgentOutcomeAt(System.currentTimeMillis()).build());
+        when(taskTriggerRouter.route(any(com.lx.governance.aichat.dto.TaskTriggerContext.class))).thenReturn(TaskTriggerDecision.builder()
+                .route(TaskTriggerRoute.DOCTOR_ASSISTANT_AGENT).taskType(TaskType.PATIENT_FOLLOW_UP_ANALYSIS).build());
+        when(agentDispatchPolicy.evaluate(any(), any(), any())).thenReturn(new AgentDispatchPolicy.Decision(true, "allowed"));
+        var events = aiChatStreamService.handleChatStreamRequest(request).collectList().block(Duration.ofSeconds(3));
+        assertTrue(events.stream().anyMatch(event -> ChatTurnPolicy.PENDING_REPLY.equals(event.getContent())));
+        Mockito.verifyNoInteractions(layeredMemoryOrchestrator);
+    }
+
+    @Test
+    void knowledgeReplySkipsMemoryRetrieval() throws Exception {
+        var request = new ChatRequest();
+        request.setConversationId("knowledge-conversation");
+        request.setCustomerId("customer-1");
+        request.setGroupId("group-1");
+        request.setMessage("合成知识问题");
+        when(sessionContextService.getOrCreateContext(any(), any(), any(), any(), any(), any()))
+                .thenReturn(SessionContext.builder().conversationId("knowledge-conversation").userIntent("fact_query").build());
+        when(medicalKnowledgeQaService.shouldUseKnowledgeQa(any())).thenReturn(true);
+        when(medicalKnowledgeQaService.answer(any(), any())).thenReturn(
+                MedicalKnowledgeQaService.QaResult.reply("知识回复", List.of(), false));
+        var events = aiChatStreamService.handleChatStreamRequest(request).collectList().block(Duration.ofSeconds(3));
+        assertTrue(events.stream().anyMatch(event -> "知识回复".equals(event.getContent())));
+        Mockito.verifyNoInteractions(layeredMemoryOrchestrator);
+    }
+
+    @Test
     void highRiskStreamContainsOnlyPatientReply() {
         ChatRequest request = new ChatRequest();
         request.setMessage("胸痛");
@@ -290,7 +326,7 @@ class AiChatStreamServiceTest {
         verify(layeredMemoryOrchestrator).loadMemories(eq("group-2"), eq("customer-2"), eq("最近睡不好怎么办"),
                 eq(sessionContext), any(UserProfileDTO.class), eq(true), eq(5));
         verify(sessionContextService).updateContext("conv-2", "最近睡不好怎么办", "先规律作息", null, null);
-        verify(chatAsyncProcessingService).handleChatCompleted(any(), any(), anyString());
+        verify(chatAsyncProcessingService, Mockito.timeout(1000)).handleChatCompleted(any(), any(), anyString());
     }
 
     @Test

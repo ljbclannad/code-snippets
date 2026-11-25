@@ -276,11 +276,14 @@ public class AiChatService {
                 }
             }
 
+            var plan = policy.decide(request, sessionContext, triggerDecision, visitorMode);
             // 分层记忆加载会同时返回 short-term 和 long-term memories。
             // 其中长期记忆会通过 ai-chat-service -> vector-memory-service 的链路进行向量召回。
             long memoryRetrievalStart = System.currentTimeMillis();
-            return loadLayeredMemoriesAsync(request, sessionContext, profile, correlationId)
-                    .thenComposeAsync(memories -> {
+            CompletableFuture<LayeredMemories> memoriesFuture = plan.needsMemories()
+                    ? loadLayeredMemoriesAsync(request, sessionContext, profile, correlationId)
+                    : CompletableFuture.completedFuture(LayeredMemories.builder().build());
+            return memoriesFuture.thenComposeAsync(memories -> {
                         metrics.recordStageLatency(STAGE_MEMORY_RETRIEVAL,
                                 System.currentTimeMillis() - memoryRetrievalStart);
                         log.info("上下文获取完成 - customerId: {}, 短期记忆数: {}, 长期记忆数: {}, correlationId: {}",
@@ -288,7 +291,6 @@ public class AiChatService {
                                 memories.getShortTermMemories().size(),
                                 memories.getLongTermMemories().size(),
                                 correlationId);
-                        var plan = policy.decide(request, sessionContext, triggerDecision, visitorMode);
                         return switch (plan.route()) {
                             case KNOWLEDGE -> CompletableFuture.completedFuture(buildKnowledgeQaResponse(
                                     request, sessionId, correlationId, startTime, plan.answer()));
@@ -810,6 +812,9 @@ public class AiChatService {
             if (ex.getErrorCode() == ErrorCode.CONVERSATION_BUSY) {
                 return ChatResponse.error(ex.getErrorCode().getMessage() + ": 当前会话正在处理中，请稍后再试");
             }
+            if (ex.getErrorCode() == ErrorCode.MESSAGE_TOO_LONG) {
+                return ChatResponse.error("消息内容超过本轮预算，请分段发送");
+            }
             return ChatResponse.error(ex.getErrorCode().getMessage());
         }
 
@@ -820,6 +825,9 @@ public class AiChatService {
 
         if (actual instanceof AiServiceException) {
             AiServiceException ex = (AiServiceException) actual;
+            if (ex.getErrorCode() == ErrorCode.MESSAGE_TOO_LONG) {
+                return ChatResponse.error("消息内容超过本轮预算，请分段发送");
+            }
             return ChatResponse.error(ex.getErrorCode().getMessage());
         }
 

@@ -93,28 +93,32 @@ public class ConversationHistoryManager {
             return "";
         }
 
-        StringBuilder sb = new StringBuilder();
-        int usedTokens = 0;
-
-        // 从最新的消息开始添加（保证最近的对话不被截断）
-        for (int i = history.size() - 1; i >= 0; i--) {
-            ConversationMessage message = history.get(i);
-            String roleName = getRoleDisplayName(message.getRole());
-            String line = roleName + ": " + message.getContent() + "\n";
-            int tokens = estimateTokens(line);
-
-            if (usedTokens + tokens <= budget) {
-                // 插入到开头，保持时间顺序
-                sb.insert(0, line);
-                usedTokens += tokens;
-            } else {
-                // 预算用完，停止添加
-                log.debug("对话历史预算用完，已添加 {} 条消息", history.size() - i - 1);
-                break;
+        StringBuilder selected = new StringBuilder();
+        int remaining = budget;
+        // 按最近问答轮次选择，优先给用户问题留空间，再保留回复片段。
+        for (int i = history.size() - 1; i >= 0 && remaining > 0; i--) {
+            ConversationMessage latest = history.get(i);
+            String answer = getRoleDisplayName(latest.getRole()) + ": " + latest.getContent() + "\n";
+            String question = "";
+            if (latest.getRole() == ConversationMessage.Role.ASSISTANT && i > 0
+                    && history.get(i - 1).getRole() == ConversationMessage.Role.USER) {
+                ConversationMessage user = history.get(--i);
+                question = "用户: " + user.getContent() + "\n";
             }
+            String fullTurn = question + answer;
+            if (PromptTokenBudget.estimate(fullTurn) <= remaining) {
+                selected.insert(0, fullTurn);
+                remaining -= PromptTokenBudget.estimate(fullTurn);
+                continue;
+            }
+            if (selected.isEmpty()) {
+                String fittedQuestion = PromptTokenBudget.fit(question, remaining);
+                int answerBudget = remaining - PromptTokenBudget.estimate(fittedQuestion);
+                selected.append(fittedQuestion).append(PromptTokenBudget.fit(answer, answerBudget));
+            }
+            break;
         }
-
-        return sb.toString();
+        return selected.toString();
     }
 
     /**

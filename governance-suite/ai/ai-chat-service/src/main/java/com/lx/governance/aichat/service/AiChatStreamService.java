@@ -287,8 +287,10 @@ public class AiChatStreamService {
             if (question != null) {
                 return patientReply(sessionId, question, null);
             }
-            var memories = loadLayeredMemories(request, sessionContext, profile, correlationId);
             var plan = policy.decide(request, sessionContext, triggerDecision, visitor);
+            var memories = plan.needsMemories()
+                    ? loadLayeredMemories(request, sessionContext, profile, correlationId)
+                    : LayeredMemories.builder().build();
             return switch (plan.route()) {
                 case KNOWLEDGE -> patientReply(sessionId, plan.answer().answer(), plan.answer().patientVisibleEvidence());
                 case PENDING -> patientReply(sessionId, ChatTurnPolicy.PENDING_REPLY, null);

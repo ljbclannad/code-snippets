@@ -37,6 +37,22 @@ class ConversationHistoryManagerTest {
     }
 
     @Test
+    void longLatestReplyKeepsQuestionAndExcerptWithinBudget() {
+        var messages = List.of(
+                ConversationMessage.builder().role(ConversationMessage.Role.USER).content("上一轮问题").build(),
+                ConversationMessage.builder().role(ConversationMessage.Role.ASSISTANT).content("较早回复").build(),
+                ConversationMessage.builder().role(ConversationMessage.Role.USER).content("最近的问题").build(),
+                ConversationMessage.builder().role(ConversationMessage.Role.ASSISTANT).content("回复内容".repeat(500)).build());
+        String result = manager.formatHistory(messages, 120);
+        assertTrue(result.contains("最近的问题"));
+        assertTrue(result.contains("助手: 回复内容"));
+        assertTrue(result.endsWith("…"));
+        assertFalse(result.contains("上一轮问题"));
+        assertTrue(PromptTokenBudget.estimate(result) <= 120);
+        assertEquals("", manager.formatHistory(messages, 0));
+    }
+
+    @Test
     void testFormatHistory() {
         List<ConversationMessage> messages = new ArrayList<>();
         messages.add(ConversationMessage.builder()

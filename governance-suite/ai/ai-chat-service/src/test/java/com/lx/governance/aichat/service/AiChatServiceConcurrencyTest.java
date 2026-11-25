@@ -207,6 +207,40 @@ class AiChatServiceConcurrencyTest {
     }
 
     @Test
+    void pendingReviewSkipsMemoryRetrieval() throws Exception {
+        var request = new ChatRequest();
+        request.setConversationId("pending-conversation");
+        request.setCustomerId("customer-1");
+        request.setGroupId("group-1");
+        request.setMessage("合成复核请求");
+        when(sessionContextService.getOrCreateContext(any(), any(), any(), any(), any(), any()))
+                .thenReturn(SessionContext.builder().conversationId("pending-conversation").userIntent("fact_query")
+                        .lastAgentPendingTaskId(123L).lastAgentReviewStatus("PENDING_APPROVAL")
+                        .lastAgentOutcomeAt(System.currentTimeMillis()).build());
+        when(taskTriggerRouter.route(any(com.lx.governance.aichat.dto.TaskTriggerContext.class))).thenReturn(TaskTriggerDecision.builder()
+                .route(TaskTriggerRoute.DOCTOR_ASSISTANT_AGENT).taskType(TaskType.PATIENT_FOLLOW_UP_ANALYSIS).build());
+        when(agentDispatchPolicy.evaluate(any(), any(), any())).thenReturn(new AgentDispatchPolicy.Decision(true, "allowed"));
+        assertEquals(ChatTurnPolicy.PENDING_REPLY, aiChatService.handleChatRequest(request).get(3, TimeUnit.SECONDS).getMessage());
+        Mockito.verifyNoInteractions(layeredMemoryOrchestrator);
+    }
+
+    @Test
+    void knowledgeReplySkipsMemoryRetrieval() throws Exception {
+        var request = new ChatRequest();
+        request.setConversationId("knowledge-conversation");
+        request.setCustomerId("customer-1");
+        request.setGroupId("group-1");
+        request.setMessage("合成知识问题");
+        when(sessionContextService.getOrCreateContext(any(), any(), any(), any(), any(), any()))
+                .thenReturn(SessionContext.builder().conversationId("knowledge-conversation").userIntent("fact_query").build());
+        when(medicalKnowledgeQaService.shouldUseKnowledgeQa(any())).thenReturn(true);
+        when(medicalKnowledgeQaService.answer(any(), any())).thenReturn(
+                MedicalKnowledgeQaService.QaResult.reply("知识回复", List.of(), false));
+        assertEquals("知识回复", aiChatService.handleChatRequest(request).get(3, TimeUnit.SECONDS).getMessage());
+        Mockito.verifyNoInteractions(layeredMemoryOrchestrator);
+    }
+
+    @Test
     void highRiskReplyPrecedesCacheAndProfileQuestions() throws Exception {
         var request = buildRequest("c1");
         request.setMessage("胸痛");

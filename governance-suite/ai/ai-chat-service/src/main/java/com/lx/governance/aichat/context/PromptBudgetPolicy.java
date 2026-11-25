@@ -23,6 +23,10 @@ public class PromptBudgetPolicy {
     private final DynamicBudgetStrategy dynamicBudgetStrategy;
 
     public BudgetAllocation resolve(String complexity) {
+        return resolve(complexity, 0);
+    }
+
+    public BudgetAllocation resolve(String complexity, int userTokens) {
         DynamicBudgetStrategy.BaseBudgetConfig baseBudget = new DynamicBudgetStrategy.BaseBudgetConfig();
         baseBudget.setCoreProfileBudget(properties.getCoreProfileBudget());
         baseBudget.setRelevantMemoriesBudget(properties.getRelevantMemoriesBudget());
@@ -30,8 +34,9 @@ public class PromptBudgetPolicy {
         baseBudget.setExtendedProfileBudget(properties.getExtendedProfileBudget());
 
         BudgetAllocation allocation = dynamicBudgetStrategy.calculateBudget(complexity, baseBudget);
-        allocation.setUserMessageReserve(properties.getUserMessageReserve());
-        allocation.setSystemPromptBudget(Math.max(0, properties.getTotalBudget() - properties.getUserMessageReserve()));
+        allocation.setTotalBudget(properties.getTotalBudget());
+        allocation.setUserMessageReserve(Math.max(properties.getUserMessageReserve(), userTokens));
+        allocation.setSystemPromptBudget(Math.max(0, properties.getTotalBudget() - allocation.getUserMessageReserve()));
         allocation.setToolResultBudget(0);
         allocation.setProfileBudget(allocation.getCoreProfileBudget() + allocation.getExtendedProfileBudget());
 

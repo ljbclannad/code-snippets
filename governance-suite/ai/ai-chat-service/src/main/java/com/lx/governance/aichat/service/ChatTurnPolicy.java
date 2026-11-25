@@ -17,7 +17,11 @@ public class ChatTurnPolicy {
     static final String PENDING_REPLY = "本次会话先前已提交复核。你可以问“医生看了吗”查询最新进度。如有紧急不适，请及时就医。";
     static final String FAILURE_REPLY = "本轮分析暂时无法完成，请稍后再试或直接联系医生。";
     enum Route { DIRECT, KNOWLEDGE, AGENT, PENDING, FALLBACK, ERROR }
-    record Plan(Route route, TaskTriggerDecision trigger, MedicalKnowledgeQaService.QaResult answer, String reason) {}
+    record Plan(Route route, TaskTriggerDecision trigger, MedicalKnowledgeQaService.QaResult answer, String reason) {
+        boolean needsMemories() {
+            return route == Route.DIRECT || route == Route.FALLBACK || route == Route.AGENT;
+        }
+    }
 
     private final TaskTriggerRouter router;
     private final MedicalKnowledgeQaService knowledge;

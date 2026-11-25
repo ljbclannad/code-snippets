@@ -29,6 +29,7 @@ import com.lx.governance.aichat.dto.SessionContext;
 import com.lx.governance.aichat.dto.StreamEvent;
 import com.lx.governance.aichat.dto.UserProfileDTO;
 import com.lx.governance.aichat.exception.AiServiceException;
+import com.lx.governance.aichat.exception.ConversationException;
 import com.lx.governance.aichat.monitor.TokenMonitor;
 import com.lx.governance.aichat.monitor.TokenUsageMetrics;
 import com.lx.governance.aichat.stream.MarkdownStreamNormalizer;
@@ -129,6 +130,8 @@ public class DeepSeekClient {
             // Convert to the internal unified result format
             return buildChatGenerationResult(content, usage, request.getConversationId());
 
+        } catch (ConversationException e) {
+            throw e;
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - startTime;
             log.error("DeepSeek API call failed after {}ms for customer: {}",
@@ -184,6 +187,8 @@ public class DeepSeekClient {
             recordTokenUsage(usage, duration);
             recordPlatformTokenCost(usage);
             return buildChatGenerationResult(content, usage, request.getConversationId());
+        } catch (ConversationException e) {
+            throw e;
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - startTime;
             log.error("DeepSeek API call failed after {}ms for customer: {}",
@@ -216,6 +221,8 @@ public class DeepSeekClient {
                 String systemPrompt = buildSystemPrompt(request, userProfile, sessionContext, memories);
                 return streamReply(request, systemPrompt, startTime);
 
+            } catch (ConversationException e) {
+                return Flux.just(StreamEvent.error("消息内容超过本轮预算，请分段发送", e.getErrorCode().getCode()));
             } catch (Exception e) {
                 long duration = System.currentTimeMillis() - startTime;
                 log.error("DeepSeek API streaming failed after {}ms for customer: {}",
@@ -252,6 +259,8 @@ public class DeepSeekClient {
                         request.getMessage());
                 return streamReply(request, systemPrompt, startTime);
 
+            } catch (ConversationException e) {
+                return Flux.just(StreamEvent.error("消息内容超过本轮预算，请分段发送", e.getErrorCode().getCode()));
             } catch (Exception e) {
                 long duration = System.currentTimeMillis() - startTime;
                 log.error("DeepSeek API streaming failed after {}ms for customer: {}",

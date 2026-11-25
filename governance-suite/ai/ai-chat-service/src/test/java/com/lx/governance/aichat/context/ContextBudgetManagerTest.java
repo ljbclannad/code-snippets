@@ -2,6 +2,8 @@ package com.lx.governance.aichat.context;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import com.lx.governance.aichat.exception.ConversationException;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -51,6 +53,36 @@ class ContextBudgetManagerTest {
     }
 
     @Test
+    void longUserInputShrinksPromptAndOversizedInputIsRejected() {
+        String user = "测试".repeat(2200);
+        var profile = new UserProfileDTO();
+        profile.setBasicInfo(Map.of("name", "测试".repeat(5000)));
+        String prompt = manager.buildBudgetedSystemPrompt(profile, null,
+                LayeredMemories.builder().build(), "c1", "conv1", user);
+        assertTrue(PromptTokenBudget.estimate(prompt) + PromptTokenBudget.estimate(user) <= 8192);
+        assertThrows(ConversationException.class, () -> manager.buildBudgetedSystemPrompt(profile, null,
+                LayeredMemories.builder().build(), "c1", "conv1", "测试".repeat(3000)));
+    }
+
+    @Test
+    void sectionTitlesAndFixedInstructionsCountTowardsBudget() {
+        var properties = new ContextBudgetProperties();
+        properties.setTotalBudget(300);
+        properties.setUserMessageReserve(10);
+        PromptSectionBuilder builder = mock(PromptSectionBuilder.class);
+        when(builder.build(org.mockito.ArgumentMatchers.any())).thenReturn(PromptSectionResult.builder()
+                .type(PromptSectionType.CORE_PROFILE).title("很长的标题".repeat(3))
+                .content("中文".repeat(300)).usedTokens(1).build());
+        var tightManager = new ContextBudgetManager(
+                new PromptBudgetPolicy(properties, new DynamicBudgetStrategy()), List.of(builder));
+        String user = "本轮问题";
+        String prompt = tightManager.buildBudgetedSystemPrompt(null, null,
+                LayeredMemories.builder().build(), "c1", "conv1", user);
+        assertTrue(PromptTokenBudget.estimate(prompt) + PromptTokenBudget.estimate(user) <= 300);
+        assertTrue(prompt.endsWith("请基于以上信息，提供专业、个性化的健康建议。"));
+    }
+
+    @Test
     void shouldBuildLayeredPromptViaPipelineInOrder() {
         UserProfileDTO profile = new UserProfileDTO();
         profile.setBasicInfo(Map.of("name", "张三", "age", 35, "gender", "男"));
@@ -90,13 +122,7 @@ class ContextBudgetManagerTest {
         assertTrue(manager.getLastSessionContextTokens() > 0);
         assertTrue(manager.getLastMemoriesTokens() > 0);
         assertTrue(manager.getLastExtendedProfileTokens() > 0);
-        assertEquals(
-                manager.getLastCoreProfileTokens()
-                        + manager.getLastSessionContextTokens()
-                        + manager.getLastMemoriesTokens()
-                        + manager.getLastConversationTokens()
-                        + manager.getLastExtendedProfileTokens(),
-                manager.getLastTotalTokens());
+        assertEquals(PromptTokenBudget.estimate(prompt), manager.getLastTotalTokens());
     }
 
     @Test

@@ -284,20 +284,7 @@ public class PromptSectionSupport {
     }
 
     public int estimateTokens(String text) {
-        if (text == null || text.isEmpty()) {
-            return 0;
-        }
-
-        int chineseChars = 0;
-        int otherChars = 0;
-        for (char c : text.toCharArray()) {
-            if (c >= 0x4E00 && c <= 0x9FA5) {
-                chineseChars++;
-            } else {
-                otherChars++;
-            }
-        }
-        return (int) (chineseChars * 1.5 + otherChars * 0.25);
+        return PromptTokenBudget.estimate(text);
     }
 
     public String compressText(String text, int targetBudget) {
