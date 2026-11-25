@@ -54,6 +54,7 @@ public class AiChatMetrics {
     // 降级相关指标
     private final io.micrometer.core.instrument.Gauge degradationLevelGauge;
     private final Counter degradationTriggerCounter;
+    private final Counter intentAnalysisFallbackCounter;
 
     private volatile int currentDegradationLevel = 0; // 0=NORMAL, 1=LIGHT, ..., 5=CIRCUIT_BREAK
 
@@ -129,6 +130,9 @@ public class AiChatMetrics {
         this.degradationTriggerCounter = Counter.builder("ai.degradation.triggers")
                 .description("Degradation trigger count")
                 .register(meterRegistry);
+        this.intentAnalysisFallbackCounter = Counter.builder("ai.intent.analysis.fallbacks")
+                .description("意图分析失败或无效结果导致的未确定意图次数")
+                .register(meterRegistry);
     }
 
     private double getCurrentDegradationLevel() {
@@ -146,6 +150,10 @@ public class AiChatMetrics {
 
     public void recordDegradationTrigger() {
         degradationTriggerCounter.increment();
+    }
+
+    public void recordIntentAnalysisFallback() {
+        intentAnalysisFallbackCounter.increment();
     }
 
     public void updateDegradationLevel(int level) {

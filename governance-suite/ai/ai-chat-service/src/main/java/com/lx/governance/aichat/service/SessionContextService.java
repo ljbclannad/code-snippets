@@ -245,7 +245,7 @@ public class SessionContextService {
                 .conversationPhase(DEFAULT_PHASE)
                 .mentionedEntities(new ArrayList<>())
                 .extractedData(new HashMap<>())
-                .userIntent(DEFAULT_INTENT)
+                .userIntent(SessionContext.UNKNOWN_INTENT)
                 .pendingQuestions(new ArrayList<>())
                 .complexity(DEFAULT_COMPLEXITY)
                 .recentSummaries(new ArrayList<>())

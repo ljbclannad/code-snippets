@@ -54,6 +54,21 @@ class SessionContextServiceTest {
     }
 
     @Test
+    void unknownIntentIsReanalyzedOnNextTurnInsteadOfRemainingInFallback() throws Exception {
+        var existing = SessionContext.builder().conversationId("unknown-conversation").customerId("u")
+                .userIntent(SessionContext.UNKNOWN_INTENT).currentTopic("健康咨询")
+                .messageCount(3).lastMessageAt(100L).lastUpdateTime(System.currentTimeMillis()).build();
+        var stored = mockStoredContext("unknown-conversation", existing);
+        when(intentAnalyzer.analyzeIntentWithTimeout(eq("健康档案是什么意思？"), anyList(), eq(5000L)))
+                .thenReturn(SessionContext.builder().userIntent("fact_query").currentTopic("健康档案").build());
+        var recovered = sessionContextService.getOrCreateContext("unknown-conversation", "u", "g",
+                "健康档案是什么意思？", "next-request", 200L);
+        assertEquals("fact_query", recovered.getUserIntent());
+        assertEquals("fact_query", objectMapper.readValue(stored.get(), SessionContext.class).getUserIntent());
+        verify(intentAnalyzer).analyzeIntentWithTimeout(eq("健康档案是什么意思？"), anyList(), eq(5000L));
+    }
+
+    @Test
     void concurrentWritesPreserveRoutingAndAgentOutcome() throws Exception {
         var existing = SessionContext.builder().conversationId("c").customerId("u")
                 .lastProcessedRequestId("same").lastMessageAt(100L).contextVersion(1L).build();

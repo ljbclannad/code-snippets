@@ -20,6 +20,7 @@ import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.MessageSummary;
 import com.lx.governance.aichat.dto.SessionContext;
+import com.lx.governance.aichat.metrics.AiChatMetrics;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -29,7 +30,7 @@ public class DeepSeekIntentAnalyzer {
 
     private static final String DEFAULT_TOPIC = "健康咨询";
     private static final String DEFAULT_PHASE = "consulting";
-    private static final String DEFAULT_INTENT = "general_health_consultation";
+    private static final String DEFAULT_INTENT = SessionContext.UNKNOWN_INTENT;
     private static final String DEFAULT_COMPLEXITY = "simple";
     private static final Set<String> ALLOWED_INTENTS = Set.of(
             "casual_chat",
@@ -42,6 +43,9 @@ public class DeepSeekIntentAnalyzer {
 
     @Autowired
     private DeepSeekClient deepSeekClient;
+
+    @Autowired
+    private AiChatMetrics metrics;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -69,7 +73,7 @@ public class DeepSeekIntentAnalyzer {
             return parseAnalysisResult(response.getAnswer());
 
         } catch (Exception e) {
-            log.error("意图分析失败，使用默认上下文", e);
+            log.warn("意图分析失败，本轮保留未确定意图并跳过画像补全", e);
             return createDefaultContext();
         }
     }
@@ -251,6 +255,7 @@ public class DeepSeekIntentAnalyzer {
      * 创建默认上下文
      */
     private SessionContext createDefaultContext() {
+        metrics.recordIntentAnalysisFallback();
         return SessionContext.builder()
                 .currentTopic(DEFAULT_TOPIC)
                 .conversationPhase(DEFAULT_PHASE)
@@ -271,7 +276,8 @@ public class DeepSeekIntentAnalyzer {
         if (ALLOWED_INTENTS.contains(normalized)) {
             return normalized;
         }
-        log.warn("意图分析返回了未注册 intent，已回退到默认意图 - rawIntent: {}", rawIntent);
+        metrics.recordIntentAnalysisFallback();
+        log.warn("意图分析返回了未注册 intent，本轮保留未确定意图 - rawIntent: {}", rawIntent);
         return DEFAULT_INTENT;
     }
 

@@ -379,8 +379,8 @@ public class AiChatStreamService {
         try {
             return userProfileClient.requestUserProfile(customerId).join();
         } catch (Exception e) {
-            log.warn("获取用户画像失败，使用空画像 - customerId: {}", customerId, e);
-            return new UserProfileDTO();
+            log.warn("获取用户画像失败，本轮跳过画像补全 - customerId: {}", customerId, e);
+            return null;
         }
     }
 

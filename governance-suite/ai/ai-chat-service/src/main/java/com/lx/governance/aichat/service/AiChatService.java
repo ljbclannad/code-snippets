@@ -259,7 +259,7 @@ public class AiChatService {
                             metrics.recordProfileFetch(() -> profile);
                         }
                         metrics.recordStageLatency(STAGE_PROFILE_FETCH, System.currentTimeMillis() - profileFetchStart);
-                    }).exceptionally(ex -> new UserProfileDTO());
+                    }).exceptionally(ex -> null);
         }
 
         return profileFuture.thenComposeAsync(profile -> {

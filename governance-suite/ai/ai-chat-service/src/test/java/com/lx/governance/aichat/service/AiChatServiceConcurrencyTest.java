@@ -30,6 +30,8 @@ import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -239,6 +241,33 @@ class AiChatServiceConcurrencyTest {
         assertEquals(15, saved.getValue().getTotalTokens());
         verify(quotaService).consumeQuota(request.getCustomerId(), "c", "request-1", 10, 5);
         Mockito.verifyNoInteractions(memory);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"unknown", "general_health_consultation"})
+    void degradedIntentOrProfileDoesNotReplaceReplyWithProfileQuestions(String intent) throws Exception {
+        var policy = ReflectionTestUtils.getField(aiChatService, "policy");
+        var completion = (ProfileCompletionProperties) ReflectionTestUtils.getField(policy, "completion");
+        completion.setEnabled(true);
+        when(sessionContextService.getOrCreateContext(any(), any(), any(), any(), any(), any()))
+                .thenReturn(SessionContext.builder().conversationId("degraded-sync").userIntent(intent).build());
+        when(userProfileClient.requestUserProfile(any()))
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("模拟画像服务不可用")));
+        var generated = new ChatGenerationResult();
+        generated.setAnswer("健康档案是健康信息记录。");
+        generated.setConversationId("degraded-sync");
+        when(deepSeekClient.chat(any(), any(), any(), any(LayeredMemories.class))).thenReturn(generated);
+        var request = buildRequest("degraded-sync");
+        request.setMessage("什么是健康档案？");
+        var result = aiChatService.handleChatRequest(request).get(3, TimeUnit.SECONDS);
+        assertTrue(result.getSuccess());
+        assertEquals("健康档案是健康信息记录。", result.getMessage());
+        Mockito.verifyNoInteractions(profileDiagnosisService, followUpStateManager, followUpResponseBuilder);
+        if ("unknown".equals(intent)) {
+            Mockito.verifyNoInteractions(userProfileClient);
+        } else {
+            verify(userProfileClient).requestUserProfile(request.getCustomerId());
+        }
     }
 
     @Test

@@ -15,6 +15,8 @@ import java.util.concurrent.RejectedExecutionException;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -38,6 +40,7 @@ import com.lx.governance.aichat.dto.TaskType;
 import com.lx.governance.aichat.dto.UserProfileDTO;
 import com.lx.governance.aichat.metrics.AiChatMetrics;
 import com.lx.governance.aichat.entity.AiChatHistory;
+import com.lx.governance.aichat.config.ProfileCompletionProperties;
 import com.lx.governance.aichat.quota.QuotaRepository;
 import com.lx.governance.aichat.quota.QuotaService;
 import com.lx.governance.aichat.quota.QuotaType;
@@ -351,7 +354,7 @@ class AiChatStreamServiceTest {
     }
 
     @Test
-    void shouldFallbackToEmptyProfileWhenProfileFetchFails() {
+    void shouldPreserveUnavailableProfileWhenProfileFetchFails() {
         SessionContext sessionContext = SessionContext.builder()
                 .conversationId("conv-2")
                 .customerId("customer-2")
@@ -382,9 +385,40 @@ class AiChatStreamServiceTest {
         aiChatStreamService.handleChatStreamRequest(request).collectList().block();
 
         verify(layeredMemoryOrchestrator).loadMemories(eq("group-2"), eq("customer-2"), eq("最近睡不好怎么办"),
-                eq(sessionContext), any(UserProfileDTO.class), eq(true), eq(5));
+                eq(sessionContext), org.mockito.ArgumentMatchers.isNull(), eq(true), eq(5));
         verify(sessionContextService).updateContext("conv-2", "最近睡不好怎么办", "先规律作息", null, request.getMessageTimestamp());
         verify(chatAsyncProcessingService, Mockito.timeout(1000)).handleChatCompleted(any(), any(), anyString());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"unknown", "general_health_consultation"})
+    void degradedIntentOrProfileDoesNotReplaceStreamWithProfileQuestions(String intent) {
+        var policy = ReflectionTestUtils.getField(aiChatStreamService, "policy");
+        var completion = (ProfileCompletionProperties) ReflectionTestUtils.getField(policy, "completion");
+        completion.setEnabled(true);
+        when(sessionContextService.getOrCreateContext(any(), any(), any(), any(), any(), any()))
+                .thenReturn(SessionContext.builder().conversationId("degraded-stream").userIntent(intent).build());
+        when(userProfileClient.requestUserProfile(any()))
+                .thenReturn(CompletableFuture.failedFuture(new RuntimeException("模拟画像服务不可用")));
+        when(layeredMemoryOrchestrator.loadMemories(any(), any(), any(), any(), any(), eq(true), eq(5)))
+                .thenReturn(CompletableFuture.completedFuture(LayeredMemories.builder().build()));
+        when(deepSeekClient.chatStream(any(), any(), any(), any(LayeredMemories.class)))
+                .thenReturn(Flux.just(StreamEvent.start("degraded-stream"), StreamEvent.content("健康档案是健康信息记录。"),
+                        StreamEvent.done("degraded-stream", null)));
+        var request = new ChatRequest();
+        request.setCustomerId("synthetic-patient");
+        request.setConversationId("degraded-stream");
+        request.setGroupId("synthetic-group");
+        request.setMessage("什么是健康档案？");
+        var events = aiChatStreamService.handleChatStreamRequest(request).collectList().block(Duration.ofSeconds(3));
+        assertEquals("健康档案是健康信息记录。", events.stream()
+                .filter(event -> event.getType() == StreamEvent.EventType.CONTENT).findFirst().orElseThrow().getContent());
+        assertEquals(StreamEvent.EventType.DONE, events.get(events.size() - 1).getType());
+        if ("unknown".equals(intent)) {
+            Mockito.verifyNoInteractions(userProfileClient);
+        } else {
+            verify(userProfileClient).requestUserProfile("synthetic-patient");
+        }
     }
 
     @Test

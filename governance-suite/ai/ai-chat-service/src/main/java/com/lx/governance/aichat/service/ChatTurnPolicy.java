@@ -56,7 +56,8 @@ public class ChatTurnPolicy {
 
     boolean loadProfile(boolean visitor, SessionContext context) {
         String intent = context.getUserIntent() == null ? "" : context.getUserIntent().trim();
-        return !visitor && !"casual_chat".equalsIgnoreCase(intent) && !"fact_query".equalsIgnoreCase(intent);
+        return !visitor && !SessionContext.UNKNOWN_INTENT.equalsIgnoreCase(intent)
+                && !"casual_chat".equalsIgnoreCase(intent) && !"fact_query".equalsIgnoreCase(intent);
     }
 
     int memoryCount(boolean visitor) {
@@ -64,7 +65,8 @@ public class ChatTurnPolicy {
     }
 
     String profileQuestion(ChatRequest request, SessionContext context, UserProfileDTO profile, TaskTriggerDecision trigger) {
-        if (!completion.isEnabled() || trigger.shouldUpgradeToAgent() || knowledge.shouldUseKnowledgeQa(trigger)
+        if (profile == null || SessionContext.UNKNOWN_INTENT.equalsIgnoreCase(context.getUserIntent())
+                || !completion.isEnabled() || trigger.shouldUpgradeToAgent() || knowledge.shouldUseKnowledgeQa(trigger)
                 || TaskTriggerRouter.hasHighRiskMedicalSignal(request.getMessage())) {
             return null;
         }

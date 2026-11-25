@@ -20,6 +20,9 @@ import com.lx.governance.aichat.dto.TaskType;
 @AllArgsConstructor
 public class SessionContext {
 
+    /** 意图分析未完成，不能据此推断患者需要补全画像。 */
+    public static final String UNKNOWN_INTENT = "unknown";
+
     /**
      * 会话ID
      */

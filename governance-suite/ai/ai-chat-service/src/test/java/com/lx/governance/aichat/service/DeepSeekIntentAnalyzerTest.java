@@ -24,12 +24,16 @@ import com.lx.governance.aichat.dto.ChatGenerationResult;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.MessageSummary;
 import com.lx.governance.aichat.dto.SessionContext;
+import com.lx.governance.aichat.metrics.AiChatMetrics;
 
 @ExtendWith(MockitoExtension.class)
 class DeepSeekIntentAnalyzerTest {
 
     @Mock
     private DeepSeekClient deepSeekClient;
+
+    @Mock
+    private AiChatMetrics metrics;
 
     @InjectMocks
     private DeepSeekIntentAnalyzer intentAnalyzer;
