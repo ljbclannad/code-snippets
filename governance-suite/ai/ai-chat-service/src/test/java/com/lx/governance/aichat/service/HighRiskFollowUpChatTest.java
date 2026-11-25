@@ -25,7 +25,8 @@ class HighRiskFollowUpChatTest {
     private final DoctorAssistantAgentEndpoint endpoint = new DoctorAssistantAgentEndpoint(
             loadBalancer, "doctor-assistant-agent", "");
     private final HighRiskFollowUpChat chat = new HighRiskFollowUpChat(client.build(), endpoint,
-            mock(AiChatMetrics.class), dispatch, true, "test-token");
+            mock(AiChatMetrics.class), dispatch, true, "test-token",
+            mock(HighRiskFollowUpHistoryService.class), mock(SessionContextService.class));
 
     @BeforeEach
     void registerDoctorInstance() {

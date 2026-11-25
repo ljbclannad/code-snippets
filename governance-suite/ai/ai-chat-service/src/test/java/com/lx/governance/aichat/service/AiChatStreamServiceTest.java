@@ -181,6 +181,25 @@ class AiChatStreamServiceTest {
     }
 
     @Test
+    void highRiskRetryRechecksRegistrationInsteadOfReplayingUnconfirmedReply() {
+        var request = new ChatRequest();
+        request.setConversationId("risk-retry");
+        request.setCustomerId("patient");
+        request.setMessage("胸痛");
+        request.setRequestId("same-risk-request");
+        when(highRiskFollowUp.handles("胸痛")).thenReturn(true);
+        when(highRiskFollowUp.conversationId(any())).thenReturn("risk-retry");
+        when(highRiskFollowUp.reply(any())).thenReturn("当前无法确认随访复核已登记", "已为你登记随访复核");
+
+        var first = aiChatStreamService.handleChatStreamRequest(request).collectList().block(Duration.ofSeconds(3));
+        var retried = aiChatStreamService.handleChatStreamRequest(request).collectList().block(Duration.ofSeconds(3));
+
+        assertTrue(first.stream().anyMatch(event -> "当前无法确认随访复核已登记".equals(event.getContent())));
+        assertTrue(retried.stream().anyMatch(event -> "已为你登记随访复核".equals(event.getContent())));
+        verify(highRiskFollowUp, Mockito.times(2)).reply(any());
+    }
+
+    @Test
     void highRiskStreamContainsOnlyPatientReply() {
         ChatRequest request = new ChatRequest();
         request.setMessage("胸痛");

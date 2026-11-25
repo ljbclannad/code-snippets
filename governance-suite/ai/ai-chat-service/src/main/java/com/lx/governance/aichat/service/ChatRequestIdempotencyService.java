@@ -48,26 +48,39 @@ public class ChatRequestIdempotencyService {
      * 成功事件同时写入 Redis，缓存 TTL 内保留本地回放以容忍 Redis 写入失败。
      */
     public Flux<StreamEvent> executeStreamOrReplay(ChatRequest request, Supplier<Flux<StreamEvent>> supplier) {
+        return executeStream(request, supplier, true);
+    }
+
+    /** 随访结果以远端持久化状态为准，只合并在途请求，不回放已完成的回复。 */
+    public Flux<StreamEvent> executeStreamInFlight(ChatRequest request, Supplier<Flux<StreamEvent>> supplier) {
+        return executeStream(request, supplier, false);
+    }
+
+    private Flux<StreamEvent> executeStream(ChatRequest request, Supplier<Flux<StreamEvent>> supplier,
+            boolean replayCompleted) {
         return Flux.defer(() -> {
             String requestId = normalizeRequestId(request);
             if (requestId == null) {
                 return supplier.get();
             }
-            String key = "stream:" + buildCacheKey(request.getConversationId(), requestId);
-            return streamResponses.computeIfAbsent(key, ignored -> createSharedStream(key, supplier));
+            String key = (replayCompleted ? "stream:" : "follow-up:")
+                    + buildCacheKey(request.getConversationId(), requestId);
+            return streamResponses.computeIfAbsent(key, ignored -> createSharedStream(key, supplier, replayCompleted));
         }).subscribeOn(Schedulers.boundedElastic());
     }
 
-    private Flux<StreamEvent> createSharedStream(String key, Supplier<Flux<StreamEvent>> supplier) {
+    private Flux<StreamEvent> createSharedStream(String key, Supplier<Flux<StreamEvent>> supplier,
+            boolean replayCompleted) {
         AtomicReference<Flux<StreamEvent>> shared = new AtomicReference<>();
         Flux<StreamEvent> source = Flux.defer(() -> {
             List<StreamEvent> events = new ArrayList<>();
-            return readStreamCache(key).switchIfEmpty(Flux.defer(supplier))
+            return (replayCompleted ? readStreamCache(key) : Flux.<StreamEvent>empty())
+                    .switchIfEmpty(Flux.defer(supplier))
                     .doOnNext(events::add)
                     .doOnComplete(() -> {
                         boolean completed = events.stream().anyMatch(event -> event.getType() == StreamEvent.EventType.DONE)
                                 && events.stream().noneMatch(event -> event.getType() == StreamEvent.EventType.ERROR);
-                        if (completed) {
+                        if (replayCompleted && completed) {
                             try {
                                 redisTemplate.opsForValue().set(key, objectMapper.writeValueAsString(events),
                                         Duration.ofMinutes(responseTtlMinutes));

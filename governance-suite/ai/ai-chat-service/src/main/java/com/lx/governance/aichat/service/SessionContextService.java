@@ -5,6 +5,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.IntStream;
 
@@ -16,6 +17,7 @@ import org.springframework.http.HttpStatus;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lx.governance.aichat.dto.DoctorAssistantTaskResponse;
+import com.lx.governance.aichat.dto.ChatRequest;
 import com.lx.governance.aichat.dto.MessageSummary;
 import com.lx.governance.aichat.dto.SessionContext;
 import com.lx.governance.aichat.dto.TaskTriggerDecision;
@@ -161,7 +163,55 @@ public class SessionContextService {
         }
     }
 
-    // 其他方法将在下一个任务实现
+    /** 随访固定回复不经过意图模型；先创建上下文，再按首次接收顺序保存患者摘要。 */
+    public void recordFollowUpTurn(ChatRequest request, long receivedAt, Long taskId, String taskStatus) {
+        String conversationId = request.getConversationId();
+        synchronized (contextLock(conversationId)) {
+            String key = CONTEXT_KEY_PREFIX + conversationId;
+            SessionContext context = getFromRedis(key);
+            if (context == null) {
+                context = getFromRedis("ai:session:context:" + conversationId);
+            }
+            if (context != null && !Objects.equals(request.getCustomerId(), context.getCustomerId())) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN, "会话归属不匹配");
+            }
+            if (context == null) {
+                context = createDefaultContext(conversationId, request.getCustomerId(), request.getGroupId());
+            }
+            if (isStaleWrite(context, request.getRequestId(), receivedAt)) {
+                return;
+            }
+            boolean sameRequest = request.getRequestId() != null && !request.getRequestId().isBlank()
+                    && request.getRequestId().equals(context.getLastProcessedRequestId());
+            boolean sameTurn = sameRequest || Objects.equals(context.getLastMessageAt(), receivedAt)
+                    && Objects.equals(context.getLastProcessedRequestId(), request.getRequestId());
+            if (!sameTurn) {
+                List<MessageSummary> summaries = context.getRecentSummaries();
+                if (summaries == null) {
+                    summaries = new ArrayList<>();
+                    context.setRecentSummaries(summaries);
+                }
+                summaries.add(MessageSummary.builder().userMessage(truncateMessage(request.getMessage(), MAX_SUMMARY_LENGTH))
+                        .timestamp(receivedAt).build());
+                int windowSize = "complex".equals(context.getComplexity()) ? COMPLEX_WINDOW_SIZE : SIMPLE_WINDOW_SIZE;
+                summaries.subList(0, Math.max(0, summaries.size() - windowSize)).clear();
+                context.setMessageCount((context.getMessageCount() == null ? 1 : context.getMessageCount()) + 1);
+            }
+            if (taskId != null) {
+                if (context.getExtractedData() == null) {
+                    context.setExtractedData(new HashMap<>());
+                }
+                context.getExtractedData().put("followUpTaskId", taskId);
+                context.getExtractedData().put("followUpTaskStatus", taskStatus);
+            }
+            context.setLastMessageAt(receivedAt);
+            context.setLastProcessedRequestId(request.getRequestId());
+            context.setLastUpdateTime(System.currentTimeMillis());
+            context.setContextVersion(nextVersion(context.getContextVersion()));
+            saveToRedis(key, context);
+        }
+    }
+
     private SessionContext getFromRedis(String key) {
         try {
             String json = redisTemplate.opsForValue().get(key);

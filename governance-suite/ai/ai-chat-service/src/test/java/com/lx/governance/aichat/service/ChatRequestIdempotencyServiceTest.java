@@ -12,6 +12,8 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -39,6 +41,40 @@ class ChatRequestIdempotencyServiceTest {
         service = new ChatRequestIdempotencyService(redis, mapper);
         ReflectionTestUtils.setField(service, "responseTtlMinutes", 10L);
         request.setRequestId("request-1");
+    }
+
+    @Test
+    void followUpSharesOnlyInFlightExecutionAndIgnoresCompletedCaches() throws Exception {
+        request.setConversationId("conversation");
+        var source = Sinks.many().replay().<StreamEvent>all();
+        var calls = new AtomicInteger();
+        var started = new CountDownLatch(2);
+        var stream = service.executeStreamInFlight(request, () -> {
+            calls.incrementAndGet();
+            return source.asFlux();
+        }).doOnNext(event -> {
+            if (event.getType() == StreamEvent.EventType.START) {
+                started.countDown();
+            }
+        });
+        var first = stream.collectList().toFuture();
+        var second = stream.collectList().toFuture();
+        source.tryEmitNext(StreamEvent.start("conversation"));
+        assertTrue(started.await(2, TimeUnit.SECONDS));
+        first.cancel(true);
+        source.tryEmitNext(StreamEvent.content("无法确认"));
+        source.tryEmitNext(StreamEvent.done("conversation", null));
+        source.tryEmitComplete();
+        assertEquals(3, second.get(2, TimeUnit.SECONDS).size());
+        assertEquals(1, calls.get());
+
+        var retried = service.executeStreamInFlight(request, () -> {
+            calls.incrementAndGet();
+            return Flux.just(StreamEvent.content("已确认"), StreamEvent.done("conversation", null));
+        }).collectList().block(Duration.ofSeconds(2));
+        assertEquals("已确认", retried.get(0).getContent());
+        assertEquals(2, calls.get());
+        verifyNoInteractions(values);
     }
 
     @Test

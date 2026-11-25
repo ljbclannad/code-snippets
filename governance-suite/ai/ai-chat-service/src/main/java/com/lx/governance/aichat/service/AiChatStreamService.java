@@ -67,6 +67,9 @@ public class AiChatStreamService {
         ChatTurnOrder.begin(request);
         return Flux.defer(() -> {
             ensureConversationId(request);
+            if (highRiskFollowUp.handles(request.getMessage())) {
+                return idempotencyService.executeStreamInFlight(request, () -> executeChatStreamRequest(request));
+            }
             return idempotencyService.executeStreamOrReplay(request, () -> executeChatStreamRequest(request));
         });
     }

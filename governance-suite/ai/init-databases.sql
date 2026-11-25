@@ -229,7 +229,11 @@ CREATE TABLE `t_ai_chat_history` (
   `total_tokens` int DEFAULT NULL COMMENT 'Total tokens',
   `create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
   `is_deleted` tinyint NOT NULL DEFAULT '0' COMMENT '是否删除（0-未删除，1-已删除）',
+  `follow_up_key` varchar(64) CHARACTER SET ascii COLLATE ascii_bin DEFAULT NULL COMMENT '随访问答请求去重键',
+  `follow_up_confirmed` tinyint NOT NULL DEFAULT '0' COMMENT '是否已确认远端结果',
+  `follow_up_received_at` bigint DEFAULT NULL COMMENT '随访问答首次接收时间',
   PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_follow_up_turn` (`follow_up_key`),
   KEY `idx_customer_conversation` (`customer_id`,`conversation_id`),
   KEY `idx_customer_deleted_time` (`customer_id`,`is_deleted`,`create_time`),
   KEY `idx_conversation_time` (`conversation_id`,`create_time`)
