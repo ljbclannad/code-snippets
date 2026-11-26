@@ -187,12 +187,15 @@ class ToolRegistryTest {
         ToolExecutionOutput plateauOutput = assertInstanceOf(
             ToolExecutionOutput.class,
             toolRegistry.getTool("detect_weight_plateau").getExecutor().execute(Map.of("weightRecords", List.of(
-                Map.of("date", LocalDate.now().minusDays(14).toString(), "weight", 80.0),
-                Map.of("date", LocalDate.now().minusDays(7).toString(), "weight", 80.1),
+                Map.of("date", LocalDate.now().minusDays(13).toString(), "weight", 80.0),
+                Map.of("date", LocalDate.now().minusDays(6).toString(), "weight", 80.1),
                 Map.of("date", LocalDate.now().toString(), "weight", 80.0)
             )))
         );
         assertTrue(plateauOutput.getStateUpdates().containsKey("plateau_assessment"));
+        Map<?, ?> plateauAssessment = assertInstanceOf(Map.class, plateauOutput.getData());
+        assertEquals("PLATEAU", plateauAssessment.get("reasonCode"));
+        assertEquals(14, plateauAssessment.get("windowDays"));
 
         ToolExecutionOutput adherenceOutput = assertInstanceOf(
             ToolExecutionOutput.class,

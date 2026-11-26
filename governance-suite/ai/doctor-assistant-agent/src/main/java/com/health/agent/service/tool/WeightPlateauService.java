@@ -44,7 +44,11 @@ public class WeightPlateauService {
     }
 
     public Map<String, Object> detectPlateau(List<Map<String, Object>> weightRecords) {
+        LocalDate today = LocalDate.now();
+        LocalDate windowStart = today.minusDays(windowDays - 1L);
         List<RecordPoint> points = normalize(weightRecords);
+        // 窗口包含今天及此前指定天数，允许缺测，但不使用窗口外或未来的记录。
+        points.removeIf(point -> point.date().isBefore(windowStart) || point.date().isAfter(today));
         if (points.size() < 2) {
             return insufficientData();
         }
@@ -52,13 +56,8 @@ public class WeightPlateauService {
         points.sort(Comparator.comparing(RecordPoint::date));
         RecordPoint earliest = points.get(0);
         RecordPoint latest = points.get(points.size() - 1);
-        long coveredDays = latest.date().toEpochDay() - earliest.date().toEpochDay();
-        if (coveredDays < windowDays) {
-            return insufficientData();
-        }
-
         double totalChange = latest.weight() - earliest.weight();
-        LocalDate recentStart = latest.date().minusDays(recentTrendDays - 1L);
+        LocalDate recentStart = today.minusDays(recentTrendDays - 1L);
         List<RecordPoint> recentPoints = new ArrayList<>();
         for (RecordPoint point : points) {
             if (!point.date().isBefore(recentStart)) {
@@ -81,8 +80,10 @@ public class WeightPlateauService {
             "recentChangeKg", round(recentChange),
             "reasonCode", plateau ? "PLATEAU" : "NO_PLATEAU",
             "reason", plateau
-                ? "近两周体重变化较小，且最近一周未出现明显下降趋势，可判定为减重停滞期。"
-                : "最近一周仍存在下降趋势或整体变化超过停滞阈值，暂不判定为停滞期。",
+                ? "近%d天窗口内体重变化较小，且最近%d天未出现明显下降趋势，可判定为减重停滞期。"
+                    .formatted(windowDays, recentTrendDays)
+                : "最近%d天仍存在下降趋势或近%d天窗口内体重变化达到停滞阈值，暂不判定为停滞期。"
+                    .formatted(recentTrendDays, windowDays),
             "evidence", List.of(
                 "近%d天体重变化 %.1fkg".formatted(windowDays, round(totalChange)),
                 "最近%d天趋势为 %s".formatted(recentTrendDays, recentTrend)
@@ -109,7 +110,8 @@ public class WeightPlateauService {
             "recentTrend", "UNKNOWN",
             "recentChangeKg", 0.0,
             "reasonCode", "INSUFFICIENT_DATA",
-            "reason", "体重记录覆盖时长不足，无法判断是否进入停滞期。"
+            "reason", "近%d天窗口或其中最近%d天的有效体重记录不足两条，无法判断是否进入停滞期。"
+                .formatted(windowDays, recentTrendDays)
         );
     }
 
