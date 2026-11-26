@@ -117,7 +117,15 @@ public class AiChatStreamService {
         }
         ChatResponse early = policy.earlyResponse(request);
         if (early != null) {
-            return patientReply(sessionId, early.getMessage(), early.getPatientVisibleEvidence());
+            // 早返回同样记录已交付的事件，并在完成或取消时结束本次采集。
+            StreamResponseAccumulator accumulator = new StreamResponseAccumulator();
+            return patientReply(sessionId, early.getMessage(), early.getPatientVisibleEvidence())
+                    .doOnNext(event -> {
+                        accumulator.accumulate(event);
+                        captureSafely(() -> evaluationCollector.event(request, event));
+                    })
+                    .doFinally(signal -> captureSafely(() ->
+                            evaluationCollector.completeStream(request, accumulator, signal.name())));
         }
         String correlationId = UUID.randomUUID().toString();
         long startTime = System.currentTimeMillis();

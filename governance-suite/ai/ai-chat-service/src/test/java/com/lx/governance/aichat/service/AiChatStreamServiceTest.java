@@ -16,6 +16,7 @@ import java.util.concurrent.RejectedExecutionException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
@@ -30,6 +31,17 @@ import com.lx.governance.aichat.client.DeepSeekClient;
 import com.lx.governance.aichat.dto.DoctorAssistantTaskRequest;
 import com.lx.governance.aichat.client.UserProfileClientFixed;
 import com.lx.governance.aichat.dto.ChatRequest;
+import com.lx.governance.aichat.dto.ChatResponse;
+import com.lx.governance.aichat.dto.PatientVisibleEvidence;
+import com.lx.governance.aichat.degradation.DegradationLevel;
+import com.lx.governance.aichat.degradation.DegradationManager;
+import com.lx.governance.aichat.degradation.DegradationStrategyExecutor;
+import com.lx.governance.aichat.evaluation.ChatEvaluationCollector;
+import com.lx.governance.aichat.evaluation.EvaluationBinding;
+import com.lx.governance.aichat.evaluation.EvaluationCaptureProperties;
+import com.lx.governance.aichat.evaluation.EvaluationCaptureTransport;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lx.governance.aichat.dto.LayeredMemories;
 import com.lx.governance.aichat.dto.MemoryItemDTO;
 import com.lx.governance.aichat.dto.SessionContext;
@@ -78,6 +90,10 @@ class AiChatStreamServiceTest {
     private VisitorIdentityService visitorIdentityService;
     @Mock
     private HighRiskFollowUpChat highRiskFollowUp;
+    @Mock
+    private DegradationManager degradation;
+    @Mock
+    private DegradationStrategyExecutor strategy;
 
     private AiChatStreamService aiChatStreamService;
 
@@ -87,8 +103,6 @@ class AiChatStreamServiceTest {
         var runtime = new AgentConversationRouteRuntime(agentDispatchPolicy, true, 600000L);
         var completion = new com.lx.governance.aichat.config.ProfileCompletionProperties();
         completion.setEnabled(false);
-        var degradation = Mockito.mock(com.lx.governance.aichat.degradation.DegradationManager.class);
-        var strategy = Mockito.mock(com.lx.governance.aichat.degradation.DegradationStrategyExecutor.class);
         when(degradation.isFeatureEnabled("memory")).thenReturn(true);
         when(strategy.getMemoryRetrievalCount()).thenReturn(5);
         aiChatStreamService = new AiChatStreamService(
@@ -266,6 +280,87 @@ class AiChatStreamServiceTest {
         assertEquals(165, done.getTokenUsage().getTotalTokens());
         assertEquals(1, records.findByCustomerId("customer").size());
         assertEquals(165, records.findByCustomerId("customer").get(0).getTotalTokens());
+    }
+
+    @ParameterizedTest
+    @CsvSource({"false,false", "true,false", "false,true", "true,true"})
+    void shouldPublishEarlyReplyCapture(boolean circuitBreak, boolean cancelBeforeDone) {
+        ChatRequest request = earlyReplyRequest(circuitBreak);
+        var properties = new EvaluationCaptureProperties();
+        properties.setEnabled(true);
+        properties.setHashKey("early-reply-test-hash-key");
+        var transport = Mockito.mock(EvaluationCaptureTransport.class);
+        var collector = new ChatEvaluationCollector(properties, new ObjectMapper(), transport,
+                new SimpleMeterRegistry());
+        ReflectionTestUtils.setField(aiChatStreamService, "evaluationCollector", collector);
+        try {
+            Flux<StreamEvent> stream = aiChatStreamService.handleChatStreamRequest(request);
+            List<StreamEvent> events = (cancelBeforeDone ? stream.take(3) : stream)
+                    .collectList().block(Duration.ofSeconds(3));
+
+            assertEquals(cancelBeforeDone
+                    ? List.of(StreamEvent.EventType.START, StreamEvent.EventType.STATUS, StreamEvent.EventType.CONTENT)
+                    : List.of(StreamEvent.EventType.START, StreamEvent.EventType.STATUS,
+                            StreamEvent.EventType.CONTENT, StreamEvent.EventType.DONE),
+                    events.stream().map(StreamEvent::getType).toList());
+            assertEquals("early-conversation", events.get(0).getConversationId());
+            assertEquals("evidence", events.get(1).getStage());
+            assertEquals(1, events.get(1).getDetails().get("count"));
+            assertEquals("测试早返回回复", events.get(2).getContent());
+            var observation = ArgumentCaptor.forClass(JsonNode.class);
+            verify(transport, Mockito.timeout(1000)).publish(eq("early-batch"), observation.capture());
+            JsonNode captured = observation.getValue();
+            assertEquals("early-case", captured.path("caseId").asText());
+            assertEquals(1, captured.path("trial").asInt());
+            assertEquals("测试早返回回复", captured.at("/output/response/message").asText());
+            assertEquals(!cancelBeforeDone, captured.at("/output/response/success").asBoolean());
+            assertEquals("STREAM", captured.at("/output/capture/mode").asText());
+            assertTrue(captured.path("totalTokens").isNull());
+            if (cancelBeforeDone) {
+                assertEquals("STREAM_CANCELLED", captured.path("error").asText());
+            } else {
+                assertTrue(captured.path("error").isNull());
+            }
+            Mockito.verifyNoMoreInteractions(transport);
+            Mockito.verifyNoInteractions(deepSeekClient, chatAsyncProcessingService, quotaService);
+        } finally {
+            collector.close();
+        }
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void earlyReplySurvivesCaptureFailure(boolean circuitBreak) {
+        ChatRequest request = earlyReplyRequest(circuitBreak);
+        var collector = Mockito.mock(ChatEvaluationCollector.class);
+        ReflectionTestUtils.setField(aiChatStreamService, "evaluationCollector", collector);
+        Mockito.doThrow(new IllegalStateException("采集事件不可用")).when(collector).event(any(), any());
+        Mockito.doThrow(new IllegalStateException("采集上报不可用")).when(collector).completeStream(any(), any(), any());
+
+        List<StreamEvent> events = aiChatStreamService.handleChatStreamRequest(request)
+                .collectList().block(Duration.ofSeconds(3));
+
+        assertEquals("测试早返回回复", events.get(2).getContent());
+        assertEquals(StreamEvent.EventType.DONE, events.get(3).getType());
+        verify(collector, Mockito.timeout(1000)).completeStream(any(), any(), eq("ON_COMPLETE"));
+    }
+
+    private ChatRequest earlyReplyRequest(boolean circuitBreak) {
+        ChatRequest request = new ChatRequest();
+        request.setConversationId("early-conversation");
+        request.setCustomerId("early-customer");
+        request.setMessage("测试早返回问题");
+        request.setEvaluation(new EvaluationBinding("early-batch", "early-case", 1));
+        ChatResponse response = ChatResponse.success("测试早返回回复", request.getConversationId(),
+                List.of(PatientVisibleEvidence.builder().title("测试证据").summary("合成材料").build()));
+        when(degradation.getCurrentLevel()).thenReturn(circuitBreak
+                ? DegradationLevel.CIRCUIT_BREAK : DegradationLevel.CRITICAL);
+        if (circuitBreak) {
+            when(strategy.getCircuitBreakResponse(request.getConversationId())).thenReturn(response);
+        } else {
+            when(strategy.getCachedResponse(request.getCustomerId(), request.getMessage())).thenReturn(response);
+        }
+        return request;
     }
 
     @Test
