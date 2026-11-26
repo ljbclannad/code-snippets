@@ -14,6 +14,30 @@
 - [工程导向说明](docs/减重管理医生助手工程指南.md)
 - [流式链路架构说明](docs/医生助手智能体流式链路架构说明.md)
 
+## 服务分层
+
+- [`service.tool`](src/main/java/com/health/agent/service/tool) 提供具体工具调用的业务能力，包括患者资料查询、健康知识检索、体重停滞期识别、依从性分析和随访任务管理。例如，工具 `get_patient_profile` 通过 `PatientService.getProfile` 查询患者档案。
+- [`service.agent`](src/main/java/com/health/agent/service/agent) 负责患者任务编排、会话与上下文管理、审批恢复和审计。从 `PatientTaskAgentService` 可以跟踪一次患者任务，从 `AgentSessionWorkflowService` 可以查看审批与恢复流程。
+
+### 跟踪一次工具调用
+
+以读取患者档案为例。开启下文的模拟模式后，第一轮模型回复会选择 `get_patient_profile`。调试时可以沿着这条路径设置断点。
+
+| 步骤 | 看什么 | 源码入口 |
+| --- | --- | --- |
+| 1. 解析模型回复 | 完整 JSON 通过协议校验后，`finished=false` 分支将 `action.toolName`、`action.input` 和调用理由组装成 `ActionDecision`。流式入口也要等完整 JSON 到达。 | [ReActResponseParser.parse](src/main/java/com/health/agent/engine/ReActResponseParser.java) |
+| 2. 取出动作 | 在引擎中定位 `thought.getAction()`。安全检查和重复动作检查通过后，引擎调用 `actionExecutor.execute(...)`。 | [ReActAgentEngine](src/main/java/com/health/agent/engine/ReActAgentEngine.java) |
+| 3. 查找与执行 | 执行器按名称取出工具，检查权限、入参和风险等级。`get_patient_profile` 在启动时已由 `resolveExecutor` 绑定到 `getPatientProfile`；运行时由 `tool.getExecutor().execute(input)` 调用。 | [ActionExecutor](src/main/java/com/health/agent/engine/ActionExecutor.java) · [ToolRegistry](src/main/java/com/health/agent/tool/ToolRegistry.java) |
+| 4. 查询与回写 | `PatientService.getProfile(customerId)` 查询档案。工具把业务数据、`patient_profile` 状态更新和来源证据放入 `ToolExecutionOutput`。执行器将其适配为 `PlatformToolOutput`，上下文服务再写入状态和证据。 | [PatientService](src/main/java/com/health/agent/service/tool/PatientService.java) · [输出适配器](src/main/java/com/health/agent/tool/PlatformToolOutputAdapter.java) · [上下文更新](src/main/java/com/health/agent/service/agent/AgentContextMutationService.java) |
+
+改模型回复格式时看 `ReActResponseParserTest`，改工具绑定或业务返回值时看 `ToolRegistryTest`，改执行策略时看 `ActionExecutorTest`，改输出字段映射时看 `PlatformToolOutputAdapterTest`。从 `governance-suite` 根目录运行这四组测试：
+
+```bash
+mvn -pl ai/doctor-assistant-agent -am \
+  -Dtest=ReActResponseParserTest,ToolRegistryTest,ActionExecutorTest,PlatformToolOutputAdapterTest \
+  -Dsurefire.failIfNoSpecifiedTests=false test
+```
+
 ## 模型输入与调用成本
 
 - 本版输入记为 `doctor-react-prompt-v2`，模型输出按 JSON 协议 `v1` 解析。运行快照记录实际使用的提示词版本。

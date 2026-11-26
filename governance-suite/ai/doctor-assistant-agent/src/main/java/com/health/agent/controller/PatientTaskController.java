@@ -23,7 +23,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import com.health.agent.dto.patient.DoctorAssistantTaskRequest;
 import com.health.agent.dto.patient.DoctorAssistantTaskResponse;
 import com.health.agent.model.AgentStreamEvent;
-import com.health.agent.service.PatientTaskAgentService;
+import com.health.agent.service.agent.PatientTaskAgentService;
 
 import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;

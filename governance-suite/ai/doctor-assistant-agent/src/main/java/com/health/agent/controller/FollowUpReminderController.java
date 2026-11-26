@@ -1,7 +1,7 @@
 package com.health.agent.controller;
 
 import com.health.agent.config.FollowUpReminderProperties;
-import com.health.agent.service.HighRiskFollowUpService;
+import com.health.agent.service.agent.HighRiskFollowUpService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;

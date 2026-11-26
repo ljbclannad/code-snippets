@@ -8,7 +8,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
-import com.health.agent.service.DoctorRunReplayService;
+import com.health.agent.service.agent.DoctorRunReplayService;
 import com.lx.governance.agentplatform.model.RunReplayView;
 
 class RunReplayControllerTest {

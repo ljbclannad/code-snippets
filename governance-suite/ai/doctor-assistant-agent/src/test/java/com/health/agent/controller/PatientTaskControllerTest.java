@@ -17,7 +17,7 @@ import com.health.agent.dto.patient.TaskType;
 import com.health.agent.config.FollowUpReminderProperties;
 import com.health.agent.exception.AgentException;
 import com.health.agent.metrics.AgentMetrics;
-import com.health.agent.service.PatientTaskAgentService;
+import com.health.agent.service.agent.PatientTaskAgentService;
 
 import java.util.concurrent.ExecutorService;
 

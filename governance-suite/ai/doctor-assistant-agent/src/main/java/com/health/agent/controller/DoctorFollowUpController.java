@@ -2,8 +2,8 @@ package com.health.agent.controller;
 
 import com.alibaba.fastjson2.JSON;
 import com.health.agent.model.PendingTask;
-import com.health.agent.service.HighRiskFollowUpService;
-import com.health.agent.service.PendingTaskService;
+import com.health.agent.service.agent.HighRiskFollowUpService;
+import com.health.agent.service.agent.PendingTaskService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Size;
