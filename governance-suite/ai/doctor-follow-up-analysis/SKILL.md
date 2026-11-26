@@ -96,20 +96,21 @@ description: 面向减重管理随访场景的通用 Agent 技能说明。用于
 - 没有足够证据时，不触发高风险建议，也不输出过度确定的因果判断。
 - 先读取、再分析、后执行写操作；避免一上来就 `send_reminder` 或 `create_follow_up_task`。
 - 对可能影响治疗方案的建议，默认走人工审核链路。
+- 提醒与报告工具的占位成功结果不代表真实投递，实际执行边界见工具清单。
 
 ## 参考资料
 
-- 工具目录与分级：见 `references/工具清单.md`
-- 工具调用规定与边界：见 `references/工具调用规定与边界.md`
-- 场景化工作流与示例：见 `references/工作流示例.md`
-- 标准输出 JSON 模板：见 `references/output-schema.json`
+- 工具目录与分级：见[工具清单](references/工具清单.md)
+- 工具调用规定与边界：见[调用边界](references/工具调用规定与边界.md)
+- 场景化工作流与示例：见[工作流示例](references/工作流示例.md)
+- 技能输出 JSON 示例：见 [output-schema.json](references/output-schema.json)（示例载荷，不是运行时 JSON Schema）
 - 如果需要最新工具入参与风险等级，以项目源码为准：
-  `doctor-assistant-agent/src/main/java/com/health/agent/scene/doctor/tool/DoctorToolDefinitionRegistry.java`
+  [DoctorToolDefinitionRegistry](../doctor-assistant-agent/src/main/java/com/health/agent/scene/doctor/tool/DoctorToolDefinitionRegistry.java)
 
 ## 使用建议
 
 - 先读 `references/工具清单.md`，确认有哪些工具可用。
 - 涉及真实写操作或高风险动作前，先读 `references/工具调用规定与边界.md`。
 - 再按 `references/工作流示例.md` 选择最接近当前任务的流程。
-- 需要结构化返回结果时，按 `references/output-schema.json` 输出。
+- 需要结构化返回结果时，参考示例字段；运行时 API 仍以 DTO 与 ReAct 解析协议为准，不将技能示例当成接口校验 Schema。
 - 仅在任务确实需要时才进入中风险和高风险工具。

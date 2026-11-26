@@ -55,24 +55,30 @@ mvn -pl ai/doctor-assistant-agent -am \
 - MySQL 8.0+
 - Redis 7.0+
 
-### 数据库初始化
+### 首次运行与验收
 
-```bash
-mysql -u root -p < sql/schema.sql
-```
+以下命令均从 `governance-suite` 根目录执行。示例使用本地 MySQL、Redis、Nacos 和模拟模型回复。工具查询、会话持久化和审计仍使用开发环境的真实依赖。
 
-如果本地数据库已是旧表结构，还需要执行迁移：
+1. 按[数据库指南](../数据库初始化说明.md)准备独立的 `doctor_assistant` 开发库，在启动终端配置 `DOCTOR_DB_PASSWORD`，Redis 启用认证时配置 `REDIS_PASSWORD`。数据库默认账号为 `doctor_app`，可通过 `AI_DOCTOR_MYSQL_USERNAME` 覆盖。冒烟脚本使用合成患者 `C001` 和医生 `D001`。如需查看有数据的档案，[样例数据脚本](sql/test_data.sql)含该患者记录，但会先清空多张表，仅适用于可重建的测试库。
+2. 在终端一安装当前源码对应的共享依赖，并启动医生助手。将 `NACOS_NAMESPACE` 设为本地已有的开发命名空间 ID，默认值为 `ai-local`。模拟回复的开关是 `doctor.agent.runtime.use-mock`；需要验证真实模型时，注入 `DEEPSEEK_API_KEY` 并移除该启动参数。[运行配置](src/main/resources/application.yml)
 
-```bash
-mysql -u root -p < sql/migrations/2026-05-30-add-agent-audit-columns.sql
-```
+   ```bash
+   export AI_MIDDLEWARE_HOST=localhost
+   mvn -pl ai/agent-platform-common -am -DskipTests install
+   mvn -f ai/doctor-assistant-agent/pom.xml spring-boot:run \
+     -Dspring-boot.run.arguments=--doctor.agent.runtime.use-mock=true
+   ```
 
-### 编译运行
+3. 在终端二确认健康端点返回 `UP`，再发送一次医生侧请求。脚本调用 `POST /api/agent/execute` 并打印 SSE 事件流。[冒烟脚本](test/agent-execute-smoke.sh)
 
-```bash
-mvn -f pom.xml clean package
-mvn -f pom.xml spring-boot:run
-```
+   ```bash
+   curl -fsS http://localhost:8088/actuator/health
+   bash ai/doctor-assistant-agent/test/agent-execute-smoke.sh
+   ```
+
+   脚本退出码为 0 表示收到了 HTTP 200，响应中含有 `sessionId`，并出现了 `SUCCESS` 或 `PENDING_APPROVAL` 状态。要验证患者档案查询，可在同一会话的 `action` 事件中查找 `get_patient_profile`，再看随后的 `observation`；`PENDING_APPROVAL` 表示本轮已暂停等待医生复核。
+
+完整环境变量与调试步骤见[运行指南](../本地运行与排障.md)。双角色操作见[随访演示](../高风险随访演示.md)。普通 ReAct 的提醒／报告工具仍是占位实现，详见[工具清单](../doctor-follow-up-analysis/references/工具清单.md#中风险工具)，与下述站内投递流程不同。
 
 ## 高风险随访提醒
 
@@ -82,7 +88,7 @@ mvn -f pom.xml spring-boot:run
 
 同步和流式分析入口均按服务端 `agent.follow-up-reminder.doctors` 的患者映射绑定责任医生，调用方可以省略 `doctorId`。普通任务缺少映射时返回 `SKIPPED`、`fallbackReason=DOCTOR_NOT_ASSIGNED` 和患者可见说明。上线普通 Agent 前也需配置该映射。两个分析接口仅供服务间调用，和进度接口共用 `FOLLOW_UP_SERVICE_TOKEN`。缺失或错误凭据返回 403，原始 Agent 事件仅供内部消费。
 
-`GET /internal/patient-tasks/review-status` 接收 `customerId` 与 `conversationId`，使用与随访登记相同的 `X-Follow-Up-Token` 服务认证。返回值示例为 `{"status":"APPROVED","delivered":false}`。查询按最新审批任务编号排序，状态来自审批表，投递来自站内收件箱回执。普通复核获批可以没有投递。旧环境的迁移顺序见[患者聊天入口与会话归属](../README.md#患者聊天入口与会话归属)。
+`GET /internal/patient-tasks/review-status` 接收 `customerId` 与 `conversationId`，使用与随访登记相同的 `X-Follow-Up-Token` 服务认证。返回值示例为 `{"status":"APPROVED","delivered":false}`。查询按最新审批任务编号排序，状态来自审批表，投递来自站内收件箱回执。普通复核获批可以没有投递。旧环境的迁移顺序见[数据库升级说明](../数据库初始化说明.md#已有环境升级)。
 
 ### 开启试点
 
@@ -127,7 +133,3 @@ mvn -pl ai/ai-chat-service,ai/doctor-assistant-agent -am \
 ```
 
 集成测试默认用 H2 的 MySQL 模式，覆盖工作台审批、患者收件箱、并发创建和批准、拒绝与事务回滚。可用一个全新、隔离的 MySQL 测试库运行相同测试，传入 `-DfollowUpTest.jdbcUrl=jdbc:mysql://127.0.0.1:端口/测试库` 及 `-DfollowUpTest.user=测试用户`。测试会建表，使用合成身份与消息。测试账户密码可通过 `FOLLOW_UP_TEST_DB_PASSWORD` 注入。
-
-## 重要补充文档
-
-- 患者任务升级与 Agent 增强事项当前已收敛在仓库级平台/运行时设计文档中，当前目录下未单独维护 `PATIENT_TASK_AGENT_EXECUTION_TODO.md`

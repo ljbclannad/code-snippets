@@ -1,4 +1,4 @@
-# Knowledge Base Service
+# 医疗知识库服务
 
 `knowledge-base-service` 现在不只是“文档上传 + 语义检索”服务，而是医疗 RAG 的后端知识生产与治理底座，覆盖：
 
@@ -142,11 +142,13 @@
 
 ### 1. 本地种子库导入
 
+先自行准备可供服务进程读取的 manifest 和 Markdown/PDF 文件。仓库当前未附带旧示例中的 `docs/medical-seed-library/manifest.json`；下面的路径是占位，需替换为实际绝对路径。导入前核对本模块的本地批量导入请求和 manifest 解析实现。
+
 ```bash
 curl -X POST "http://localhost:8103/api/kb/<kbId>/documents/local-batch-import" \
   -H "Content-Type: application/json" \
   -d '{
-    "manifestPath": "knowledge-base-service/docs/medical-seed-library/manifest.json",
+    "manifestPath": "/替换为实际目录/manifest.json",
     "createdBy": "medical-rag-bootstrap"
   }'
 ```
@@ -187,15 +189,17 @@ curl -X POST "http://localhost:8103/api/kb/<kbId>/documents/crawl" \
 
 ## 本地运行与验证
 
+所有命令从 `governance-suite` 根目录执行；环境准备见[运行指南](../本地运行与排障.md)。
+
 ```bash
 mvn -q -pl ai/knowledge-base-service spring-boot:run
 ```
 
 ```bash
-mvn -f knowledge-base-service/pom.xml test
+mvn -f ai/knowledge-base-service/pom.xml test
 ```
 
-本轮重点验证过的测试：
+可按变更范围选择以下现有测试（此处列出入口，不表示本轮已执行）：
 
 - `MedicalRetrievalProfileServiceTest`
 - `KnowledgeSearchEnhancementServiceTest`
@@ -204,5 +208,5 @@ mvn -f knowledge-base-service/pom.xml test
 
 ## 说明
 
-- 当前数据库初始化脚本仍以 [src/main/resources/db/init_kb_service.sql](src/main/resources/db/init_kb_service.sql) 为准。
+- 模块结构参考 [init_kb_service.sql](src/main/resources/db/init_kb_service.sql)，初始化与已有表升级的区别见[数据库指南](../数据库初始化说明.md)。
 - 这一版已经能支撑 `ai-chat-service` 的 KB QA 路由和 `doctor-assistant-agent` 的证据检索工具。

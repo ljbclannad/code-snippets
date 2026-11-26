@@ -33,7 +33,7 @@ ai-chat-service ── 路由、放行、上下文投影 ──► doctor-assist
 | `runtime/` | 路由、放行、上下文投影、Agent 选择、循环执行、状态机、审批与仓储接口 | 复用跨服务的执行和治理规则，供业务服务接入或实现 |
 | `runtime/` | `RunReplayService`、`PlatformMetricsService`、Prompt 注册与渲染接口 | 支持运行回放、指标记录和 Prompt 管理 |
 
-其中，`RunStateMachine` 集中定义运行状态转换；仓储接口定义持久化边界。`InMemoryRunPersistenceRepository` 等内存实现主要用于学习和本地验证，不能仅凭引入本模块就获得跨实例持久化、审批执行或完整的生产级 Agent 平台能力。
+其中，`RunStateMachine` 集中定义运行状态转换；仓储接口定义持久化边界。`InMemoryRunPersistenceRepository` 等内存实现主要用于学习和本地验证，进程重启后内存状态会丢失；持久化和审批执行仍需由消费者接入具体实现。平台公共层遵循 AI 项目的 [单实例规范](../AGENTS.md#部署范围单实例)。
 
 ## 模块边界
 
